@@ -50,4 +50,16 @@ describe("ZONCore helpers (in Zotero runtime)", function () {
     assert.include(a, 'Title: "Fresh Title"', "manifest should refresh the key");
     assert.equal(a, b, "applyManifest should be idempotent");
   });
+
+  it("finds marker ranges through the bundle (Phase D groundwork)", function () {
+    const md = "%% zon kind=annotations sync=on format=list %%\n"
+      + "- a %% ann:ABCD %%\n%% /zon %%\n";
+    const ranges = C.findMarkerRanges(md);
+    const types = ranges.map((r) => r.type);
+    assert.include(types, "block-open");
+    assert.include(types, "ann-anchor");
+    assert.include(types, "block-close");
+    const ann = ranges.find((r) => r.type === "ann-anchor");
+    assert.equal(md.slice(ann.from, ann.to).trim(), "%% ann:ABCD %%");
+  });
 });
