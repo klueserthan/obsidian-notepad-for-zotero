@@ -32,6 +32,7 @@ var ZON = {
   PREF_TEMPLATES_DIR: "extensions.zotero-obsidian-notes.templatesDir",
   PREF_DEFAULT_NOTE: "extensions.zotero-obsidian-notes.defaultNoteTemplate",
   PREF_AUTOSYNC: "extensions.zotero-obsidian-notes.autoSync",
+  PREF_SHOWMARKERS: "extensions.zotero-obsidian-notes.showMarkers",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
   // configured yet", handled by the pane's empty state rather than guessed.
@@ -47,6 +48,7 @@ var ZON = {
   NOTE_SCAFFOLD_NAME: "note", // <templatesDir>/note.md = the default whole-note scaffold
   DEFAULT_DEFAULT_NOTE: "note", // which note scaffold "Create note" uses by default
   DEFAULT_AUTOSYNC: false, // live auto-sync of annotation blocks while you annotate (off by default — opt-in)
+  DEFAULT_SHOWMARKERS: false, // editor presentation: hide %% zon/ann %% markers + zon: block by default (Obsidian-like)
   _templates: null,
 
   // ---------------------------------------------------------------- lifecycle
@@ -194,6 +196,7 @@ var ZON = {
     "btn.overwrite": "Overwrite with mine",
     "label.autoUpdate": "auto-update",
     "label.autoSync": "Auto-sync",
+    "label.showMarkers": "Show markers",
     "tip.template": "Template — Insert it at the cursor, or use it to create a note",
     "tip.colour": "Only pull highlights of this colour",
     "tip.autoUpdate": "Keep inserted annotations in sync with Zotero (regenerate on Refresh). Uncheck to freeze them.",
@@ -202,6 +205,7 @@ var ZON = {
     "tip.migrate": "Convert a legacy annotation dump into a live block",
     "tip.reload": "Re-read this note from disk",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
+    "tip.showMarkers": "Show the raw %% zon %% / %% ann %% provenance markers and the zon: block. Off = hidden (like Obsidian reading mode); the file always keeps them.",
     "tip.noteTpl": "Template to build this note from",
     "tip.setup": "Detect your Obsidian vaults (or choose a folder), then pick your notes folder",
     "tip.openSettings": "Configure paths manually in the Obsidian Notepad preferences",
@@ -415,11 +419,17 @@ var ZON = {
     seed(this.PREF_TEMPLATES_DIR, this.DEFAULT_TEMPLATES_DIR);
     seed(this.PREF_DEFAULT_NOTE, this.DEFAULT_DEFAULT_NOTE);
     seed(this.PREF_AUTOSYNC, this.DEFAULT_AUTOSYNC);
+    seed(this.PREF_SHOWMARKERS, this.DEFAULT_SHOWMARKERS);
   },
 
   autoSyncEnabled() {
     try { let v = Zotero.Prefs.get(this.PREF_AUTOSYNC, true); return v === undefined ? this.DEFAULT_AUTOSYNC : !!v; }
     catch (e) { return this.DEFAULT_AUTOSYNC; }
+  },
+
+  showMarkersEnabled() {
+    try { let v = Zotero.Prefs.get(this.PREF_SHOWMARKERS, true); return v === undefined ? this.DEFAULT_SHOWMARKERS : !!v; }
+    catch (e) { return this.DEFAULT_SHOWMARKERS; }
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -894,10 +904,23 @@ var ZON = {
       this.syncAllAutoToggles(syncChk.checked); // keep every open pane's toggle in step
     });
 
+    // "Show markers" toggle (GLOBAL pref) — reveals the raw %% zon %% / %% ann %%
+    // markers + the zon: block in the editor. Off (default) hides them like
+    // Obsidian reading mode. Presentational only — the file always keeps them.
+    let markersLabel = h("label");
+    markersLabel.title = this.t("tip.showMarkers");
+    let markersChk = h("input"); markersChk.type = "checkbox"; markersChk.checked = this.showMarkersEnabled();
+    let markersSpan = h("span"); markersSpan.textContent = this.t("label.showMarkers");
+    markersLabel.append(markersChk, markersSpan);
+    markersChk.addEventListener("change", () => {
+      try { Zotero.Prefs.set(this.PREF_SHOWMARKERS, markersChk.checked, true); } catch (e) {}
+      this.applyShowMarkersAll(markersChk.checked); // apply live + keep every open pane in step
+    });
+
     // Tidy rows that wrap independently: primary action, insert options, then the
     // note-level actions.
     let row1 = h("div", "zon-row"); row1.append(templateSel, insertBtn);
-    let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel);
+    let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel, markersLabel);
     let row3 = h("div", "zon-row"); row3.append(refreshBtn, syncLabel, migrateBtn, openBtn, reloadBtn);
     toolbar.append(row1, row2, row3, status);
 
@@ -967,7 +990,7 @@ var ZON = {
     // off-screen if the bar were below it).
     wrap.append(toolbar, conflict, host, banner, setup);
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, markersChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
     setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
     settingsBtn.addEventListener("click", () => this.openSettings(win));
@@ -1018,6 +1041,7 @@ var ZON = {
         doc: rec._pendingContent || "",
         onChange: function (text) { self.onEdit(rec, text); },
         dark: rec._lastDark,
+        showMarkers: self.showMarkersEnabled(),
       });
       rec.loading = false;
       // Pin the host to the visible container width, then re-measure across a few
@@ -1559,6 +1583,15 @@ var ZON = {
   syncAllAutoToggles(on) {
     for (let rec of this.openRecs()) {
       try { if (rec.autoSyncChk && rec.autoSyncChk.checked !== on) rec.autoSyncChk.checked = on; } catch (e) {}
+    }
+  },
+
+  // Apply the "Show markers" state to every open editor (reveal/hide live) and
+  // keep each pane's checkbox in step.
+  applyShowMarkersAll(show) {
+    for (let rec of this.openRecs()) {
+      try { if (rec.markersChk && rec.markersChk.checked !== show) rec.markersChk.checked = show; } catch (e) {}
+      try { if (rec.lib && rec.view && rec.lib.setShowMarkers) rec.lib.setShowMarkers(rec.view, show); } catch (e) {}
     }
   },
 

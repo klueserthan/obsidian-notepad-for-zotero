@@ -9,6 +9,8 @@ import {
   keymap,
   drawSelection,
   highlightActiveLine,
+  Decoration,
+  ViewPlugin,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -17,6 +19,8 @@ import {
   indentWithTab,
 } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { yamlFrontmatter } from "@codemirror/lang-yaml";
+import { findMarkerRanges } from "../src/markers.js";
 import {
   syntaxHighlighting,
   defaultHighlightStyle,
@@ -95,9 +99,74 @@ export function setDark(view, dark) {
   try { view.dispatch({ effects: themeCompartment.reconfigure(themeExtensions(!!dark)) }); } catch (e) {}
 }
 
+// ── Phase D: marker presentation layer ──────────────────────────────────────
+//
+// The note's provenance markers (`%% zon … %%`, `%% /zon %%`, the per-annotation
+// `%% ann:KEY %%` anchors, and the reserved `zon:` frontmatter block) are
+// invisible in Obsidian reading mode but raw text here. This layer mimics
+// Obsidian: hide each marker with a zero-width replace decoration, REVEAL it
+// (show the raw text) when the cursor/selection touches it so it stays editable,
+// and treat each hidden marker as one atomic unit for cursor motion / backspace.
+// A "Show markers" toggle reconfigures the compartment to drop the plugin and
+// reveal every marker (plus the zon: block) at once. The file is never changed —
+// this is purely presentational, so Obsidian and the on-disk note keep the
+// markers. Range math is the pure findMarkerRanges (src/markers.js).
+function buildMarkerDecorations(view) {
+  const ranges = findMarkerRanges(view.state.doc.toString());
+  const sel = view.state.selection.ranges;
+  const decos = [];
+  for (const r of ranges) {
+    if (r.from >= r.to) continue;
+    // reveal-on-cursor: skip any marker the selection touches
+    let revealed = false;
+    for (const s of sel) {
+      if (s.to >= r.from && s.from <= r.to) { revealed = true; break; }
+    }
+    if (!revealed) decos.push(Decoration.replace({}).range(r.from, r.to));
+  }
+  return Decoration.set(decos, true);
+}
+
+const markerHidePlugin = ViewPlugin.fromClass(
+  class {
+    constructor(view) { this.decorations = buildMarkerDecorations(view); }
+    update(u) {
+      if (u.docChanged || u.selectionSet || u.viewportChanged) {
+        this.decorations = buildMarkerDecorations(u.view);
+      }
+    }
+  },
+  {
+    decorations: (v) => v.decorations,
+    // Atomic ranges so arrow keys / backspace step over a hidden marker as a unit
+    // instead of landing inside invisible text.
+    provide: (plugin) =>
+      EditorView.atomicRanges.of((view) => {
+        const inst = view.plugin(plugin);
+        return inst ? inst.decorations : Decoration.none;
+      }),
+  }
+);
+
+// Compartment so the "Show markers" toggle can switch the plugin on/off on a live
+// editor without remounting. Default = markers hidden (plugin active).
+const markersCompartment = new Compartment();
+function markerExtension(showMarkers) {
+  return showMarkers ? [] : markerHidePlugin;
+}
+
+// Toggle raw-marker visibility on an existing view. show=true reveals everything.
+export function setShowMarkers(view, show) {
+  if (!view) return;
+  try {
+    view.dispatch({ effects: markersCompartment.reconfigure(markerExtension(!!show)) });
+  } catch (e) {}
+}
+
 // `editable` controls whether the buffer can be typed into. `dark` selects the
 // light/dark colour scheme (detected from Zotero's theme by bootstrap).
-export function create({ parent, doc, onChange, editable = true, dark = false }) {
+// `showMarkers` starts the editor with raw markers visible (default: hidden).
+export function create({ parent, doc, onChange, editable = true, dark = false, showMarkers = false }) {
   const root = parent.getRootNode ? parent.getRootNode() : undefined;
 
   const updateListener = EditorView.updateListener.of((u) => {
@@ -115,7 +184,12 @@ export function create({ parent, doc, onChange, editable = true, dark = false })
       highlightActiveLine(),
       highlightSelectionMatches(),
       EditorView.lineWrapping,
-      markdown({ base: markdownLanguage }),
+      // YAML frontmatter + markdown body. Parsing the leading `---  … ---` as
+      // frontmatter (rather than letting the markdown parser see it) fixes the
+      // long-standing in-editor bug where the closing `---` turned the line above
+      // it (ZoteroLink / KeyIdea) into a setext heading and rendered it bold.
+      yamlFrontmatter({ content: markdown({ base: markdownLanguage }) }),
+      markersCompartment.of(markerExtension(showMarkers)),
       keymap.of([
         ...closeBracketsKeymap,
         ...defaultKeymap,

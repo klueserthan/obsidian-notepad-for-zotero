@@ -18,7 +18,18 @@
 // `text.slice(from, to)` is exactly the marker (for ann-anchor, with its leading
 // space). The "Show markers" toggle simply stops applying these.
 
-import { parseConfig } from "./blocks.js";
+// Inlined (not imported from blocks.js) so this module stays dependency-free and
+// can be bundled into the editor without pulling in nunjucks via blocks.js.
+function parseConfig(str) {
+  const cfg = {};
+  for (const tok of String(str).trim().split(/\s+/)) {
+    if (!tok) continue;
+    const i = tok.indexOf("=");
+    if (i > 0) cfg[tok.slice(0, i)] = tok.slice(i + 1);
+    else cfg[tok] = true;
+  }
+  return cfg;
+}
 
 const OPEN_RE = /^([ \t]*)(%%[ \t]*zon[ \t]+([^%]*?)[ \t]*%%)[ \t]*$/;
 const CLOSE_RE = /^([ \t]*)(%%[ \t]*\/zon[ \t]*%%)[ \t]*$/;
