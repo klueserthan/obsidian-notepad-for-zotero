@@ -91,11 +91,25 @@ function matchesFilter(a, cfg) {
   return true;
 }
 
-// Render the body of one block from the annotation set.
+// Render the body of one block. Dispatches on `kind`:
+//  - "annotations" (default): one rendered item per matching annotation.
+//  - "field" | "section" | "custom": the named template rendered ONCE over the
+//    item's data (opts.itemData from buildItemData) — e.g. a "year" or "abstract"
+//    element that refreshes from Zotero like an annotation block does.
 export function renderBlockBody(config, annotations, opts = {}) {
+  const kind = config.kind || "annotations";
   const formats = opts.formats || DEFAULT_FORMATS;
-  const fmt = formats[config.format] || formats[DEFAULT_FORMAT_NAME];
   const env = opts.env || makeEnv();
+
+  if (kind !== "annotations") {
+    const tpl = formats[config.format] && formats[config.format].item;
+    if (tpl == null) return ""; // unknown template -> empty (don't invent content)
+    const data = { citekey: opts.citekey || "", ...(opts.itemData || {}) };
+    if (opts.citekey) data.citekey = opts.citekey;
+    return env.renderString(tpl, data).replace(/\s+$/, "");
+  }
+
+  const fmt = formats[config.format] || formats[DEFAULT_FORMAT_NAME];
   const anns = (annotations || [])
     .filter((a) => matchesFilter(a, config))
     .sort((x, y) => {

@@ -38,6 +38,16 @@ describe("renderBlockBody filtering + format", () => {
     expect(body).toContain("?page=51&annotation=K");
     expect(body).not.toContain("?page=50");
   });
+
+  it("renders a non-annotation 'field' kind once over item data", () => {
+    const formats = { year: { item: "Year: {{date}}", sep: "\n" } };
+    const body = renderBlockBody({ kind: "field", format: "year" }, [], { formats, itemData: { date: "2023" } });
+    expect(body).toBe("Year: 2023");
+  });
+
+  it("returns empty for an unknown non-annotation template", () => {
+    expect(renderBlockBody({ kind: "section", format: "nope" }, [], { formats: {} })).toBe("");
+  });
 });
 
 describe("syncBlocks", () => {
