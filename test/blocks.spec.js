@@ -143,6 +143,19 @@ ${block}
     expect(fewer).not.toContain("another yellow"); // C gone
   });
 
+  it("preserves edits in a MULTI-LINE format (quote) where the anchor ends the item", () => {
+    const note = `---\ncitekey: "x"\n---\n\n%% zon kind=annotations colour=all sync=on format=quote %%\n%% /zon %%\n`;
+    const first = syncBlocks(note, ANNS, {});
+    // quote items span multiple lines; the anchor lands on the last line.
+    expect(first).toMatch(/> red point[\s\S]*%% ann:B %%/);
+    const edited = first.replace(/(%% ann:B %%)/, "$1\n> my reflection added below B");
+    const resynced = syncBlocks(edited, ANNS, {});
+    expect(resynced).toContain("my reflection added below B");
+    expect(resynced.match(/%% zon /g).length).toBe(1);
+    // and still idempotent with that multi-line edit present
+    expect(syncBlocks(resynced, ANNS, {})).toBe(resynced);
+  });
+
   it("cleanly re-renders a pre-A2 (anchorless) block on first sync", () => {
     // A block authored before A2: rendered items with NO %% ann %% anchors.
     const legacyBody = `- [p.3](zotero://open-pdf/library/items/PDF?page=3) "yellow point"`;
