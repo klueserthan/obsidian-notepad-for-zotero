@@ -900,7 +900,10 @@ var ZON = {
     conflict.append(conflictText, conflictRow);
     conflict.style.display = "none";
 
-    wrap.append(toolbar, host, conflict, banner, setup);
+    // Conflict bar goes ABOVE the editor so its Reload/Overwrite buttons are
+    // always visible (the editor host is tall — 60vh — and would push them
+    // off-screen if the bar were below it).
+    wrap.append(toolbar, conflict, host, banner, setup);
 
     let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
@@ -1071,7 +1074,7 @@ var ZON = {
 
   showConflict(rec) {
     try { if (rec.conflict) rec.conflict.style.display = ""; } catch (e) {}
-    this.setStatus(rec, "Changed outside Zotero — reconcile below");
+    this.setStatus(rec, "Changed outside Zotero — reload or overwrite");
   },
   hideConflict(rec) { try { if (rec.conflict) rec.conflict.style.display = "none"; } catch (e) {} },
 
