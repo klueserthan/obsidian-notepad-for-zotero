@@ -1098,6 +1098,16 @@ var ZON = {
     let host = rec.host;
     if (!host || !host.isConnected) return;
     let win = host.ownerDocument.defaultView;
+    // Release our own width pin BEFORE measuring. A pinned host holds its
+    // ancestors open, so when the sidebar is dragged NARROWER the "narrowest
+    // ancestor" never shrinks below the stale pin — fitHost then re-pins too wide,
+    // the editor overflows the pane, and the Tags +/- controls get pushed
+    // off-screen (bug d). Clearing the pin lets the ancestors collapse to their
+    // true available width; reading clientWidth below forces the reflow. This all
+    // happens in one synchronous task, so the browser only paints the final
+    // (re-pinned) state — no flicker.
+    host.style.width = ""; host.style.maxWidth = "";
+    try { if (rec.wrap) { rec.wrap.style.width = ""; rec.wrap.style.maxWidth = ""; } } catch (e) {}
     // Start the search ABOVE our own elements (host + .zon-content). Including
     // the host let a transient/previously-pinned small width feed back on
     // itself and latch the editor to a few pixels wide.
@@ -1111,6 +1121,12 @@ var ZON = {
       if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
       n = p;
     }
+    // Safety net: never pin wider than the room from the host's left edge to the
+    // window's right edge — a hard guard against any residual inflated ancestor.
+    try {
+      let vis = Math.floor(win.innerWidth - host.getBoundingClientRect().left - 4);
+      if (vis > 100 && vis < min) min = vis;
+    } catch (e) {}
     if (min !== Infinity) {
       host.style.width = min + "px";
       host.style.maxWidth = min + "px";
