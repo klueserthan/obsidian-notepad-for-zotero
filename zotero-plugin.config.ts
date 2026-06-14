@@ -62,6 +62,11 @@ export default defineConfig({
   },
 
   test: {
+    // Integration tests (Mocha-in-Zotero) live here; kept separate from the
+    // Node/Vitest unit tests in test/*.spec.js (which import vitest and can't run
+    // inside Zotero). Vitest is configured to ignore this folder.
+    entries: ["test/integration"],
+    mocha: { timeout: 20000 },
     // The dev handle is exposed as Zotero.ZON in bootstrap init().
     waitForPlugin: "() => !!Zotero.ZON",
   },
