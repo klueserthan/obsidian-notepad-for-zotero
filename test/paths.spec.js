@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   splitPath, vaultName, vaultRelative, buildObsidianUri,
-  obsidianConfigPath, parseObsidianVaults,
+  obsidianConfigPath, parseObsidianVaults, sanitizeFilename, isUnder,
 } from "../src/paths.js";
 
 describe("splitPath", () => {
@@ -86,5 +86,36 @@ describe("parseObsidianVaults", () => {
     expect(parseObsidianVaults("not json")).toEqual([]);
     expect(parseObsidianVaults("{}")).toEqual([]);
     expect(parseObsidianVaults(JSON.stringify({ vaults: null }))).toEqual([]);
+  });
+});
+
+describe("sanitizeFilename", () => {
+  it("keeps normal names (incl. spaces, dashes, @, citekeys)", () => {
+    expect(sanitizeFilename("@doe2023")).toBe("@doe2023");
+    expect(sanitizeFilename("Smith & Jones - 2020")).toBe("Smith & Jones - 2020");
+  });
+  it("strips path separators (prevents traversal)", () => {
+    expect(sanitizeFilename("../../etc/passwd")).not.toMatch(/[\\/]/);
+    expect(sanitizeFilename("a/b\\c")).toBe("a-b-c");
+  });
+  it("removes characters illegal on Windows/macOS and control chars", () => {
+    expect(sanitizeFilename('a<b>c:d"e|f?g*h')).toBe("abcdefgh");
+    expect(sanitizeFilename("a\tb\nc")).toBe("abc"); // tab + newline are control chars
+  });
+  it("never returns empty", () => {
+    expect(sanitizeFilename("")).toBe("untitled");
+    expect(sanitizeFilename("...")).toBe("untitled");
+    expect(sanitizeFilename(null)).toBe("untitled");
+  });
+});
+
+describe("isUnder", () => {
+  it("true for a file inside the dir (any separator, case-insensitive)", () => {
+    expect(isUnder("/v/Notes/@x.md", "/v/Notes")).toBe(true);
+    expect(isUnder("C:\\V\\Notes\\@x.md", "c:\\v\\notes")).toBe(true);
+  });
+  it("false for paths outside the dir", () => {
+    expect(isUnder("/v/Other/@x.md", "/v/Notes")).toBe(false);
+    expect(isUnder("/v/@x.md", "/v/Notes")).toBe(false);
   });
 });

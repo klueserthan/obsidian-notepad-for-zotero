@@ -664,6 +664,12 @@ var ZON = {
     if (rec.view && path && rec.path === path && rec.item && item && rec.item.id === item.id) {
       rec.item = item;
       try { this.fitHost(rec); if (rec.lib) rec.lib.refresh(rec.view); } catch (e) {}
+      // This fires on pane re-focus too, so it doubles as our external-change
+      // check: if Obsidian changed the file, reload it (when we have no unsaved
+      // edits) or surface the conflict bar (when we do) — never silently stale.
+      if (await this.externallyChanged(rec)) {
+        if (rec.timer) this.showConflict(rec); else await this.reload(rec, win);
+      }
       return;
     }
 
@@ -674,12 +680,15 @@ var ZON = {
       let content = "";
       try { content = await IOUtils.readUTF8(path); } catch (e) { this.log("read failed: " + e); }
       rec.path = path;
+      rec.diskMtime = await this.noteMtime(path); // baseline for conflict detection
+      this.hideConflict(rec);
       this.mountEditor(rec, win, content);
       rec.banner.style.display = "none";
       rec.toolbar.style.display = "";
       this.setStatus(rec, "Saved");
     } else {
       rec.path = null;
+      this.hideConflict(rec);
       this.mountEditor(rec, win, "");
       rec.toolbar.style.display = "none";
       rec.banner.style.display = "";
@@ -877,12 +886,28 @@ var ZON = {
     setup.append(setupText, setupRow);
     setup.style.display = "none";
 
-    wrap.append(toolbar, host, banner, setup);
+    // Conflict bar: shown when the note changed on disk (e.g. edited in Obsidian)
+    // since we loaded it, so we never silently clobber the user's other edits.
+    let conflict = h("div", "zon-banner");
+    conflict.style.cssText = "border:1px solid var(--accent-red,#c0392b);border-radius:5px;padding:8px;margin-top:6px;";
+    let conflictText = h("div", "zon-banner-text");
+    conflictText.textContent = "This note changed outside Zotero (e.g. in Obsidian). "
+      + "Reload to load the on-disk version, or overwrite it with what's shown here.";
+    let conflictRow = h("div", "zon-row");
+    let reloadDiskBtn = h("button", "zon-primary"); reloadDiskBtn.textContent = "Reload from disk";
+    let overwriteBtn = h("button"); overwriteBtn.textContent = "Overwrite with mine";
+    conflictRow.append(reloadDiskBtn, overwriteBtn);
+    conflict.append(conflictText, conflictRow);
+    conflict.style.display = "none";
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null };
+    wrap.append(toolbar, host, conflict, banner, setup);
+
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
     setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
     settingsBtn.addEventListener("click", () => this.openSettings(win));
+    reloadDiskBtn.addEventListener("click", () => this.reload(rec, win));
+    overwriteBtn.addEventListener("click", () => this.save(rec, { force: true }).catch((e) => this.log("overwrite failed: " + e)));
     openBtn.addEventListener("click", () => this.openInObsidian(rec).catch((e) => this.log("open failed: " + e)));
     insertBtn.addEventListener("click", () =>
       this.insertTemplate(rec, { name: templateSel.value, colour: colourSel.value, sync: autoChk.checked ? "on" : "off" })
@@ -1022,14 +1047,47 @@ var ZON = {
     rec.timer = win.setTimeout(() => { this.save(rec); }, 700);
   },
 
-  async save(rec) {
-    if (!rec.path || !rec.lib || !rec.view) return;
+  // --- data safety: atomic writes + external-change (conflict) detection -----
+  // The note file is also editable in Obsidian, so we (a) write atomically — to a
+  // sibling temp file, then rename over the target — so a crash can't truncate
+  // it, and (b) track its on-disk mtime so we never blindly overwrite a change
+  // made outside Zotero; the user reconciles via the conflict bar instead.
+
+  async safeWrite(path, text) {
+    await IOUtils.writeUTF8(path, text, { tmpPath: path + ".zon.tmp" });
+  },
+
+  async noteMtime(path) {
+    try { let s = await IOUtils.stat(path); return s.lastModified; } catch (e) { return null; }
+  },
+
+  // True if the note changed on disk since we last read/wrote it. Conservative:
+  // false when we have no baseline (rec.diskMtime unset).
+  async externallyChanged(rec) {
+    if (!rec || !rec.path || rec.diskMtime == null) return false;
+    let m = await this.noteMtime(rec.path);
+    return m != null && m !== rec.diskMtime;
+  },
+
+  showConflict(rec) {
+    try { if (rec.conflict) rec.conflict.style.display = ""; } catch (e) {}
+    this.setStatus(rec, "Changed outside Zotero — reconcile below");
+  },
+  hideConflict(rec) { try { if (rec.conflict) rec.conflict.style.display = "none"; } catch (e) {} },
+
+  // Editor autosave. Refuses to overwrite a note that changed on disk since we
+  // last saw it (unless forced from the conflict bar's "Overwrite mine").
+  async save(rec, opts = {}) {
+    if (!rec.path || !rec.lib || !rec.view) return false;
+    if (!opts.force && await this.externallyChanged(rec)) { this.showConflict(rec); return false; }
     let text = rec.lib.getDoc(rec.view);
     try {
-      await IOUtils.writeUTF8(rec.path, text);
+      await this.safeWrite(rec.path, text);
+      rec.diskMtime = await this.noteMtime(rec.path);
+      this.hideConflict(rec);
       this.setStatus(rec, "Saved");
-      // Selectively refresh index in case this was a new/renamed link (cheap).
-    } catch (e) { this.setStatus(rec, "Save failed"); this.log("save failed: " + e); }
+      return true;
+    } catch (e) { this.setStatus(rec, "Save failed — " + e); this.log("save failed: " + e); return false; }
   },
 
   async flush(rec) {
@@ -1042,11 +1100,14 @@ var ZON = {
 
   async reload(rec, win) {
     if (!rec.path) return;
+    if (rec.timer) { try { win.clearTimeout(rec.timer); } catch (e) {} rec.timer = null; }
     try {
       let content = await IOUtils.readUTF8(rec.path);
       this.mountEditor(rec, win, content);
+      rec.diskMtime = await this.noteMtime(rec.path);
+      this.hideConflict(rec);
       this.setStatus(rec, "Saved");
-    } catch (e) { this.log("reload failed: " + e); }
+    } catch (e) { this.setStatus(rec, "Reload failed — " + e); this.log("reload failed: " + e); }
   },
 
   // Open the current note in Obsidian. Cross-platform: path math is done with the
@@ -1242,14 +1303,21 @@ var ZON = {
       await this.loadTemplates();
       let citekey = this.getCitekey(item);
       if (!citekey) { setMsg("Couldn't determine a citekey for this item."); return; }
+      // Sanitise the citekey (it can come from Better BibTeX / the Extra field)
+      // before it becomes a filename — strip separators / illegal chars.
+      citekey = win.ZONCore.sanitizeFilename(citekey);
 
       let filename = this.filenamePattern().replace(/\{\{\s*citekey\s*\}\}/g, citekey);
       if (!/\.md$/i.test(filename)) filename += ".md";
-      let path = PathUtils.join(this.notesDir(), filename);
+      filename = win.ZONCore.sanitizeFilename(filename); // the pattern itself may add junk
+      let dir = this.notesDir();
+      let path = PathUtils.join(dir, filename);
+      // Defence-in-depth: never write outside the configured notes folder.
+      if (!win.ZONCore.isUnder(path, dir)) { setMsg("Refusing to create a note outside your notes folder."); return; }
       if (!(await IOUtils.exists(path))) {
         let md = await this.renderTemplateAsNote(win, item, templateName);
         await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
-        await IOUtils.writeUTF8(path, md);
+        await this.safeWrite(path, md);
         this.log("created note " + path);
       } else {
         this.log("note already exists, linking: " + path);
@@ -1366,6 +1434,10 @@ var ZON = {
     if (!item || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) await this.injectCore(win);
+    // Genuine conflict only — unsaved editor edits AND an external change. The
+    // sync itself reads fresh from disk and merges, so an external edit with no
+    // pending editor edit is preserved automatically (no need to block).
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
     await this.flush(rec);
     await this.loadTemplates();
     let existing = "";
@@ -1375,7 +1447,8 @@ var ZON = {
     try { updated = win.ZONCore.syncBlocks(existing, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) }); }
     catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
     if (updated === existing) return; // nothing to do — no write, no caret disruption
-    try { await IOUtils.writeUTF8(rec.path, updated); } catch (e) { this.log("auto-sync write failed: " + e); return; }
+    try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
+    catch (e) { this.setStatus(rec, "Auto-sync write failed — " + e); this.log("auto-sync write failed: " + e); return; }
     // Push the new content into the open editor. Guard with rec.loading so the
     // programmatic setDoc's onChange doesn't schedule a redundant save (which
     // would also overwrite the status below with "Saved").
@@ -1417,15 +1490,18 @@ var ZON = {
     if (!item || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) await this.injectCore(win);
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
     await this.flush(rec); // persist any pending edit before rewriting the file
     await this.loadTemplates();
     let anns = this.gatherAnnotations(item, win);
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Sync read failed — " + e); return; }
     let updated = win.ZONCore.syncBlocks(existing, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) });
     if (updated !== existing) {
-      try { await IOUtils.writeUTF8(rec.path, updated); } catch (e) { this.log("sync write failed: " + e); return; }
+      try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, "Sync write failed — " + e); this.log("sync write failed: " + e); return; }
     }
+    rec.diskMtime = await this.noteMtime(rec.path);
+    this.hideConflict(rec);
     this.mountEditor(rec, win, updated);
     this.setStatus(rec, "Synced (" + anns.length + " annotation(s))");
   },
@@ -1440,10 +1516,11 @@ var ZON = {
     if (!item || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) await this.injectCore(win);
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
     await this.flush(rec);
     await this.loadTemplates();
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Refresh read failed — " + e); return; }
     let merged = existing;
 
     let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
@@ -1465,8 +1542,10 @@ var ZON = {
     catch (e) { this.log("annotation refresh failed: " + e); }
 
     if (merged !== existing) {
-      try { await IOUtils.writeUTF8(rec.path, merged); } catch (e) { this.log("refresh write failed: " + e); return; }
+      try { await this.safeWrite(rec.path, merged); } catch (e) { this.setStatus(rec, "Refresh write failed — " + e); this.log("refresh write failed: " + e); return; }
     }
+    rec.diskMtime = await this.noteMtime(rec.path);
+    this.hideConflict(rec);
     this.mountEditor(rec, win, merged);
     this.setStatus(rec, "Refreshed metadata + " + anns.length + " annotation(s)");
   },
@@ -1503,12 +1582,13 @@ var ZON = {
     if (!item || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) await this.injectCore(win);
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
     await this.flush(rec);
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Migrate read failed — " + e); return; }
     let res = win.ZONCore.migrateLegacyAnnotations(existing, {});
     if (!res.changed) { this.setStatus(rec, "No legacy annotations found"); return; }
-    try { await IOUtils.writeUTF8(rec.path, res.markdown); } catch (e) { this.log("migrate write failed: " + e); return; }
+    try { await this.safeWrite(rec.path, res.markdown); rec.diskMtime = await this.noteMtime(rec.path); } catch (e) { this.setStatus(rec, "Migrate write failed — " + e); this.log("migrate write failed: " + e); return; }
     this.setStatus(rec, "Migrated — syncing…");
     await this.syncAnnotations(rec); // fill the new live block from Zotero
   },

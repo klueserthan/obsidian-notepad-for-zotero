@@ -67,6 +67,34 @@ export function parseObsidianVaults(jsonText) {
     .filter((v) => v.path);
 }
 
+// Make a string safe as a single filename component: strip path separators,
+// characters illegal on Windows/macOS, control chars, and leading/trailing dots
+// or spaces. Never returns "" (so a write can't land on a directory). Used to
+// neutralise citekeys/titles that come from Better BibTeX or the Extra field.
+export function sanitizeFilename(name) {
+  let s = String(name == null ? "" : name);
+  s = s.replace(/[\\/]+/g, "-");                       // path separators -> dash
+  s = s.replace(/[<>:"|?*]/g, "");                       // chars illegal on Windows/macOS
+  s = s.replace(/[\x00-\x1f]/g, "");                    // control characters
+  s = s.replace(/^\.+/, "").replace(/[ .]+$/g, "");      // leading dots, trailing dot/space
+  s = s.trim();
+  return s || "untitled";
+}
+
+// True if childPath is the same as, or nested under, parentPath. Separator- and
+// case-insensitive. Used to confine writes to the configured notes folder so a
+// crafted citekey/pattern can never escape it (defence-in-depth on top of
+// sanitizeFilename + PathUtils.join).
+export function isUnder(childPath, parentPath) {
+  const p = splitPath(parentPath);
+  const c = splitPath(childPath);
+  if (!p.length || c.length < p.length) return false;
+  for (let i = 0; i < p.length; i++) {
+    if (String(c[i]).toLowerCase() !== String(p[i]).toLowerCase()) return false;
+  }
+  return true;
+}
+
 // Join components with `sep`, trimming any separators already on the pieces so we
 // never produce a doubled separator. (We avoid a leading-slash regex so POSIX
 // absolute paths keep their leading "/".)
