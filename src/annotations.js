@@ -23,7 +23,7 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/\s+/g, " ").trim();
 }
 
-function pdfLink(a) {
+export function pdfLink(a) {
   // Zotero's open-pdf `?page=` is the DISPLAYED page number (the label), not the
   // 0-based index — passing the index lands one page early. Prefer the label;
   // fall back to pageIndex+1. Also append `&annotation=<key>` so Zotero jumps to

@@ -17,6 +17,7 @@
 
 import { makeEnv } from "./render.js";
 import { DEFAULT_FORMATS, DEFAULT_FORMAT_NAME } from "./formats.js";
+import { pdfLink } from "./annotations.js";
 
 const OPEN_RE = /^\s*%%\s*zon\s+([^%]*?)\s*%%\s*$/;
 const CLOSE_RE = /^\s*%%\s*\/zon\s*%%\s*$/;
@@ -77,7 +78,7 @@ function annotationContext(a, opts) {
     colour: a.colourName || "",
     color: a.colourName || "",
     type: a.type || "",
-    link: `zotero://open-pdf/library/items/${a.attachmentKey}?page=${pageIndex}`,
+    link: pdfLink(a),
     citekey: opts.citekey || "",
     imageBaseName: a.imageBaseName || "",
   };

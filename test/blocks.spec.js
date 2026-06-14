@@ -31,6 +31,13 @@ describe("renderBlockBody filtering + format", () => {
     const body = renderBlockBody({ colour: "red", format: "list" }, ANNS, {});
     expect(body).toContain("— *important*");
   });
+
+  it("links use the page LABEL + annotation key (no off-by-one)", () => {
+    const a = [{ key: "K", type: "highlight", attachmentKey: "PDF", pageLabel: "51", pageIndex: 50, sortIndex: "1", annotatedText: "x", colourName: "yellow" }];
+    const body = renderBlockBody({ colour: "all", format: "list" }, a, {});
+    expect(body).toContain("?page=51&annotation=K");
+    expect(body).not.toContain("?page=50");
+  });
 });
 
 describe("syncBlocks", () => {
