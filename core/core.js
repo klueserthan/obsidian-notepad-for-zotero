@@ -10,3 +10,4 @@ export { syncBlocks, makeBlock, parseBlocks, migrateLegacyAnnotations } from "..
 export { DEFAULT_FORMATS } from "../src/formats.js";
 export { parseTemplateFile, templateKind, templateUserOwnedKeys } from "../src/templates.js";
 export { COLOR_NAMES } from "../src/colors.js";
+export { splitPath, vaultName, vaultRelative, buildObsidianUri, obsidianConfigPath, parseObsidianVaults } from "../src/paths.js";

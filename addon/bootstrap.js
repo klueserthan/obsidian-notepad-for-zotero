@@ -636,6 +636,22 @@ var ZON = {
       this.populateTemplatePicker(rec).catch((e) => this.log("template picker failed: " + e));
     }
 
+    // Not configured yet → show the onboarding empty state instead of operating
+    // against an unset notes folder. (vaultPath is only needed for "Open in
+    // Obsidian"; notesDir is what every read/write/create needs.)
+    if (!this.notesDir()) {
+      await this.flush(rec);
+      rec.item = item;
+      rec.path = null;
+      rec.toolbar.style.display = "none";
+      rec.banner.style.display = "none";
+      rec.host.style.display = "none";
+      rec.setup.style.display = "";
+      return;
+    }
+    rec.host.style.display = "";
+    rec.setup.style.display = "none";
+
     let path = await this.resolvePath(item);
 
     // Already showing this exact note in a live editor → do NOT remount.
@@ -845,11 +861,29 @@ var ZON = {
     createRow.append(noteTplSel, createBtn);
     banner.append(bannerText, createRow);
 
-    wrap.append(toolbar, host, banner);
+    // First-run / not-configured empty state. Shown (instead of the editor +
+    // create banner) until a notes folder is set, so the plugin guides setup
+    // rather than silently failing against an unset path.
+    let setup = h("div", "zon-banner");
+    let setupText = h("div", "zon-banner-text");
+    setupText.textContent = "Obsidian Notepad isn't set up yet. Point it at your "
+      + "Obsidian vault and the folder where your literature notes live.";
+    let setupRow = h("div", "zon-row");
+    let setupBtn = h("button", "zon-primary"); setupBtn.textContent = "Set up…";
+    setupBtn.title = "Detect your Obsidian vaults (or choose a folder), then pick your notes folder";
+    let settingsBtn = h("button"); settingsBtn.textContent = "Open Settings";
+    settingsBtn.title = "Configure paths manually in the Obsidian Notepad preferences";
+    setupRow.append(setupBtn, settingsBtn);
+    setup.append(setupText, setupRow);
+    setup.style.display = "none";
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null };
+    wrap.append(toolbar, host, banner, setup);
 
-    openBtn.addEventListener("click", () => this.openInObsidian(rec));
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null };
+
+    setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
+    settingsBtn.addEventListener("click", () => this.openSettings(win));
+    openBtn.addEventListener("click", () => this.openInObsidian(rec).catch((e) => this.log("open failed: " + e)));
     insertBtn.addEventListener("click", () =>
       this.insertTemplate(rec, { name: templateSel.value, colour: colourSel.value, sync: autoChk.checked ? "on" : "off" })
         .catch((e) => this.log("insert failed: " + e)));
@@ -1015,18 +1049,131 @@ var ZON = {
     } catch (e) { this.log("reload failed: " + e); }
   },
 
-  openInObsidian(rec) {
+  // Open the current note in Obsidian. Cross-platform: path math is done with the
+  // separator-agnostic helpers in ZONCore (src/paths.js), and the obsidian:// file
+  // arg is always forward-slash. Requires the note to live inside the vault.
+  async openInObsidian(rec) {
     if (!rec.path) return;
     let vault = this.vaultPath();
-    let vaultName = vault.split("/").filter(Boolean).pop();
-    let rel = rec.path.startsWith(vault) ? rec.path.slice(vault.length).replace(/^\//, "") : rec.path;
-    rel = rel.replace(/\.md$/, "");
-    let url = "obsidian://open?vault=" + encodeURIComponent(vaultName)
-      + "&file=" + encodeURIComponent(rel);
+    if (!vault) { this.setStatus(rec, "Set your Obsidian vault in Settings first"); return; }
+    let win = rec.host.ownerDocument.defaultView;
+    if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
+    let C = win.ZONCore;
+    let rel = C && C.vaultRelative ? C.vaultRelative(rec.path, vault) : null;
+    if (!rel) {
+      this.setStatus(rec, "This note isn't inside your Obsidian vault — can't open it in Obsidian");
+      return;
+    }
+    let url = C.buildObsidianUri(C.vaultName(vault), rel);
     try { Zotero.launchURL(url); } catch (e) { this.log("launch failed: " + e); }
   },
 
   setStatus(rec, text) { try { rec.statusEl.textContent = text; } catch (e) {} },
+
+  // ---------------------------------------------------------------- onboarding
+
+  osKey() { return Zotero.isMac ? "mac" : (Zotero.isWin ? "win" : "linux"); },
+
+  // Environment strings used to locate per-OS config dirs. Defensive about which
+  // env API exists (Services.env is Gecko 110+, else the XPCOM service).
+  osEnv() {
+    let env;
+    try { env = Services.env; } catch (e) {}
+    if (!env) {
+      try {
+        env = Components.classes["@mozilla.org/process/environment;1"]
+          .getService(Components.interfaces.nsIEnvironment);
+      } catch (e) {}
+    }
+    let get = (k) => { try { return env && env.exists(k) ? env.get(k) : ""; } catch (e) { return ""; } };
+    return {
+      home: get("HOME") || get("USERPROFILE"),
+      appData: get("APPDATA"),
+      xdgConfigHome: get("XDG_CONFIG_HOME"),
+    };
+  },
+
+  // Read Obsidian's obsidian.json → its known vaults [{path, name, open}].
+  async detectObsidianVaults(win) {
+    win = win || Zotero.getMainWindows()[0];
+    if (win && !win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
+    let C = win && win.ZONCore;
+    if (!C || !C.obsidianConfigPath) return [];
+    let cfg = C.obsidianConfigPath(this.osKey(), this.osEnv());
+    let text = "";
+    try { text = await IOUtils.readUTF8(cfg); } catch (e) { return []; }
+    try { return C.parseObsidianVaults(text); } catch (e) { return []; }
+  },
+
+  // Native folder picker → absolute path, or null if cancelled/unavailable.
+  async pickFolder(win, title, defaultPath) {
+    try {
+      let fp = Components.classes["@mozilla.org/filepicker;1"]
+        .createInstance(Components.interfaces.nsIFilePicker);
+      fp.init(win.browsingContext || win, title || "Choose a folder", fp.modeGetFolder);
+      if (defaultPath) {
+        try {
+          let dir = Components.classes["@mozilla.org/file/local;1"]
+            .createInstance(Components.interfaces.nsIFile);
+          dir.initWithPath(defaultPath);
+          if (dir.exists()) fp.displayDirectory = dir;
+        } catch (e) {}
+      }
+      return await new Promise((resolve) => {
+        fp.open((rv) => {
+          try {
+            if (rv === Components.interfaces.nsIFilePicker.returnOK && fp.file) resolve(fp.file.path);
+            else resolve(null);
+          } catch (e) { resolve(null); }
+        });
+      });
+    } catch (e) { this.log("pickFolder failed: " + e); return null; }
+  },
+
+  // Present detected vaults; returns a path, "" to browse instead, or null to cancel.
+  chooseVault(win, vaults) {
+    try {
+      let items = vaults.map((v) => v.name + "  —  " + v.path);
+      items.push("Choose another folder…");
+      let sel = { value: 0 };
+      let ok = Services.prompt.select(win, "Obsidian vaults",
+        "Which Obsidian vault holds your notes?", items, sel);
+      if (!ok) return null;
+      return sel.value >= vaults.length ? "" : vaults[sel.value].path;
+    } catch (e) { this.log("chooseVault failed: " + e); return ""; }
+  },
+
+  // First-run flow: pick vault (detected or browsed) → pick notes folder →
+  // persist → reindex → re-render the pane.
+  async runOnboarding(rec, win) {
+    win = win || rec.host.ownerDocument.defaultView;
+    let vault = "";
+    let vaults = await this.detectObsidianVaults(win);
+    if (vaults.length) {
+      let chosen = this.chooseVault(win, vaults);
+      if (chosen === null) return; // cancelled
+      vault = chosen;
+    }
+    if (!vault) {
+      vault = await this.pickFolder(win, "Choose your Obsidian vault folder");
+      if (!vault) return;
+    }
+    let notes = await this.pickFolder(win, "Choose the folder for your literature notes", vault);
+    if (!notes) notes = vault;
+    Zotero.Prefs.set(this.PREF_VAULT, vault, true);
+    Zotero.Prefs.set(this.PREF_NOTES, notes, true);
+    await this.buildIndex();
+    if (rec.item) await this.renderInto(rec.wrap, rec.item);
+  },
+
+  // Open the plugin's preferences pane (best effort across Zotero builds).
+  openSettings(win) {
+    try {
+      let I = Zotero.Utilities && Zotero.Utilities.Internal;
+      if (I && I.openPreferences) { I.openPreferences(this.pluginID); return; }
+    } catch (e) {}
+    this.log("openPreferences unavailable — use Zotero Settings → Obsidian Notepad");
+  },
 
   // ---------------------------------------------------------------- create note
 
