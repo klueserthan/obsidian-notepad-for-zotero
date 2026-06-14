@@ -5,22 +5,31 @@
     <html:div style="display:flex;flex-direction:column;gap:12px;padding:6px 4px;max-width:780px;">
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Obsidian vault path</html:span>
-        <html:input type="text" style="width:100%;box-sizing:border-box;"
-          preference="extensions.zotero-obsidian-notes.vaultPath"/>
+        <html:div style="display:flex;gap:6px;">
+          <html:input id="zon-vault" type="text" style="flex:1;box-sizing:border-box;"
+            preference="extensions.zotero-obsidian-notes.vaultPath"/>
+          <html:button id="zon-vault-browse" type="button">Browse…</html:button>
+        </html:div>
         <html:span style="color:#888;font-size:11px;">Absolute path to your vault. Used for the “Open in Obsidian” link.</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Notes folder</html:span>
-        <html:input type="text" style="width:100%;box-sizing:border-box;"
-          preference="extensions.zotero-obsidian-notes.notesDir"/>
+        <html:div style="display:flex;gap:6px;">
+          <html:input id="zon-notes" type="text" style="flex:1;box-sizing:border-box;"
+            preference="extensions.zotero-obsidian-notes.notesDir"/>
+          <html:button id="zon-notes-browse" type="button">Browse…</html:button>
+        </html:div>
         <html:span style="color:#888;font-size:11px;">Folder (inside the vault) where literature notes live and are created.</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Templates folder</html:span>
-        <html:input type="text" style="width:100%;box-sizing:border-box;"
-          preference="extensions.zotero-obsidian-notes.templatesDir"/>
+        <html:div style="display:flex;gap:6px;">
+          <html:input id="zon-templates" type="text" style="flex:1;box-sizing:border-box;"
+            preference="extensions.zotero-obsidian-notes.templatesDir"/>
+          <html:button id="zon-templates-browse" type="button">Browse…</html:button>
+        </html:div>
         <html:span style="color:#888;font-size:11px;">Folder of templates. <html:b>note.md</html:b> (and any <html:b>note-*</html:b>) are whole-note scaffolds; every other file is an insertable block template (shown in the Template dropdown by filename). See TEMPLATES.md in this folder for how to write one.</html:span>
       </html:label>
 

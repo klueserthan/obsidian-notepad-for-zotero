@@ -69,6 +69,7 @@ var ZON = {
           pluginID: this.pluginID,
           src: this.rootURI + "content/preferences.xhtml",
           label: "Obsidian Notes",
+          scripts: [this.rootURI + "content/preferences.js"],
         });
       }
     } catch (e) { this.log("prefpane register failed: " + e); }
@@ -175,6 +176,70 @@ var ZON = {
   },
 
   log(msg) { try { Zotero.debug("ZON: " + msg); } catch (e) {} },
+
+  // ---------------------------------------------------------------- strings
+  // All user-facing text in one place (English). Translation-ready: a future
+  // locale can supply a translated map or wire t() to Fluent. (The item-pane
+  // section header/sidenav must use Zotero's l10nID mechanism — see the .ftl.)
+  STRINGS: {
+    "btn.insert": "Insert",
+    "btn.refresh": "Refresh",
+    "btn.migrate": "Migrate",
+    "btn.openObsidian": "Open in Obsidian",
+    "btn.reload": "Reload",
+    "btn.createNote": "Create note",
+    "btn.setup": "Set up…",
+    "btn.openSettings": "Open Settings",
+    "btn.reloadDisk": "Reload from disk",
+    "btn.overwrite": "Overwrite with mine",
+    "label.autoUpdate": "auto-update",
+    "label.autoSync": "Auto-sync",
+    "tip.template": "Template — Insert it at the cursor, or use it to create a note",
+    "tip.colour": "Only pull highlights of this colour",
+    "tip.autoUpdate": "Keep inserted annotations in sync with Zotero (regenerate on Refresh). Uncheck to freeze them.",
+    "tip.insert": "Insert the selected template at the cursor",
+    "tip.refresh": "Pull updated metadata + annotations from Zotero — keeps your own fields, prose and edits",
+    "tip.migrate": "Convert a legacy annotation dump into a live block",
+    "tip.reload": "Re-read this note from disk",
+    "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
+    "tip.noteTpl": "Template to build this note from",
+    "tip.setup": "Detect your Obsidian vaults (or choose a folder), then pick your notes folder",
+    "tip.openSettings": "Configure paths manually in the Obsidian Notepad preferences",
+    "banner.noNote": "No linked note found for this item yet. Create one in {dir} from your template:",
+    "banner.setup": "Obsidian Notepad isn't set up yet. Point it at your Obsidian vault and the folder where your literature notes live.",
+    "banner.conflict": "This note changed outside Zotero (e.g. in Obsidian). Reload to load the on-disk version, or overwrite it with what's shown here.",
+    "status.saved": "Saved",
+    "status.editing": "Editing…",
+    "status.conflict": "Changed outside Zotero — reload or overwrite",
+    "status.synced": "Synced ({count} annotation(s))",
+    "status.autoSynced": "Auto-synced ({count} annotation(s))",
+    "status.refreshed": "Refreshed metadata + {count} annotation(s)",
+    "status.migrating": "Migrated — syncing…",
+    "status.noLegacy": "No legacy annotations found",
+    "status.noPdf": "This item has no PDF attachment to read annotations from",
+    "status.vaultUnset": "Set your Obsidian vault in Settings first",
+    "status.notInVault": "This note isn't inside your Obsidian vault — can't open it in Obsidian",
+    "err.save": "Save failed — ",
+    "err.reload": "Reload failed — ",
+    "err.autoSyncWrite": "Auto-sync write failed — ",
+    "err.syncRead": "Sync read failed — ",
+    "err.syncWrite": "Sync write failed — ",
+    "err.refreshRead": "Refresh read failed — ",
+    "err.refreshWrite": "Refresh write failed — ",
+    "err.migrateRead": "Migrate read failed — ",
+    "err.migrateWrite": "Migrate write failed — ",
+    "msg.noCitekey": "Couldn't determine a citekey for this item — set one in Better BibTeX or the Extra field.",
+    "msg.outsideNotes": "Refusing to create a note outside your notes folder.",
+    "msg.createFailed": "Create failed: ",
+  },
+
+  // Look up a string by key, interpolating {name} placeholders from `args`.
+  t(key, args) {
+    let s = this.STRINGS[key];
+    if (s == null) return key;
+    if (args) for (let k in args) s = s.split("{" + k + "}").join(String(args[k]));
+    return s;
+  },
 
   // ---------------------------------------------------------------- prefs
 
@@ -685,15 +750,14 @@ var ZON = {
       this.mountEditor(rec, win, content);
       rec.banner.style.display = "none";
       rec.toolbar.style.display = "";
-      this.setStatus(rec, "Saved");
+      this.setStatus(rec, this.t("status.saved"));
     } else {
       rec.path = null;
       this.hideConflict(rec);
       this.mountEditor(rec, win, "");
       rec.toolbar.style.display = "none";
       rec.banner.style.display = "";
-      rec.bannerText.textContent = "No linked note found for this item yet. "
-        + "Create one in " + this.notesDir() + " from your template:";
+      rec.bannerText.textContent = this.t("banner.noNote", { dir: this.notesDir() });
       await this.populateNoteTemplatePicker(rec);
     }
   },
@@ -792,38 +856,38 @@ var ZON = {
     // ONE unified Template dropdown: every template (your folder files + built-in
     // formats), default note scaffold first. Insert it at the cursor OR create a
     // whole note from it — same list either way.
-    let templateSel = h("select"); templateSel.title = "Template — Insert it at the cursor, or use it to create a note";
+    let templateSel = h("select"); templateSel.title = this.t("tip.template");
     this.orderedTemplateNames(win).forEach((f) => { let o = h("option"); o.value = f; o.textContent = f; templateSel.appendChild(o); });
 
     // Colour filter (orthogonal): which highlight colours to pull. "(auto)" = the
     // template's own setting, else all.
-    let colourSel = h("select"); colourSel.title = "Only pull highlights of this colour";
+    let colourSel = h("select"); colourSel.title = this.t("tip.colour");
     [["", "(auto)"], ["all", "all"], ["yellow", "yellow"], ["red", "red"], ["green", "green"],
      ["blue", "blue"], ["purple", "purple"], ["magenta", "magenta"], ["orange", "orange"], ["grey", "grey"]]
       .forEach(([v, t]) => { let o = h("option"); o.value = v; o.textContent = t; colourSel.appendChild(o); });
 
     let autoLabel = h("label");
-    autoLabel.title = "Keep inserted annotations in sync with Zotero (regenerate on Refresh). Uncheck to freeze them.";
+    autoLabel.title = this.t("tip.autoUpdate");
     let autoChk = h("input"); autoChk.type = "checkbox"; autoChk.checked = true;
-    let autoSpan = h("span"); autoSpan.textContent = "auto-update";
+    let autoSpan = h("span"); autoSpan.textContent = this.t("label.autoUpdate");
     autoLabel.append(autoChk, autoSpan);
 
-    let insertBtn = h("button", "zon-primary"); insertBtn.textContent = "Insert";
-    insertBtn.title = "Insert the selected template at the cursor";
-    let refreshBtn = h("button"); refreshBtn.textContent = "Refresh";
-    refreshBtn.title = "Pull updated metadata + annotations from Zotero — keeps your own fields, prose and edits";
-    let migrateBtn = h("button"); migrateBtn.textContent = "Migrate"; migrateBtn.title = "Convert a legacy annotation dump into a live block";
-    let openBtn = h("button"); openBtn.textContent = "Open in Obsidian";
-    let reloadBtn = h("button"); reloadBtn.textContent = "Reload"; reloadBtn.title = "Re-read this note from disk";
+    let insertBtn = h("button", "zon-primary"); insertBtn.textContent = this.t("btn.insert");
+    insertBtn.title = this.t("tip.insert");
+    let refreshBtn = h("button"); refreshBtn.textContent = this.t("btn.refresh");
+    refreshBtn.title = this.t("tip.refresh");
+    let migrateBtn = h("button"); migrateBtn.textContent = this.t("btn.migrate"); migrateBtn.title = this.t("tip.migrate");
+    let openBtn = h("button"); openBtn.textContent = this.t("btn.openObsidian");
+    let reloadBtn = h("button"); reloadBtn.textContent = this.t("btn.reload"); reloadBtn.title = this.t("tip.reload");
     let status = h("span", "zon-status");
 
     // Live auto-sync toggle (GLOBAL pref) — distinct from the per-block
     // "auto-update" above: this one runs Refresh's annotation pass automatically
     // whenever you highlight in the PDF, so the open note keeps up as you read.
     let syncLabel = h("label");
-    syncLabel.title = "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).";
+    syncLabel.title = this.t("tip.autoSync");
     let syncChk = h("input"); syncChk.type = "checkbox"; syncChk.checked = this.autoSyncEnabled();
-    let syncSpan = h("span"); syncSpan.textContent = "Auto-sync";
+    let syncSpan = h("span"); syncSpan.textContent = this.t("label.autoSync");
     syncLabel.append(syncChk, syncSpan);
     syncChk.addEventListener("change", () => {
       try { Zotero.Prefs.set(this.PREF_AUTOSYNC, syncChk.checked, true); } catch (e) {}
@@ -865,8 +929,8 @@ var ZON = {
     let bannerText = h("div", "zon-banner-text");
     let createRow = h("div", "zon-row");
     // Create picker = the SAME unified template list, default scaffold first.
-    let noteTplSel = h("select"); noteTplSel.title = "Template to build this note from";
-    let createBtn = h("button", "zon-primary"); createBtn.textContent = "Create note";
+    let noteTplSel = h("select"); noteTplSel.title = this.t("tip.noteTpl");
+    let createBtn = h("button", "zon-primary"); createBtn.textContent = this.t("btn.createNote");
     createRow.append(noteTplSel, createBtn);
     banner.append(bannerText, createRow);
 
@@ -875,13 +939,12 @@ var ZON = {
     // rather than silently failing against an unset path.
     let setup = h("div", "zon-banner");
     let setupText = h("div", "zon-banner-text");
-    setupText.textContent = "Obsidian Notepad isn't set up yet. Point it at your "
-      + "Obsidian vault and the folder where your literature notes live.";
+    setupText.textContent = this.t("banner.setup");
     let setupRow = h("div", "zon-row");
-    let setupBtn = h("button", "zon-primary"); setupBtn.textContent = "Set up…";
-    setupBtn.title = "Detect your Obsidian vaults (or choose a folder), then pick your notes folder";
-    let settingsBtn = h("button"); settingsBtn.textContent = "Open Settings";
-    settingsBtn.title = "Configure paths manually in the Obsidian Notepad preferences";
+    let setupBtn = h("button", "zon-primary"); setupBtn.textContent = this.t("btn.setup");
+    setupBtn.title = this.t("tip.setup");
+    let settingsBtn = h("button"); settingsBtn.textContent = this.t("btn.openSettings");
+    settingsBtn.title = this.t("tip.openSettings");
     setupRow.append(setupBtn, settingsBtn);
     setup.append(setupText, setupRow);
     setup.style.display = "none";
@@ -891,11 +954,10 @@ var ZON = {
     let conflict = h("div", "zon-banner");
     conflict.style.cssText = "border:1px solid var(--accent-red,#c0392b);border-radius:5px;padding:8px;margin-top:6px;";
     let conflictText = h("div", "zon-banner-text");
-    conflictText.textContent = "This note changed outside Zotero (e.g. in Obsidian). "
-      + "Reload to load the on-disk version, or overwrite it with what's shown here.";
+    conflictText.textContent = this.t("banner.conflict");
     let conflictRow = h("div", "zon-row");
-    let reloadDiskBtn = h("button", "zon-primary"); reloadDiskBtn.textContent = "Reload from disk";
-    let overwriteBtn = h("button"); overwriteBtn.textContent = "Overwrite with mine";
+    let reloadDiskBtn = h("button", "zon-primary"); reloadDiskBtn.textContent = this.t("btn.reloadDisk");
+    let overwriteBtn = h("button"); overwriteBtn.textContent = this.t("btn.overwrite");
     conflictRow.append(reloadDiskBtn, overwriteBtn);
     conflict.append(conflictText, conflictRow);
     conflict.style.display = "none";
@@ -1045,7 +1107,7 @@ var ZON = {
   onEdit(rec, text) {
     if (rec.loading || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
-    this.setStatus(rec, "Editing…");
+    this.setStatus(rec, this.t("status.editing"));
     if (rec.timer) win.clearTimeout(rec.timer);
     rec.timer = win.setTimeout(() => { this.save(rec); }, 700);
   },
@@ -1074,7 +1136,7 @@ var ZON = {
 
   showConflict(rec) {
     try { if (rec.conflict) rec.conflict.style.display = ""; } catch (e) {}
-    this.setStatus(rec, "Changed outside Zotero — reload or overwrite");
+    this.setStatus(rec, this.t("status.conflict"));
   },
   hideConflict(rec) { try { if (rec.conflict) rec.conflict.style.display = "none"; } catch (e) {} },
 
@@ -1088,9 +1150,9 @@ var ZON = {
       await this.safeWrite(rec.path, text);
       rec.diskMtime = await this.noteMtime(rec.path);
       this.hideConflict(rec);
-      this.setStatus(rec, "Saved");
+      this.setStatus(rec, this.t("status.saved"));
       return true;
-    } catch (e) { this.setStatus(rec, "Save failed — " + e); this.log("save failed: " + e); return false; }
+    } catch (e) { this.setStatus(rec, this.t("err.save") + e); this.log("save failed: " + e); return false; }
   },
 
   async flush(rec) {
@@ -1109,8 +1171,8 @@ var ZON = {
       this.mountEditor(rec, win, content);
       rec.diskMtime = await this.noteMtime(rec.path);
       this.hideConflict(rec);
-      this.setStatus(rec, "Saved");
-    } catch (e) { this.setStatus(rec, "Reload failed — " + e); this.log("reload failed: " + e); }
+      this.setStatus(rec, this.t("status.saved"));
+    } catch (e) { this.setStatus(rec, this.t("err.reload") + e); this.log("reload failed: " + e); }
   },
 
   // Open the current note in Obsidian. Cross-platform: path math is done with the
@@ -1119,13 +1181,13 @@ var ZON = {
   async openInObsidian(rec) {
     if (!rec.path) return;
     let vault = this.vaultPath();
-    if (!vault) { this.setStatus(rec, "Set your Obsidian vault in Settings first"); return; }
+    if (!vault) { this.setStatus(rec, this.t("status.vaultUnset")); return; }
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
     let C = win.ZONCore;
     let rel = C && C.vaultRelative ? C.vaultRelative(rec.path, vault) : null;
     if (!rel) {
-      this.setStatus(rec, "This note isn't inside your Obsidian vault — can't open it in Obsidian");
+      this.setStatus(rec, this.t("status.notInVault"));
       return;
     }
     let url = C.buildObsidianUri(C.vaultName(vault), rel);
@@ -1268,9 +1330,25 @@ var ZON = {
   // Render a DOCUMENT template (whole-note) for this item: fill the item-level
   // Nunjucks vars, then fill any `%% zon %%` annotation blocks with the item's
   // highlights. Returns the finished markdown.
+  // A formatted reference for the note's {{bibliography}}. Uses the user's
+  // QuickCopy citation style if it's set to a bibliography; otherwise falls back
+  // to APA. Returns "" (not an error) if Zotero can't produce one.
+  async getBibliography(item) {
+    try {
+      let setting = Zotero.Prefs.get("export.quickCopy.setting");
+      let format = setting ? Zotero.QuickCopy.unserializeSetting(setting) : null;
+      if (!format || format.mode !== "bibliography") {
+        format = { mode: "bibliography", contentType: "text", id: "http://www.zotero.org/styles/apa" };
+      }
+      let res = await Zotero.QuickCopy.getContentFromItems([item], format);
+      return ((res && res.text) || "").trim();
+    } catch (e) { this.log("bibliography failed: " + e); return ""; }
+  },
+
   async renderDocument(win, item, templateText) {
     let citekey = this.getCitekey(item);
-    let data = win.ZONCore.buildItemData(item, { citekey, importDate: new Date().toISOString() });
+    let bibliography = await this.getBibliography(item);
+    let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
     try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win) }); } catch (e) {}
@@ -1305,7 +1383,7 @@ var ZON = {
       if (!win.ZONCore) await this.injectCore(win);
       await this.loadTemplates();
       let citekey = this.getCitekey(item);
-      if (!citekey) { setMsg("Couldn't determine a citekey for this item."); return; }
+      if (!citekey) { setMsg(this.t("msg.noCitekey")); return; }
       // Sanitise the citekey (it can come from Better BibTeX / the Extra field)
       // before it becomes a filename — strip separators / illegal chars.
       citekey = win.ZONCore.sanitizeFilename(citekey);
@@ -1316,7 +1394,7 @@ var ZON = {
       let dir = this.notesDir();
       let path = PathUtils.join(dir, filename);
       // Defence-in-depth: never write outside the configured notes folder.
-      if (!win.ZONCore.isUnder(path, dir)) { setMsg("Refusing to create a note outside your notes folder."); return; }
+      if (!win.ZONCore.isUnder(path, dir)) { setMsg(this.t("msg.outsideNotes")); return; }
       if (!(await IOUtils.exists(path))) {
         let md = await this.renderTemplateAsNote(win, item, templateName);
         await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
@@ -1329,7 +1407,7 @@ var ZON = {
       await this.renderInto(rec.wrap, item);
     } catch (e) {
       this.log("createNote failed: " + e);
-      setMsg("Create failed: " + e);
+      setMsg(this.t("msg.createFailed") + e);
     }
   },
 
@@ -1351,6 +1429,18 @@ var ZON = {
       }
     } catch (e) { this.log("gatherAnnotations failed: " + e); }
     return out;
+  },
+
+  // Does the item have a PDF attachment at all? Lets us tell "no annotations yet"
+  // apart from "nothing to read annotations from".
+  hasPdfAttachment(item) {
+    try {
+      for (let id of (item.getAttachments ? item.getAttachments() : [])) {
+        let att = Zotero.Items.get(id);
+        if (att && (att.isPDFAttachment ? att.isPDFAttachment() : att.attachmentContentType === "application/pdf")) return true;
+      }
+    } catch (e) {}
+    return false;
   },
 
   // ------------------------------------------------------------ auto-sync
@@ -1451,7 +1541,7 @@ var ZON = {
     catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
     if (updated === existing) return; // nothing to do — no write, no caret disruption
     try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
-    catch (e) { this.setStatus(rec, "Auto-sync write failed — " + e); this.log("auto-sync write failed: " + e); return; }
+    catch (e) { this.setStatus(rec, this.t("err.autoSyncWrite") + e); this.log("auto-sync write failed: " + e); return; }
     // Push the new content into the open editor. Guard with rec.loading so the
     // programmatic setDoc's onChange doesn't schedule a redundant save (which
     // would also overwrite the status below with "Saved").
@@ -1461,7 +1551,7 @@ var ZON = {
         try { rec.lib.setDoc(rec.view, updated); } finally { rec.loading = false; }
       }
     } catch (e) {}
-    this.setStatus(rec, "Auto-synced (" + anns.length + " annotation(s))");
+    this.setStatus(rec, this.t("status.autoSynced", { count: anns.length }));
   },
 
   // Reflect the global auto-sync pref onto every open pane's toggle checkbox so
@@ -1497,16 +1587,17 @@ var ZON = {
     await this.flush(rec); // persist any pending edit before rewriting the file
     await this.loadTemplates();
     let anns = this.gatherAnnotations(item, win);
+    if (!anns.length && !this.hasPdfAttachment(item)) { this.setStatus(rec, this.t("status.noPdf")); return; }
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Sync read failed — " + e); return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.syncRead") + e); return; }
     let updated = win.ZONCore.syncBlocks(existing, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) });
     if (updated !== existing) {
-      try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, "Sync write failed — " + e); this.log("sync write failed: " + e); return; }
+      try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, this.t("err.syncWrite") + e); this.log("sync write failed: " + e); return; }
     }
     rec.diskMtime = await this.noteMtime(rec.path);
     this.hideConflict(rec);
     this.mountEditor(rec, win, updated);
-    this.setStatus(rec, "Synced (" + anns.length + " annotation(s))");
+    this.setStatus(rec, this.t("status.synced", { count: anns.length }));
   },
 
   // Refresh: pull updated Zotero info into this note WITHOUT clobbering the user's
@@ -1523,14 +1614,15 @@ var ZON = {
     await this.flush(rec);
     await this.loadTemplates();
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Refresh read failed — " + e); return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.refreshRead") + e); return; }
     let merged = existing;
 
     let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
     if (scaffold) {
       try {
         let citekey = this.getCitekey(item);
-        let data = win.ZONCore.buildItemData(item, { citekey, importDate: new Date().toISOString() });
+        let bibliography = await this.getBibliography(item);
+        let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
         let fresh = win.ZONCore.render(scaffold, data);
         merged = win.ZONCore.mergeNote(existing, fresh, {
           userOwnedKeys: this.templateUserOwnedKeys(scaffold),
@@ -1545,12 +1637,12 @@ var ZON = {
     catch (e) { this.log("annotation refresh failed: " + e); }
 
     if (merged !== existing) {
-      try { await this.safeWrite(rec.path, merged); } catch (e) { this.setStatus(rec, "Refresh write failed — " + e); this.log("refresh write failed: " + e); return; }
+      try { await this.safeWrite(rec.path, merged); } catch (e) { this.setStatus(rec, this.t("err.refreshWrite") + e); this.log("refresh write failed: " + e); return; }
     }
     rec.diskMtime = await this.noteMtime(rec.path);
     this.hideConflict(rec);
     this.mountEditor(rec, win, merged);
-    this.setStatus(rec, "Refreshed metadata + " + anns.length + " annotation(s)");
+    this.setStatus(rec, this.t("status.refreshed", { count: anns.length }));
   },
 
   // Insert template `name` at the cursor. A document template is rendered whole;
@@ -1588,11 +1680,11 @@ var ZON = {
     if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
     await this.flush(rec);
     let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, "Migrate read failed — " + e); return; }
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.migrateRead") + e); return; }
     let res = win.ZONCore.migrateLegacyAnnotations(existing, {});
-    if (!res.changed) { this.setStatus(rec, "No legacy annotations found"); return; }
-    try { await this.safeWrite(rec.path, res.markdown); rec.diskMtime = await this.noteMtime(rec.path); } catch (e) { this.setStatus(rec, "Migrate write failed — " + e); this.log("migrate write failed: " + e); return; }
-    this.setStatus(rec, "Migrated — syncing…");
+    if (!res.changed) { this.setStatus(rec, this.t("status.noLegacy")); return; }
+    try { await this.safeWrite(rec.path, res.markdown); rec.diskMtime = await this.noteMtime(rec.path); } catch (e) { this.setStatus(rec, this.t("err.migrateWrite") + e); this.log("migrate write failed: " + e); return; }
+    this.setStatus(rec, this.t("status.migrating"));
     await this.syncAnnotations(rec); // fill the new live block from Zotero
   },
 };
