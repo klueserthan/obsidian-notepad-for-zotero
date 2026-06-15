@@ -18,6 +18,12 @@ First public release. Highlights:
 - **Auto-sync** — optional: highlights flow into the open note as you annotate.
 - **Create note from template** — for items with no note yet, populated with
   metadata and a formatted bibliography (via Zotero QuickCopy / APA fallback).
+- **Bulk note creation** — right-click one or more items in the library →
+  *Create Obsidian note(s)* to make a note for each (default template; existing
+  notes are skipped, never overwritten).
+- **Find DOI (Crossref)** — right-click items missing a DOI → look one up on
+  Crossref by title/author/year and fill it in. Only writes a confident match
+  (high title similarity + year check); never overwrites an existing DOI.
 - **Open in Obsidian** and **Migrate** (convert legacy annotation dumps to blocks).
 - **First-run onboarding** — detects your Obsidian vaults (`obsidian.json`) and
   lets you pick the vault + notes folder; **Browse…** folder pickers in Settings.
