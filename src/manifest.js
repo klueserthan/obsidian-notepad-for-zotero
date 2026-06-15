@@ -70,18 +70,26 @@ function parseEntries(fm) {
 
 // ── YAML-ish scalar quoting (we own both ends; Obsidian also parses it) ──────
 
-// Double-quote an expression so an inner `"` (e.g. `"{{title}}"`) survives a
-// round-trip through YAML.
+// Double-quote a value-template so it round-trips through YAML on ONE line: an
+// inner `"` (e.g. `"{{title}}"`) is escaped, and a newline (a multi-line field
+// like an Author/Topics list) is stored as `\n`. This is a valid YAML
+// double-quoted scalar, so Obsidian reads the multi-line value too.
 function quoteExpr(expr) {
-  return `"${String(expr).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${String(expr).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
 function unquoteExpr(raw) {
   const s = String(raw).trim();
-  if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') {
-    return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  if (s.length < 2 || s[0] !== '"' || s[s.length - 1] !== '"') return s;
+  const inner = s.slice(1, -1);
+  let out = "";
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === "\\" && i + 1 < inner.length) {
+      const c = inner[++i];
+      out += c === "n" ? "\n" : c; // \\ -> \, \" -> ", \n -> newline
+    } else out += inner[i];
   }
-  return s;
+  return out;
 }
 
 // ── public API ──────────────────────────────────────────────────────────────
@@ -116,13 +124,17 @@ export function applyManifest(md, itemData = {}, opts = {}) {
 
   const out = parseEntries(frontmatter).map((e) => {
     if (!e.key || e.key === MANIFEST_KEY || !manMap.has(e.key)) return e;
-    let val;
+    const expr = manMap.get(e.key);
+    // A multi-line value template starts with a newline (e.g. an Author/Topics
+    // list `Author:\n{% for … %}`); a scalar gets the usual `Key: ` space.
+    const sep = expr.startsWith("\n") ? "" : " ";
+    let rendered;
     try {
-      val = env.renderString(manMap.get(e.key), itemData).replace(/\s+$/, "");
+      rendered = env.renderString(`${e.key}:${sep}${expr}`, itemData).replace(/\s+$/, "");
     } catch (err) {
       return e; // leave the key untouched on a bad expression
     }
-    return { key: e.key, lines: [`${e.key}: ${val}`] };
+    return { key: e.key, lines: rendered.split("\n") };
   });
 
   return assemble(out.map((e) => e.lines.join("\n")).join("\n"), body);
@@ -170,22 +182,27 @@ export function removeManifestEntry(md, key) {
   return assemble(kept.map((e) => e.lines.join("\n")).join("\n"), body);
 }
 
-// Build a manifest from a note.md scaffold's frontmatter: each SINGLE-LINE value
-// template (e.g. `Title: "{{title}}"`) becomes a managed expression. Multi-line
-// (block-list) keys like Author/Topics are skipped so migration never reformats
-// them — they can be managed explicitly later via setManifestEntry. `reserved`
-// keys (user-owned, e.g. KeyIdea) are always skipped. Returns { Key: expr }.
+// Build a manifest from a note.md scaffold's frontmatter — fully template-driven:
+// EVERY field whose value contains a Nunjucks expression (`{{ … }}` or `{% … %}`)
+// becomes a managed entry, single-line OR multi-line (an Author/Topics list is
+// managed with the template's own formatting). Fields with a purely static value
+// or an empty value (e.g. a blank `KeyIdea:`) carry no expression, so they are
+// left user-owned. No field NAMES are hard-coded — the user's template decides
+// what syncs and how (they may call Title something else, format journal links
+// their own way, etc.). The stored value is everything after `Key:` (the leading
+// `Key: ` space is dropped for scalars and re-added by applyManifest).
+// `reserved` keys are skipped (only the manifest key itself, by default).
 export function buildManifestFromScaffold(scaffoldMd, opts = {}) {
-  const reserved = new Set(opts.reserved || ["KeyIdea", MANIFEST_KEY]);
+  const reserved = new Set(opts.reserved || [MANIFEST_KEY]);
   const { frontmatter } = splitNote(scaffoldMd);
   if (frontmatter == null) return {};
   const map = {};
   for (const e of parseEntries(frontmatter)) {
     if (!e.key || reserved.has(e.key)) continue;
-    if (e.lines.length !== 1) continue; // multi-line value -> not auto-managed
-    const m = e.lines[0].match(TOP_KEY_RE);
-    const value = (m ? m[2] : "").trim();
-    if (!value) continue; // empty value (e.g. `KeyIdea:`) -> nothing to sync
+    const full = e.lines.join("\n");
+    if (!/\{\{|\{%/.test(full)) continue; // no expression -> static/empty -> user-owned
+    let value = full.slice(full.indexOf(":") + 1);
+    if (value.startsWith(" ")) value = value.slice(1); // drop the scalar `Key: ` space
     map[e.key] = value;
   }
   return map;

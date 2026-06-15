@@ -187,6 +187,7 @@ var ZON = {
     "btn.insert": "Insert",
     "btn.refresh": "Refresh",
     "btn.migrate": "Migrate",
+    "btn.manageFields": "Manage fields",
     "btn.openObsidian": "Open in Obsidian",
     "btn.reload": "Reload",
     "btn.createNote": "Create note",
@@ -203,6 +204,7 @@ var ZON = {
     "tip.insert": "Insert the selected template at the cursor",
     "tip.refresh": "Pull updated metadata + annotations from Zotero — keeps your own fields, prose and edits",
     "tip.migrate": "Convert a legacy annotation dump into a live block",
+    "tip.manageFields": "Give this note a self-contained zon: manifest so every field your template fills (Title, Author, Topics…) keeps syncing from Zotero — independent of later template edits. Static fields stay yours.",
     "tip.reload": "Re-read this note from disk",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
     "tip.showMarkers": "Show the raw %% zon %% / %% ann %% provenance markers and the zon: block. Off = hidden (like Obsidian reading mode); the file always keeps them.",
@@ -219,6 +221,8 @@ var ZON = {
     "status.autoSynced": "Auto-synced ({count} annotation(s))",
     "status.refreshed": "Refreshed metadata + {count} annotation(s)",
     "status.migrating": "Migrated — syncing…",
+    "status.fieldsManaged": "Managing {count} field(s) — synced",
+    "status.noScaffold": "No note template found — set a Templates folder in Settings",
     "status.noLegacy": "No legacy annotations found",
     "status.noPdf": "This item has no PDF attachment to read annotations from",
     "status.vaultUnset": "Set your Obsidian vault in Settings first",
@@ -887,6 +891,7 @@ var ZON = {
     let refreshBtn = h("button"); refreshBtn.textContent = this.t("btn.refresh");
     refreshBtn.title = this.t("tip.refresh");
     let migrateBtn = h("button"); migrateBtn.textContent = this.t("btn.migrate"); migrateBtn.title = this.t("tip.migrate");
+    let manageBtn = h("button"); manageBtn.textContent = this.t("btn.manageFields"); manageBtn.title = this.t("tip.manageFields");
     let openBtn = h("button"); openBtn.textContent = this.t("btn.openObsidian");
     let reloadBtn = h("button"); reloadBtn.textContent = this.t("btn.reload"); reloadBtn.title = this.t("tip.reload");
     let status = h("span", "zon-status");
@@ -921,7 +926,7 @@ var ZON = {
     // note-level actions.
     let row1 = h("div", "zon-row"); row1.append(templateSel, insertBtn);
     let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel, markersLabel);
-    let row3 = h("div", "zon-row"); row3.append(refreshBtn, syncLabel, migrateBtn, openBtn, reloadBtn);
+    let row3 = h("div", "zon-row"); row3.append(refreshBtn, syncLabel, migrateBtn, manageBtn, openBtn, reloadBtn);
     toolbar.append(row1, row2, row3, status);
 
     // When the template changes, reflect its pinned defaults (colour/sync).
@@ -1002,6 +1007,7 @@ var ZON = {
         .catch((e) => this.log("insert failed: " + e)));
     refreshBtn.addEventListener("click", () => this.refreshNote(rec).catch((e) => this.log("refresh failed: " + e)));
     migrateBtn.addEventListener("click", () => this.migrateNote(rec).catch((e) => this.log("migrate failed: " + e)));
+    manageBtn.addEventListener("click", () => this.manageFields(rec).catch((e) => this.log("manage-fields failed: " + e)));
     reloadBtn.addEventListener("click", () => this.reload(rec, win));
     createBtn.addEventListener("click", () =>
       this.createNote(rec, rec.noteTplSel && rec.noteTplSel.value)
@@ -1666,19 +1672,32 @@ var ZON = {
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.refreshRead") + e); return; }
     let merged = existing;
 
-    let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
-    if (scaffold) {
+    if (win.ZONCore.hasManifest(existing)) {
+      // Self-contained path: this note carries its own `zon:` manifest, so refresh
+      // its managed frontmatter fields from the expressions stored IN the note —
+      // editing the scaffold later never retroactively changes it. Unmanaged keys,
+      // prose, and the body are untouched.
       try {
         let citekey = this.getCitekey(item);
         let bibliography = await this.getBibliography(item);
         let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
-        let fresh = win.ZONCore.render(scaffold, data);
-        merged = win.ZONCore.mergeNote(existing, fresh, {
-          userOwnedKeys: this.templateUserOwnedKeys(scaffold),
-          proseSections: ["notes", "annotations"], // the zon engine owns annotations
-          annotationSections: [],
-        });
-      } catch (e) { this.log("metadata refresh failed: " + e); merged = existing; }
+        merged = win.ZONCore.applyManifest(existing, data);
+      } catch (e) { this.log("manifest refresh failed: " + e); merged = existing; }
+    } else {
+      let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
+      if (scaffold) {
+        try {
+          let citekey = this.getCitekey(item);
+          let bibliography = await this.getBibliography(item);
+          let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
+          let fresh = win.ZONCore.render(scaffold, data);
+          merged = win.ZONCore.mergeNote(existing, fresh, {
+            userOwnedKeys: this.templateUserOwnedKeys(scaffold),
+            proseSections: ["notes", "annotations"], // the zon engine owns annotations
+            annotationSections: [],
+          });
+        } catch (e) { this.log("metadata refresh failed: " + e); merged = existing; }
+      }
     }
 
     let anns = this.gatherAnnotations(item, win);
@@ -1692,6 +1711,41 @@ var ZON = {
     this.hideConflict(rec);
     this.mountEditor(rec, win, merged);
     this.setStatus(rec, this.t("status.refreshed", { count: anns.length }));
+  },
+
+  // Manage fields (opt-in): give this note a self-contained `zon:` frontmatter
+  // manifest built from the active note scaffold, so every field the scaffold
+  // templates (Title/Author/Topics/… — whatever YOU named and formatted) syncs
+  // from Zotero from now on, independent of any later scaffold edits. Then refresh
+  // those fields once. Static/empty fields stay user-owned. Idempotent to re-run.
+  async manageFields(rec) {
+    let item = rec.item;
+    if (!item || !rec.path) return;
+    let win = rec.host.ownerDocument.defaultView;
+    if (!win.ZONCore) await this.injectCore(win);
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
+    await this.flush(rec);
+    await this.loadTemplates();
+    let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
+    if (!scaffold) { this.setStatus(rec, this.t("status.noScaffold")); return; }
+    let existing = "";
+    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.refreshRead") + e); return; }
+    let map = win.ZONCore.buildManifestFromScaffold(scaffold);
+    let withManifest = win.ZONCore.writeManifest(existing, map);
+    let updated = withManifest;
+    try {
+      let citekey = this.getCitekey(item);
+      let bibliography = await this.getBibliography(item);
+      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
+      updated = win.ZONCore.applyManifest(withManifest, data);
+    } catch (e) { this.log("manage-fields apply failed: " + e); }
+    if (updated !== existing) {
+      try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, this.t("err.refreshWrite") + e); return; }
+    }
+    rec.diskMtime = await this.noteMtime(rec.path);
+    this.hideConflict(rec);
+    this.mountEditor(rec, win, updated);
+    this.setStatus(rec, this.t("status.fieldsManaged", { count: Object.keys(map).length }));
   },
 
   // Insert template `name` at the cursor. A document template is rendered whole;

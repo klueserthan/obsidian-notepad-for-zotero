@@ -109,32 +109,46 @@ describe("buildManifestFromScaffold", () => {
     "utf8"
   );
 
-  it("auto-manages single-line scalar fields only", () => {
+  it("manages every template-bearing field, single-line OR multi-line", () => {
     const map = buildManifestFromScaffold(scaffold);
+    // Fully template-driven: whatever the scaffold templates, gets managed —
+    // including the multi-line Author/Topics/Tags lists.
     expect(Object.keys(map).sort()).toEqual(
-      ["Journal", "Title", "Year", "ZoteroLink", "citekey"].sort()
+      ["Author", "Journal", "Tags", "Title", "Topics", "Year", "ZoteroLink", "citekey"].sort()
     );
   });
 
-  it("skips multi-line block-list fields (no silent reformatting)", () => {
-    const map = buildManifestFromScaffold(scaffold);
-    expect(map).not.toHaveProperty("Author");
-    expect(map).not.toHaveProperty("Topics");
-    expect(map).not.toHaveProperty("Tags");
-  });
-
-  it("skips reserved/empty keys (KeyIdea)", () => {
+  it("leaves a static/empty field (no expression) user-owned", () => {
+    // KeyIdea is blank in the scaffold -> carries no {{ }} -> not managed.
     expect(buildManifestFromScaffold(scaffold)).not.toHaveProperty("KeyIdea");
   });
 
-  it("the built manifest round-trips and refreshes a note", () => {
+  it("never hard-codes field names — a custom-named field is managed too", () => {
+    const custom = `---\nMyTitle: "{{title}}"\nNotes:\n---\nbody\n`;
+    const map = buildManifestFromScaffold(custom);
+    expect(map).toHaveProperty("MyTitle");
+    expect(map).not.toHaveProperty("Notes"); // static/empty
+  });
+
+  it("round-trips and refreshes a SINGLE-LINE field idempotently", () => {
     const map = buildManifestFromScaffold(scaffold);
-    const note = `---\nTitle: "stale"\nYear: "1900"\nKeyIdea:\n---\nbody\n`;
+    const note = `---\nTitle: "stale"\nYear: "1900"\nKeyIdea: keep me\n---\nbody\n`;
     const managed = writeManifest(note, map);
     const out = applyManifest(managed, ITEM);
     expect(out).toContain(`Title: "A New Title"`);
     expect(out).toContain(`Year: "2020"`);
-    // idempotent after migration too
-    expect(applyManifest(out, ITEM)).toBe(out);
+    expect(out).toContain("KeyIdea: keep me"); // unmanaged, preserved
+    expect(applyManifest(out, ITEM)).toBe(out); // idempotent
+  });
+
+  it("round-trips and refreshes a MULTI-LINE list field idempotently", () => {
+    const map = buildManifestFromScaffold(scaffold);
+    // A note whose Author is stale; manage it from the scaffold's list template.
+    const note = `---\nAuthor:\n - "[[Old Name]]"\nKeyIdea:\n---\nbody\n`;
+    const managed = writeManifest(note, map);
+    const out = applyManifest(managed, ITEM);
+    expect(out).toContain(`- "[[Jane Doe]]"`); // re-rendered from creators
+    expect(out).not.toContain("Old Name");      // stale list replaced
+    expect(applyManifest(out, ITEM)).toBe(out);  // idempotent on the multi-line value
   });
 });
