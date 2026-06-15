@@ -1398,13 +1398,33 @@ var ZON = {
     } catch (e) { this.log("bibliography failed: " + e); return ""; }
   },
 
+  // The opts every syncBlocks / makeBlock call needs: the citekey, the format map,
+  // AND the item's data context — so kind=field/section/custom blocks render and
+  // refresh from Zotero just like annotation blocks do. `bibliography` is optional:
+  // pass it where it has already been computed; the realtime auto-sync path omits
+  // it (QuickCopy is comparatively costly and field elements rarely use it).
+  syncOpts(win, item, extra = {}) {
+    let citekey = item ? this.getCitekey(item) : "";
+    let itemData = {};
+    if (item && win.ZONCore) {
+      try {
+        itemData = win.ZONCore.buildItemData(item, {
+          citekey,
+          bibliography: extra.bibliography || "",
+          importDate: new Date().toISOString(),
+        });
+      } catch (e) { this.log("buildItemData failed: " + e); }
+    }
+    return { citekey, formats: this.formatMap(win), itemData };
+  },
+
   async renderDocument(win, item, templateText) {
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
-    try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win) }); } catch (e) {}
+    try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data }); } catch (e) {}
     return md;
   },
 
@@ -1418,11 +1438,27 @@ var ZON = {
       return this.renderDocument(win, item, text);
     }
     if (t.kind === "document") return this.renderDocument(win, item, t.text);
-    let citekey = this.getCitekey(item);
     let anns = this.gatherAnnotations(item, win);
-    let cfg = { kind: "annotations", colour: (t.defaults && t.defaults.colour) || "all",
-      sync: (t.defaults && t.defaults.sync === "off") ? "off" : "on", format: name };
-    return win.ZONCore.makeBlock(cfg, anns, { citekey, formats: this.formatMap(win) }) + "\n";
+    let bibliography = await this.getBibliography(item);
+    let blockOpts = this.syncOpts(win, item, { bibliography });
+    let cfg = this.blockConfigFor(t, name, {});
+    return win.ZONCore.makeBlock(cfg, anns, blockOpts) + "\n";
+  },
+
+  // Build a `%% zon %%` block config for inserting/creating from template `t`
+  // (named `name`). A template declares its element kind via its `%%! kind=… %%`
+  // directive (defaults.kind): "field"/"section"/"custom" render the named body
+  // once over the item's data; anything else (incl. the default) is an annotations
+  // block filtered by colour. `over` may override colour/sync at insert time.
+  blockConfigFor(t, name, over = {}) {
+    let d = (t && t.defaults) || {};
+    let kind = d.kind && d.kind !== "annotations" ? d.kind : "annotations";
+    let sync = over.sync != null
+      ? (over.sync === "off" ? "off" : "on")
+      : (d.sync === "off" ? "off" : "on");
+    if (kind !== "annotations") return { kind, sync, format: name };
+    let colour = over.colour || d.colour || "all";
+    return { kind: "annotations", colour, sync, format: name };
   },
 
   // Create @<citekey>.md from the chosen template (any template — a whole-note
@@ -1590,7 +1626,7 @@ var ZON = {
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
     let anns = this.gatherAnnotations(item, win);
     let updated;
-    try { updated = win.ZONCore.syncBlocks(existing, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) }); }
+    try { updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item)); }
     catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
     if (updated === existing) return; // nothing to do — no write, no caret disruption
     try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
@@ -1652,7 +1688,7 @@ var ZON = {
     if (!anns.length && !this.hasPdfAttachment(item)) { this.setStatus(rec, this.t("status.noPdf")); return; }
     let existing = "";
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.syncRead") + e); return; }
-    let updated = win.ZONCore.syncBlocks(existing, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) });
+    let updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item));
     if (updated !== existing) {
       try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, this.t("err.syncWrite") + e); this.log("sync write failed: " + e); return; }
     }
@@ -1679,24 +1715,27 @@ var ZON = {
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.refreshRead") + e); return; }
     let merged = existing;
 
+    // Build the item's data context ONCE (with bibliography) — reused by the
+    // frontmatter refresh below AND the live block sync, so kind=field/section
+    // blocks refresh from the same data and we only call QuickCopy once.
+    let citekey = this.getCitekey(item);
+    let bibliography = await this.getBibliography(item);
+    let data = {};
+    try { data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() }); }
+    catch (e) { this.log("buildItemData failed: " + e); }
+
     if (win.ZONCore.hasManifest(existing)) {
       // Self-contained path: this note carries its own `zon:` manifest, so refresh
       // its managed frontmatter fields from the expressions stored IN the note —
       // editing the scaffold later never retroactively changes it. Unmanaged keys,
       // prose, and the body are untouched.
       try {
-        let citekey = this.getCitekey(item);
-        let bibliography = await this.getBibliography(item);
-        let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
         merged = win.ZONCore.applyManifest(existing, data);
       } catch (e) { this.log("manifest refresh failed: " + e); merged = existing; }
     } else {
       let scaffold = await IOUtils.readUTF8(await this.noteTemplatePath()).catch(() => null);
       if (scaffold) {
         try {
-          let citekey = this.getCitekey(item);
-          let bibliography = await this.getBibliography(item);
-          let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
           let fresh = win.ZONCore.render(scaffold, data);
           merged = win.ZONCore.mergeNote(existing, fresh, {
             userOwnedKeys: this.templateUserOwnedKeys(scaffold),
@@ -1708,7 +1747,7 @@ var ZON = {
     }
 
     let anns = this.gatherAnnotations(item, win);
-    try { merged = win.ZONCore.syncBlocks(merged, anns, { citekey: this.getCitekey(item), formats: this.formatMap(win) }); }
+    try { merged = win.ZONCore.syncBlocks(merged, anns, { citekey, formats: this.formatMap(win), itemData: data }); }
     catch (e) { this.log("annotation refresh failed: " + e); }
 
     if (merged !== existing) {
@@ -1770,11 +1809,12 @@ var ZON = {
     if (t.kind === "document") {
       text = item ? await this.renderDocument(win, item, t.text) : (t.text || "");
     } else {
-      let d = t.defaults || {};
-      let colour = opts.colour || d.colour || "all";
       let anns = item ? this.gatherAnnotations(item, win) : [];
-      let cfg = { kind: "annotations", colour, sync: opts.sync === "off" ? "off" : "on", format: name };
-      text = win.ZONCore.makeBlock(cfg, anns, { citekey: item ? this.getCitekey(item) : "", formats: this.formatMap(win) });
+      let cfg = this.blockConfigFor(t, name, { colour: opts.colour, sync: opts.sync });
+      // Compute bibliography for the first render of a field/section element; an
+      // annotations block doesn't need it (skip the QuickCopy cost).
+      let bibliography = (item && cfg.kind !== "annotations") ? await this.getBibliography(item) : "";
+      text = win.ZONCore.makeBlock(cfg, anns, this.syncOpts(win, item, { bibliography }));
     }
     rec.lib.insertAtCursor(rec.view, "\n" + String(text).trim() + "\n");
     // The edit fires the debounced save automatically (onEdit).

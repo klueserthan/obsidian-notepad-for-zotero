@@ -38,7 +38,7 @@ existing `Zotero Template.md`. Nothing new to learn. You have `{{ variable }}`,
 | `{{citekey}}`   | the item's citekey                                     |
 | `{{imageBaseName}}` | filename for an image annotation                   |
 
-### Variables in `note.md` (whole-item)
+### Variables in `note.md` and in a `kind=field` element (whole-item)
 
 `{{citekey}}`, `{{title}}`, `{{date}}`, `{{itemType}}`, `{{publicationTitle}}`,
 `{{abstractNote}}`, `{{bibliography}}`, `{{desktopURI}}`, `{{creators}}` (each has
@@ -67,6 +67,15 @@ A block template *may* begin with one special line that pins its defaults:
     inserts a frozen one-time snapshot.
   - **`sep`** — how rendered annotations are joined: `blank` (blank line between)
     or `newline`. If omitted it's inferred (multi-line bodies get a blank line).
+  - **`kind`** — what *kind* of element this template inserts:
+    - omitted / `annotations` (default) — a live annotations block (everything
+      above): the body is rendered once **per highlight**, filtered by colour.
+    - `field` / `section` / `custom` — a **metadata element**: the body is rendered
+      **once over the item's data** (Title, abstract, citation, …) and refreshes
+      from Zotero like an annotations block does. Use this for, e.g., an abstract
+      panel or a formatted citation that stays in sync. A `kind=field` template
+      uses the *whole-item* variables below, not the per-annotation ones, and
+      ignores `colour` (there are no highlights to filter).
 
 Anything you set in the toolbar at Insert time overrides these defaults.
 
@@ -95,6 +104,8 @@ hand — Insert does it. `format=` records which template produced the block.
 - **`key-quote.md`** — blockquote, pinned to `yellow` (`%%! colour=yellow %%`).
 - **`critique.md`** — red callout, pinned to `red`.
 - **`snapshot.md`** — a frozen one-time list (`%%! sync=off %%`).
+- **`abstract.md`** — a `kind=field` element: the item's abstract in a callout,
+  kept in sync (`%%! kind=field %%`).
 
 Copy any of these to make your own. Rename freely — the filename is the label.
 The built-in templates `list`, `quote`, `callout`, `compact` are always present

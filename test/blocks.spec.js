@@ -237,4 +237,31 @@ describe("makeBlock", () => {
     expect(blk).toMatch(/\n%% \/zon %%$/);
     expect(blk).toContain("yellow point");
   });
+
+  // A field/section/custom element inserts and refreshes from item data the same
+  // way an annotations block refreshes from highlights — the insert UX relies on
+  // this end-to-end round-trip (Phase C).
+  it("round-trips a kind=field element through makeBlock + syncBlocks", () => {
+    const formats = { abstract: { item: "> {{abstract}}", sep: "\n" } };
+    const cfg = { kind: "field", sync: "on", format: "abstract" };
+    const blk = makeBlock(cfg, [], { formats, itemData: { abstract: "first" } });
+    expect(blk).toMatch(/^%% zon kind=field sync=on format=abstract %%\n/);
+    expect(blk).toContain("> first");
+
+    // Re-sync over CHANGED item data regenerates the body...
+    const note = `# Notes\n\n${blk}\n`;
+    const refreshed = syncBlocks(note, [], { formats, itemData: { abstract: "second" } });
+    expect(refreshed).toContain("> second");
+    expect(refreshed).not.toContain("> first");
+    // ...and is idempotent over identical data.
+    expect(syncBlocks(refreshed, [], { formats, itemData: { abstract: "second" } })).toBe(refreshed);
+  });
+
+  it("freezes a sync=off field element on refresh", () => {
+    const formats = { abstract: { item: "> {{abstract}}", sep: "\n" } };
+    const blk = makeBlock({ kind: "field", sync: "off", format: "abstract" }, [], { formats, itemData: { abstract: "frozen" } });
+    const out = syncBlocks(`x\n\n${blk}\n`, [], { formats, itemData: { abstract: "changed" } });
+    expect(out).toContain("> frozen");
+    expect(out).not.toContain("> changed");
+  });
 });
