@@ -3,7 +3,7 @@
 // bootstrap.js. We don't write an editor — we wrap CM6, the same engine Obsidian
 // uses — and expose a tiny imperative API the plugin drives.
 
-import { EditorState, Compartment, StateField } from "@codemirror/state";
+import { EditorState, Compartment, StateField, StateEffect } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -19,7 +19,8 @@ import {
 } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { yamlFrontmatter } from "@codemirror/lang-yaml";
-import { findMarkerRanges } from "../src/markers.js";
+import { findMarkerRanges, rangeRevealed } from "../src/markers.js";
+import { findFrontmatterRange, findHeadingRanges, findLinkRanges } from "../src/preview.js";
 import {
   syntaxHighlighting,
   defaultHighlightStyle,
@@ -60,6 +61,20 @@ function makeTheme(dark) {
       "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
         backgroundColor: sel,
       },
+      // Reading view (Phase E): rendered inline links and ATX headings. The
+      // markdown syntax is hidden by replace decorations; these style what's left.
+      ".cm-zon-link": {
+        color: dark ? "#6cb6ff" : "#0b6bcb",
+        textDecoration: "underline",
+        cursor: "pointer",
+      },
+      ".cm-zon-h": { fontWeight: "700", color: dark ? "#6cb6ff" : "#1a4f8a" },
+      ".cm-zon-h1": { fontSize: "1.6em" },
+      ".cm-zon-h2": { fontSize: "1.4em" },
+      ".cm-zon-h3": { fontSize: "1.2em" },
+      ".cm-zon-h4": { fontSize: "1.1em" },
+      ".cm-zon-h5": { fontSize: "1.0em" },
+      ".cm-zon-h6": { fontSize: "0.92em", opacity: "0.85" },
     },
     { dark }
   );
@@ -98,75 +113,160 @@ export function setDark(view, dark) {
   try { view.dispatch({ effects: themeCompartment.reconfigure(themeExtensions(!!dark)) }); } catch (e) {}
 }
 
-// ── Phase D: marker presentation layer ──────────────────────────────────────
+// ── Phase D + E: presentation layer ─────────────────────────────────────────
 //
-// The note's provenance markers (`%% zon … %%`, `%% /zon %%`, the per-annotation
-// `%% ann:KEY %%` anchors, and the reserved `zon:` frontmatter block) are
-// invisible in Obsidian reading mode but raw text here. This layer mimics
-// Obsidian: hide each marker with a zero-width replace decoration, REVEAL it
-// (show the raw text) when the cursor/selection touches it so it stays editable,
-// and treat each hidden marker as one atomic unit for cursor motion / backspace.
-// A "Show markers" toggle reconfigures the compartment to drop the field and
-// reveal every marker (plus the zon: block) at once. The file is never changed —
-// this is purely presentational, so Obsidian and the on-disk note keep the
-// markers. Range math is the pure findMarkerRanges (src/markers.js).
+// The note's raw markdown source carries things that Obsidian renders or hides:
+//   • provenance markers — `%% zon … %%`, `%% /zon %%`, `%% ann:KEY %%`, and the
+//     reserved `zon:` frontmatter manifest (Phase D);
+//   • the YAML frontmatter block (Phase E — show/hide toggle);
+//   • inline links `[label](target)` and ATX headings `## …` (Phase E — reading
+//     view renders these: hide the syntax, keep+style what's shown).
 //
-// This MUST be a StateField, not a ViewPlugin: the reserved `zon:` frontmatter
-// manifest is a MULTI-LINE marker, and a replace decoration that spans a line
-// break may only be supplied via the state (a ViewPlugin throws "Decorations
-// that replace line breaks may not be specified via plugins").
-function buildMarkerDecorations(state) {
-  const ranges = findMarkerRanges(state.doc.toString());
-  const sel = state.selection.ranges;
-  const decos = [];
-  for (const r of ranges) {
-    if (r.from >= r.to) continue;
-    // reveal-on-cursor: skip any marker the selection touches
-    let revealed = false;
-    for (const s of sel) {
-      if (s.to >= r.from && s.from <= r.to) { revealed = true; break; }
-    }
-    if (!revealed) decos.push(Decoration.replace({}).range(r.from, r.to));
-  }
-  return Decoration.set(decos, true);
-}
+// All of this is ONE config-driven StateField so the hide (replace) decorations
+// can never overlap across concerns — in particular the "hide whole frontmatter"
+// range would otherwise collide with the "hide zon: manifest" range, and CM
+// throws on overlapping replace decorations. Each hideable range is REVEALED
+// (shown raw) when the cursor/selection touches it, so everything stays editable,
+// and every hidden range is atomic for cursor motion / backspace. The file is
+// never changed — purely presentational; Obsidian and the on-disk note are
+// untouched. Range math is pure (src/markers.js, src/preview.js).
+//
+// It MUST be a StateField, not a ViewPlugin: hidden ranges (the multi-line zon:
+// manifest, a hidden multi-line frontmatter) span line breaks, and a replace
+// decoration that spans a line break may only be supplied via the state.
 
-const markerField = StateField.define({
-  create: (state) => buildMarkerDecorations(state),
-  update: (deco, tr) =>
-    tr.docChanged || tr.selection ? buildMarkerDecorations(tr.state) : deco,
-  provide: (f) => EditorView.decorations.from(f),
+// Per-editor presentation config, updated live via setPresentation effects.
+const setPresentation = StateEffect.define();
+const presentationConfig = StateField.define({
+  create: () => ({ showMarkers: false, readMode: true, showFrontmatter: true }),
+  update(val, tr) {
+    let v = val;
+    for (const e of tr.effects) if (e.is(setPresentation)) v = { ...v, ...e.value };
+    return v;
+  },
 });
 
-// Atomic ranges so arrow keys / backspace step over a hidden marker as a unit
-// instead of landing inside invisible text.
-const markerAtomic = EditorView.atomicRanges.of(
-  (view) => view.state.field(markerField, false) || Decoration.none
-);
+function buildPresentation(state) {
+  const cfg = state.field(presentationConfig);
+  const doc = state.doc;
+  const text = doc.toString();
+  const sel = state.selection.ranges;
+  const touched = (from, to) => sel.some((s) => rangeRevealed({ from, to }, s.from, s.to));
 
-// Compartment so the "Show markers" toggle can switch hiding on/off on a live
-// editor without remounting. Default = markers hidden (field active).
-const markersCompartment = new Compartment();
-function markerExtension(showMarkers) {
-  return showMarkers ? [] : [markerField, markerAtomic];
+  const hide = []; // {from,to} → replace (and atomic)
+  const marks = []; // {from,to,deco} → mark decorations (styling only)
+
+  const fm = findFrontmatterRange(text);
+  const hideFM = !cfg.showFrontmatter && !!fm;
+
+  // 1. Frontmatter — hidden entirely when toggled off. (No reveal-on-cursor: the
+  //    block starts at offset 0, which the default doc-start cursor always
+  //    "touches", so it would never actually hide; toggle Frontmatter back on to
+  //    edit it.)
+  if (hideFM) hide.push({ from: fm.from, to: fm.to });
+
+  // 2. Provenance markers — unless "Show markers", and skipping any inside a
+  //    frontmatter we're already hiding whole (would overlap).
+  if (!cfg.showMarkers) {
+    for (const r of findMarkerRanges(text)) {
+      if (r.from >= r.to) continue;
+      if (hideFM && r.from >= fm.from && r.to <= fm.to) continue;
+      if (!touched(r.from, r.to)) hide.push({ from: r.from, to: r.to });
+    }
+  }
+
+  // 3. Reading view — render headings and inline links.
+  if (cfg.readMode) {
+    for (const h of findHeadingRanges(text)) {
+      // Style the heading text big; hide the "## " prefix unless the line's touched.
+      if (h.markTo < h.lineTo)
+        marks.push({ from: h.markTo, to: h.lineTo, deco: Decoration.mark({ class: "cm-zon-h cm-zon-h" + h.level }) });
+      if (!touched(h.lineFrom, h.lineTo) && h.markTo > h.markFrom) hide.push({ from: h.markFrom, to: h.markTo });
+    }
+    for (const l of findLinkRanges(text)) {
+      if (touched(l.from, l.to)) continue; // editing this link → leave it raw
+      hide.push({ from: l.openFrom, to: l.openTo }); // "["
+      hide.push({ from: l.closeFrom, to: l.closeTo }); // "](target)"
+      marks.push({
+        from: l.labelFrom, to: l.labelTo,
+        deco: Decoration.mark({ class: "cm-zon-link", attributes: { "data-zon-href": l.target } }),
+      });
+    }
+  }
+
+  // Drop any hide range overlapping an earlier one (defensive — they shouldn't,
+  // but a stray overlap would crash CM rather than just look wrong).
+  hide.sort((a, b) => a.from - b.from || b.to - a.to);
+  const kept = [];
+  let lastTo = -1;
+  for (const r of hide) {
+    if (r.from < lastTo) continue;
+    kept.push(r);
+    lastTo = r.to;
+  }
+
+  const all = [];
+  for (const r of kept) all.push(Decoration.replace({}).range(r.from, r.to));
+  for (const m of marks) all.push(m.deco.range(m.from, m.to));
+  return {
+    deco: Decoration.set(all, true),
+    atomic: Decoration.set(kept.map((r) => Decoration.replace({}).range(r.from, r.to)), true),
+  };
 }
 
-// Toggle raw-marker visibility on an existing view. show=true reveals everything.
+const presentationField = StateField.define({
+  create: (state) => buildPresentation(state),
+  update: (val, tr) =>
+    tr.docChanged || tr.selection || tr.effects.some((e) => e.is(setPresentation))
+      ? buildPresentation(tr.state)
+      : val,
+  provide: (f) => [
+    EditorView.decorations.from(f, (v) => v.deco),
+    EditorView.atomicRanges.from(f, (v) => v.atomic),
+  ],
+});
+
+// Live toggles — each dispatches a config effect; the field recomputes.
 export function setShowMarkers(view, show) {
   if (!view) return;
-  try {
-    view.dispatch({ effects: markersCompartment.reconfigure(markerExtension(!!show)) });
-  } catch (e) {}
+  try { view.dispatch({ effects: setPresentation.of({ showMarkers: !!show }) }); } catch (e) {}
+}
+export function setReadMode(view, on) {
+  if (!view) return;
+  try { view.dispatch({ effects: setPresentation.of({ readMode: !!on }) }); } catch (e) {}
+}
+export function setShowFrontmatter(view, show) {
+  if (!view) return;
+  try { view.dispatch({ effects: setPresentation.of({ showFrontmatter: !!show }) }); } catch (e) {}
 }
 
 // `editable` controls whether the buffer can be typed into. `dark` selects the
 // light/dark colour scheme (detected from Zotero's theme by bootstrap).
-// `showMarkers` starts the editor with raw markers visible (default: hidden).
-export function create({ parent, doc, onChange, editable = true, dark = false, showMarkers = false }) {
+// Presentation flags: `showMarkers` reveals raw provenance markers (default off),
+// `readMode` renders links/headings inline (default on), `showFrontmatter` keeps
+// the YAML block visible (default on). `onOpenLink(href)` is called when a
+// rendered inline link is clicked.
+export function create({ parent, doc, onChange, editable = true, dark = false,
+  showMarkers = false, readMode = true, showFrontmatter = true, onOpenLink } = {}) {
   const root = parent.getRootNode ? parent.getRootNode() : undefined;
 
   const updateListener = EditorView.updateListener.of((u) => {
     if (u.docChanged && onChange) onChange(u.state.doc.toString());
+  });
+
+  // Click a rendered link (its label carries data-zon-href) → open it, instead of
+  // just placing the cursor. Walk up from the click target to find the marked span.
+  const linkClicks = EditorView.domEventHandlers({
+    mousedown(e, view) {
+      if (!onOpenLink || e.button !== 0) return false;
+      let el = e.target;
+      while (el && el !== view.dom && !(el.getAttribute && el.getAttribute("data-zon-href"))) el = el.parentNode;
+      const href = el && el.getAttribute && el.getAttribute("data-zon-href");
+      if (!href) return false;
+      e.preventDefault();
+      try { onOpenLink(href); } catch (e2) {}
+      return true;
+    },
   });
 
   const state = EditorState.create({
@@ -185,7 +285,9 @@ export function create({ parent, doc, onChange, editable = true, dark = false, s
       // long-standing in-editor bug where the closing `---` turned the line above
       // it (ZoteroLink / KeyIdea) into a setext heading and rendered it bold.
       yamlFrontmatter({ content: markdown({ base: markdownLanguage }) }),
-      markersCompartment.of(markerExtension(showMarkers)),
+      presentationConfig.init(() => ({ showMarkers, readMode, showFrontmatter })),
+      presentationField,
+      linkClicks,
       keymap.of([
         ...closeBracketsKeymap,
         ...defaultKeymap,

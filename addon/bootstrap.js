@@ -33,6 +33,8 @@ var ZON = {
   PREF_DEFAULT_NOTE: "extensions.zotero-obsidian-notes.defaultNoteTemplate",
   PREF_AUTOSYNC: "extensions.zotero-obsidian-notes.autoSync",
   PREF_SHOWMARKERS: "extensions.zotero-obsidian-notes.showMarkers",
+  PREF_READMODE: "extensions.zotero-obsidian-notes.readMode",
+  PREF_SHOWFRONTMATTER: "extensions.zotero-obsidian-notes.showFrontmatter",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
   // configured yet", handled by the pane's empty state rather than guessed.
@@ -49,6 +51,8 @@ var ZON = {
   DEFAULT_DEFAULT_NOTE: "note", // which note scaffold "Create note" uses by default
   DEFAULT_AUTOSYNC: false, // live auto-sync of annotation blocks while you annotate (off by default — opt-in)
   DEFAULT_SHOWMARKERS: false, // editor presentation: hide %% zon/ann %% markers + zon: block by default (Obsidian-like)
+  DEFAULT_READMODE: true, // reading view: render links/headings inline by default (toggle off for raw source)
+  DEFAULT_SHOWFRONTMATTER: true, // show the YAML frontmatter by default (toggle off to hide it)
   _templates: null,
 
   // ---------------------------------------------------------------- lifecycle
@@ -200,6 +204,8 @@ var ZON = {
     "label.autoUpdate": "auto-update",
     "label.autoSync": "Auto-sync",
     "label.showMarkers": "Show markers",
+    "label.readMode": "Reading view",
+    "label.frontmatter": "Frontmatter",
     "tip.template": "Template — Insert it at the cursor, or use it to create a note",
     "tip.colour": "Only pull highlights of this colour",
     "tip.autoUpdate": "Keep inserted annotations in sync with Zotero (regenerate on Refresh). Uncheck to freeze them.",
@@ -210,6 +216,8 @@ var ZON = {
     "tip.reload": "Re-read this note from disk",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
     "tip.showMarkers": "Show the raw %% zon %% / %% ann %% provenance markers and the zon: block. Off = hidden (like Obsidian reading mode); the file always keeps them.",
+    "tip.readMode": "Reading view: render links and headings inline. Off = raw markdown source. Presentational only — the file is unchanged.",
+    "tip.frontmatter": "Show the YAML frontmatter block at the top of the note. Off = hide it (still saved to the file).",
     "tip.noteTpl": "Template to build this note from",
     "tip.setup": "Detect your Obsidian vaults (or choose a folder), then pick your notes folder",
     "tip.openSettings": "Configure paths manually in the Obsidian Notepad preferences",
@@ -436,6 +444,8 @@ var ZON = {
     seed(this.PREF_DEFAULT_NOTE, this.DEFAULT_DEFAULT_NOTE);
     seed(this.PREF_AUTOSYNC, this.DEFAULT_AUTOSYNC);
     seed(this.PREF_SHOWMARKERS, this.DEFAULT_SHOWMARKERS);
+    seed(this.PREF_READMODE, this.DEFAULT_READMODE);
+    seed(this.PREF_SHOWFRONTMATTER, this.DEFAULT_SHOWFRONTMATTER);
   },
 
   autoSyncEnabled() {
@@ -446,6 +456,14 @@ var ZON = {
   showMarkersEnabled() {
     try { let v = Zotero.Prefs.get(this.PREF_SHOWMARKERS, true); return v === undefined ? this.DEFAULT_SHOWMARKERS : !!v; }
     catch (e) { return this.DEFAULT_SHOWMARKERS; }
+  },
+  readModeEnabled() {
+    try { let v = Zotero.Prefs.get(this.PREF_READMODE, true); return v === undefined ? this.DEFAULT_READMODE : !!v; }
+    catch (e) { return this.DEFAULT_READMODE; }
+  },
+  showFrontmatterEnabled() {
+    try { let v = Zotero.Prefs.get(this.PREF_SHOWFRONTMATTER, true); return v === undefined ? this.DEFAULT_SHOWFRONTMATTER : !!v; }
+    catch (e) { return this.DEFAULT_SHOWFRONTMATTER; }
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -941,10 +959,33 @@ var ZON = {
       this.applyShowMarkersAll(markersChk.checked); // apply live + keep every open pane in step
     });
 
+    // "Reading view" toggle (GLOBAL pref) — renders links/headings inline in the
+    // editor (hides the markdown syntax). Off = raw source. Presentational only.
+    let readLabel = h("label");
+    readLabel.title = this.t("tip.readMode");
+    let readChk = h("input"); readChk.type = "checkbox"; readChk.checked = this.readModeEnabled();
+    let readSpan = h("span"); readSpan.textContent = this.t("label.readMode");
+    readLabel.append(readChk, readSpan);
+    readChk.addEventListener("change", () => {
+      try { Zotero.Prefs.set(this.PREF_READMODE, readChk.checked, true); } catch (e) {}
+      this.applyReadModeAll(readChk.checked);
+    });
+
+    // "Frontmatter" toggle (GLOBAL pref) — show/hide the YAML frontmatter block.
+    let frontLabel = h("label");
+    frontLabel.title = this.t("tip.frontmatter");
+    let frontChk = h("input"); frontChk.type = "checkbox"; frontChk.checked = this.showFrontmatterEnabled();
+    let frontSpan = h("span"); frontSpan.textContent = this.t("label.frontmatter");
+    frontLabel.append(frontChk, frontSpan);
+    frontChk.addEventListener("change", () => {
+      try { Zotero.Prefs.set(this.PREF_SHOWFRONTMATTER, frontChk.checked, true); } catch (e) {}
+      this.applyShowFrontmatterAll(frontChk.checked);
+    });
+
     // Tidy rows that wrap independently: primary action, insert options, then the
     // note-level actions.
     let row1 = h("div", "zon-row"); row1.append(templateSel, insertBtn);
-    let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel, markersLabel);
+    let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel, markersLabel, readLabel, frontLabel);
     let row3 = h("div", "zon-row"); row3.append(refreshBtn, syncLabel, migrateBtn, manageBtn, openBtn, reloadBtn);
     toolbar.append(row1, row2, row3, status);
 
@@ -1014,7 +1055,7 @@ var ZON = {
     // off-screen if the bar were below it).
     wrap.append(toolbar, conflict, host, banner, setup);
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, markersChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, markersChk, readChk, frontChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
     setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
     settingsBtn.addEventListener("click", () => this.openSettings(win));
@@ -1067,6 +1108,9 @@ var ZON = {
         onChange: function (text) { self.onEdit(rec, text); },
         dark: rec._lastDark,
         showMarkers: self.showMarkersEnabled(),
+        readMode: self.readModeEnabled(),
+        showFrontmatter: self.showFrontmatterEnabled(),
+        onOpenLink: function (href) { self.openLink(win, href); },
       });
       rec.loading = false;
       // Pin the host to the visible container width, then re-measure across a few
@@ -1912,6 +1956,36 @@ var ZON = {
       try { if (rec.markersChk && rec.markersChk.checked !== show) rec.markersChk.checked = show; } catch (e) {}
       try { if (rec.lib && rec.view && rec.lib.setShowMarkers) rec.lib.setShowMarkers(rec.view, show); } catch (e) {}
     }
+  },
+
+  // Apply the "Reading view" state to every open editor + keep checkboxes in step.
+  applyReadModeAll(on) {
+    for (let rec of this.openRecs()) {
+      try { if (rec.readChk && rec.readChk.checked !== on) rec.readChk.checked = on; } catch (e) {}
+      try { if (rec.lib && rec.view && rec.lib.setReadMode) rec.lib.setReadMode(rec.view, on); } catch (e) {}
+    }
+  },
+
+  // Apply the "Frontmatter" (show/hide) state to every open editor + checkboxes.
+  applyShowFrontmatterAll(show) {
+    for (let rec of this.openRecs()) {
+      try { if (rec.frontChk && rec.frontChk.checked !== show) rec.frontChk.checked = show; } catch (e) {}
+      try { if (rec.lib && rec.view && rec.lib.setShowFrontmatter) rec.lib.setShowFrontmatter(rec.view, show); } catch (e) {}
+    }
+  },
+
+  // Open a link clicked in the editor's reading view. zotero:// links navigate
+  // inside Zotero (select an item / open a PDF at an annotation); everything else
+  // (https, doi, obsidian) goes to the OS default handler.
+  openLink(win, url) {
+    try {
+      if (/^zotero:/i.test(url)) {
+        let zp = (Zotero.getActiveZoteroPane && Zotero.getActiveZoteroPane())
+          || (win && win.ZoteroPane) || null;
+        if (zp && zp.loadURI) { zp.loadURI(url); return; }
+      }
+      Zotero.launchURL(url);
+    } catch (e) { this.log("openLink failed: " + e); }
   },
 
   // Every currently-open editor rec across all main windows (light + shadow DOM).

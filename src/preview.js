@@ -1,0 +1,101 @@
+// Pure range-finders for the editor's live-preview layer (v2 Phase E).
+//
+// Like markers.js (Phase D), this computes WHERE things are as pure string work
+// with no CodeMirror dependency, so it unit-tests in Node; editor/editor.js turns
+// the ranges into Decorations (hide syntax / style label / reveal-on-cursor).
+//
+// Three finders:
+//   findFrontmatterRange(text)  → {from,to} of the leading `--- … ---` block, or null
+//   findHeadingRanges(text)     → ATX headings: hide the `#…# ` prefix, style the line
+//   findLinkRanges(text)        → `[label](target)` inline links: hide the syntax,
+//                                 keep+style the label, expose the target
+//
+// All offsets are character indices into `text`. Frontmatter (YAML) and fenced
+// code blocks are skipped by the heading/link scanners — a `#` in YAML or a
+// `[x](y)` inside ``` is left raw.
+
+// The leading YAML frontmatter fence, INCLUSIVE of both `---` lines. Returns null
+// when the note doesn't open with one. (Mirrors the fence the markers layer uses.)
+export function findFrontmatterRange(text) {
+  const s = String(text);
+  const m = s.match(/^---\n[\s\S]*?\n---(?=\n|$)/);
+  if (!m) return null;
+  return { from: 0, to: m[0].length };
+}
+
+// Walk body lines (after any frontmatter), tracking ``` / ~~~ fenced code so we
+// don't touch markup inside code. Calls cb(lineText, lineStartOffset) per
+// non-fence, non-frontmatter line. Fence delimiter lines themselves are skipped.
+function eachBodyLine(s, cb) {
+  const fm = findFrontmatterRange(s);
+  const bodyStart = fm ? fm.to : 0;
+  let offset = 0;
+  let inFence = false;
+  let fenceTok = "";
+  const lines = s.split("\n");
+  for (const line of lines) {
+    const lineStart = offset;
+    offset += line.length + 1;
+    if (lineStart < bodyStart) continue; // inside frontmatter
+    const fenceM = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceM) {
+      if (!inFence) { inFence = true; fenceTok = fenceM[1][0]; }
+      else if (fenceM[1][0] === fenceTok) { inFence = false; fenceTok = ""; }
+      continue; // never style a fence delimiter line
+    }
+    if (inFence) continue;
+    cb(line, lineStart);
+  }
+}
+
+const HEADING_RE = /^(#{1,6})([ \t]+)(\S.*)$/;
+
+// ATX headings only (a `# ` … `###### ` prefix followed by text). Setext (===
+// / --- underlines) are intentionally ignored — `---` is frontmatter/HR here.
+export function findHeadingRanges(text) {
+  const s = String(text);
+  const out = [];
+  eachBodyLine(s, (line, lineStart) => {
+    const m = line.match(HEADING_RE);
+    if (!m) return;
+    const level = m[1].length;
+    const markTo = lineStart + m[1].length + m[2].length; // after "###" + spaces
+    out.push({
+      level,
+      lineFrom: lineStart,
+      lineTo: lineStart + line.length,
+      markFrom: lineStart,
+      markTo,
+    });
+  });
+  return out;
+}
+
+// `[label](target)` inline links. Images (`![alt](src)`) and empty-label links
+// are left raw. Targets may not contain `)` or a newline — fine for the
+// zotero://, https:// and doi links these notes use.
+const LINK_RE = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+
+export function findLinkRanges(text) {
+  const s = String(text);
+  const out = [];
+  eachBodyLine(s, (line, lineStart) => {
+    LINK_RE.lastIndex = 0;
+    let m;
+    while ((m = LINK_RE.exec(line))) {
+      if (m[1] === "!") continue; // image embed — leave raw
+      const label = m[2];
+      const target = m[3];
+      const from = lineStart + m.index + m[1].length; // the "["
+      const to = lineStart + m.index + m[0].length; // after the ")"
+      const openFrom = from; // "["
+      const openTo = openFrom + 1;
+      const labelFrom = openTo;
+      const labelTo = labelFrom + label.length;
+      const closeFrom = labelTo; // the "](target)"
+      const closeTo = to;
+      out.push({ from, to, openFrom, openTo, labelFrom, labelTo, closeFrom, closeTo, label, target });
+    }
+  });
+  return out;
+}
