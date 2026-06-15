@@ -3,14 +3,13 @@
 // bootstrap.js. We don't write an editor — we wrap CM6, the same engine Obsidian
 // uses — and expose a tiny imperative API the plugin drives.
 
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, StateField } from "@codemirror/state";
 import {
   EditorView,
   keymap,
   drawSelection,
   highlightActiveLine,
   Decoration,
-  ViewPlugin,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -107,13 +106,18 @@ export function setDark(view, dark) {
 // Obsidian: hide each marker with a zero-width replace decoration, REVEAL it
 // (show the raw text) when the cursor/selection touches it so it stays editable,
 // and treat each hidden marker as one atomic unit for cursor motion / backspace.
-// A "Show markers" toggle reconfigures the compartment to drop the plugin and
+// A "Show markers" toggle reconfigures the compartment to drop the field and
 // reveal every marker (plus the zon: block) at once. The file is never changed —
 // this is purely presentational, so Obsidian and the on-disk note keep the
 // markers. Range math is the pure findMarkerRanges (src/markers.js).
-function buildMarkerDecorations(view) {
-  const ranges = findMarkerRanges(view.state.doc.toString());
-  const sel = view.state.selection.ranges;
+//
+// This MUST be a StateField, not a ViewPlugin: the reserved `zon:` frontmatter
+// manifest is a MULTI-LINE marker, and a replace decoration that spans a line
+// break may only be supplied via the state (a ViewPlugin throws "Decorations
+// that replace line breaks may not be specified via plugins").
+function buildMarkerDecorations(state) {
+  const ranges = findMarkerRanges(state.doc.toString());
+  const sel = state.selection.ranges;
   const decos = [];
   for (const r of ranges) {
     if (r.from >= r.to) continue;
@@ -127,32 +131,24 @@ function buildMarkerDecorations(view) {
   return Decoration.set(decos, true);
 }
 
-const markerHidePlugin = ViewPlugin.fromClass(
-  class {
-    constructor(view) { this.decorations = buildMarkerDecorations(view); }
-    update(u) {
-      if (u.docChanged || u.selectionSet || u.viewportChanged) {
-        this.decorations = buildMarkerDecorations(u.view);
-      }
-    }
-  },
-  {
-    decorations: (v) => v.decorations,
-    // Atomic ranges so arrow keys / backspace step over a hidden marker as a unit
-    // instead of landing inside invisible text.
-    provide: (plugin) =>
-      EditorView.atomicRanges.of((view) => {
-        const inst = view.plugin(plugin);
-        return inst ? inst.decorations : Decoration.none;
-      }),
-  }
+const markerField = StateField.define({
+  create: (state) => buildMarkerDecorations(state),
+  update: (deco, tr) =>
+    tr.docChanged || tr.selection ? buildMarkerDecorations(tr.state) : deco,
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+// Atomic ranges so arrow keys / backspace step over a hidden marker as a unit
+// instead of landing inside invisible text.
+const markerAtomic = EditorView.atomicRanges.of(
+  (view) => view.state.field(markerField, false) || Decoration.none
 );
 
-// Compartment so the "Show markers" toggle can switch the plugin on/off on a live
-// editor without remounting. Default = markers hidden (plugin active).
+// Compartment so the "Show markers" toggle can switch hiding on/off on a live
+// editor without remounting. Default = markers hidden (field active).
 const markersCompartment = new Compartment();
 function markerExtension(showMarkers) {
-  return showMarkers ? [] : markerHidePlugin;
+  return showMarkers ? [] : [markerField, markerAtomic];
 }
 
 // Toggle raw-marker visibility on an existing view. show=true reveals everything.
