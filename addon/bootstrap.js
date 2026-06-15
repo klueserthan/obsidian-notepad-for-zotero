@@ -1111,21 +1111,35 @@ var ZON = {
     let host = rec.host;
     if (!host || !host.isConnected) return;
     let win = host.ownerDocument.defaultView;
-    // Release our own width pin BEFORE measuring. A pinned host holds its
-    // ancestors open, so when the sidebar is dragged NARROWER the "narrowest
-    // ancestor" never shrinks below the stale pin — fitHost then re-pins too wide,
-    // the editor overflows the pane, and the Tags +/- controls get pushed
-    // off-screen (bug d). Clearing the pin lets the ancestors collapse to their
-    // true available width; reading clientWidth below forces the reflow. This all
-    // happens in one synchronous task, so the browser only paints the final
-    // (re-pinned) state — no flicker.
-    host.style.width = ""; host.style.maxWidth = "";
-    try { if (rec.wrap) { rec.wrap.style.width = ""; rec.wrap.style.maxWidth = ""; } } catch (e) {}
-    // Start the search ABOVE our own elements (host + .zon-content). Including
-    // the host let a transient/previously-pinned small width feed back on
-    // itself and latch the editor to a few pixels wide.
+    // Measure the available pane width WITHOUT releasing our pin first. The pane's
+    // content area is a CLIP container (deck.zotero-item-pane-content): its
+    // clientWidth always equals the visible pane width because it CLIPS our
+    // overflow — it is never inflated by our content, and it shrinks/grows as the
+    // sidebar is dragged. Every other ancestor either inflates to our (possibly
+    // stale-wide) pinned width or is the full window. So WITH the pin in place the
+    // clip container is the UNIQUE NARROWEST ancestor — exactly the element to both
+    // pin to and observe.
+    // (Bug d, take 1, was the opposite: release the pin, then measure. That
+    // de-inflated every ancestor so the clip container no longer stood out; we
+    // latched the ResizeObserver onto an inflatable ancestor, which our re-pin then
+    // froze — so dragging the pane NARROWER never fired it and the editor kept the
+    // stale wide pin and clipped. Don't release.)
+    // Also skip our own elements + Zotero's section wrappers (collapsible-section /
+    // item-pane-custom-section / .zon-content): their width is driven by our host,
+    // so they neither report the pane width nor fire on a pane resize.
+    let isOurs = (el) => {
+      if (!el) return false;
+      if (el === host) return true;
+      let tag = (el.nodeName || "").toLowerCase();
+      if (tag === "collapsible-section" || tag === "item-pane-custom-section") return true;
+      return !!(el.classList && el.classList.contains("zon-content"));
+    };
     let n = host.parentNode;
-    if (n && n.classList && n.classList.contains("zon-content")) n = n.parentNode;
+    while (n && isOurs(n)) {
+      let p = n.parentNode;
+      if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
+      n = p;
+    }
     let min = Infinity, minEl = null;
     for (let i = 0; i < 12 && n; i++) {
       let cw = n.clientWidth || 0;
