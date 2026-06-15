@@ -19,11 +19,30 @@ function journalFor(item, f) {
   }
 }
 
-function zoteroSelectURI(item) {
+export function zoteroSelectURI(item) {
   const isGroup = item.library && item.library.libraryType === "group";
   return isGroup
     ? `zotero://select/groups/${item.libraryID}/items/${item.key}`
     : `zotero://select/library/items/${item.key}`;
+}
+
+// Ensure a created note carries a durable `ZoteroLink` (the item KEY) so it stays
+// linked even if the citekey/filename later changes — the item key never does. A
+// whole-note scaffold usually renders its own ZoteroLink, so this is a no-op when
+// one is already present; a block-only note (no frontmatter) gets a minimal
+// frontmatter property added. `uri` = the item's zotero://select link.
+export function ensureZoteroLink(markdown, uri) {
+  const md = String(markdown);
+  if (!uri) return md;
+  if (/^\s*ZoteroLink\s*:/im.test(md)) return md; // already has one (scaffold-rendered or manual)
+  const line = `ZoteroLink: "${uri}"`;
+  const fm = md.match(/^---\r?\n/);
+  if (fm) {
+    // Insert as the first key inside the existing frontmatter block.
+    return md.slice(0, fm[0].length) + line + "\n" + md.slice(fm[0].length);
+  }
+  // No frontmatter — prepend a minimal block.
+  return `---\n${line}\n---\n\n${md.replace(/^\n+/, "")}`;
 }
 
 // Authors only (skip editors/translators), as { firstName, lastName }.

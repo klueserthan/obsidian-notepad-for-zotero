@@ -1486,6 +1486,9 @@ var ZON = {
       if (!win.ZONCore.isUnder(path, dir)) { setMsg(this.t("msg.outsideNotes")); return; }
       if (!(await IOUtils.exists(path))) {
         let md = await this.renderTemplateAsNote(win, item, templateName);
+        // Guarantee a durable item-key link so the note resolves even if the
+        // citekey/filename later changes (no-op if the template already has one).
+        try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
         await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
         await this.safeWrite(path, md);
         this.log("created note " + path);

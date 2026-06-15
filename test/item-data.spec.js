@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildItemData } from "../src/item-data.js";
+import { buildItemData, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
 import { render } from "../src/render.js";
 
 const TEMPLATE = readFileSync(
@@ -53,6 +53,42 @@ describe("buildItemData (Zotero item -> template data)", () => {
   it("picks the right 'journal' field per item type", () => {
     const book = mockItem({ itemType: "book", fields: { publisher: "Routledge" } });
     expect(buildItemData(book, {}).publicationTitle).toBe("Routledge");
+  });
+});
+
+describe("ensureZoteroLink (durable item-key link on create)", () => {
+  const URI = "zotero://select/library/items/3FWSQYCT";
+  // The note↔item index regex from bootstrap.js buildIndex — the injected link
+  // MUST satisfy it, or a created note won't resolve back to its item.
+  const INDEX_RE = /ZoteroLink:[^\n]*items\/([A-Z0-9]+)/i;
+
+  it("prepends a frontmatter block to a block-only note (no frontmatter)", () => {
+    const md = "%% zon kind=annotations colour=all sync=on format=list %%\n%% /zon %%";
+    const out = ensureZoteroLink(md, URI);
+    expect(out.startsWith(`---\nZoteroLink: "${URI}"\n---\n`)).toBe(true);
+    expect(out).toContain("%% zon kind=annotations");
+    expect(INDEX_RE.exec(out)[1]).toBe("3FWSQYCT");
+  });
+
+  it("inserts into an existing frontmatter block that lacks a ZoteroLink", () => {
+    const md = "---\ncitekey: \"x2021\"\nTitle: \"T\"\n---\n\nbody";
+    const out = ensureZoteroLink(md, URI);
+    expect(out).toBe(`---\nZoteroLink: "${URI}"\ncitekey: "x2021"\nTitle: "T"\n---\n\nbody`);
+    expect(INDEX_RE.test(out)).toBe(true);
+  });
+
+  it("is a no-op when a ZoteroLink is already present (no duplicate key)", () => {
+    const md = `---\nZoteroLink: "${URI}"\ncitekey: "x"\n---\n\nbody`;
+    const out = ensureZoteroLink(md, "zotero://select/library/items/OTHER");
+    expect(out).toBe(md);
+    expect((out.match(/ZoteroLink:/g) || []).length).toBe(1);
+  });
+
+  it("derives the URI from a group-library item", () => {
+    const item = mockItem();
+    item.library = { libraryType: "group" };
+    item.libraryID = 42;
+    expect(zoteroSelectURI(item)).toBe("zotero://select/groups/42/items/3FWSQYCT");
   });
 });
 
