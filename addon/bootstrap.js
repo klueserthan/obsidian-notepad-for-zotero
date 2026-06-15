@@ -1104,49 +1104,87 @@ var ZON = {
     waitForLib();
   },
 
-  // Pin the editor host to the narrowest ancestor's width (the visible deck),
-  // because intermediate Zotero panes are laid out wider than they display.
-  // Observes that ancestor so the width tracks pane-splitter / window resizes.
+  // The exact content width Zotero gives every item-pane section, read from a
+  // SIBLING section (Info/Tags/…). Pane-driven and immune to our pin, so it's both
+  // the width our editor should be AND a correct ResizeObserver target. Returns
+  // { width, el } or null.
+  siblingSectionWidth(host, win) {
+    try {
+      let ours = host.closest ? host.closest("collapsible-section") : null;
+      let hostRect = host.getBoundingClientRect();
+      let best = null;
+      let collect = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        try {
+          for (let s of root.querySelectorAll("collapsible-section")) {
+            if (s === ours) continue;
+            let r = s.getBoundingClientRect();
+            // On-screen, in OUR pane (same left edge) — excludes the off-screen
+            // reader-context copies and other tabs' panes.
+            if (r.width > 100 && r.right <= win.innerWidth + 1 && Math.abs(r.left - hostRect.left) < 80) {
+              if (!best || s.clientWidth < best.clientWidth) best = s;
+            }
+          }
+          for (let e of root.querySelectorAll("*")) if (e.shadowRoot) collect(e.shadowRoot);
+        } catch (e) {}
+      };
+      collect(host.ownerDocument);
+      if (best && best.clientWidth > 100) return { width: best.clientWidth, el: best };
+    } catch (e) {}
+    return null;
+  },
+
+  // Pin the editor host to the width Zotero gives item-pane sections, keeping it in
+  // sync with pane-splitter / window resizes via a ResizeObserver on a pane-driven
+  // element.
   fitHost(rec) {
     let host = rec.host;
     if (!host || !host.isConnected) return;
     let win = host.ownerDocument.defaultView;
-    // Measure the available pane width WITHOUT releasing our pin first. The pane's
-    // content area is a CLIP container (deck.zotero-item-pane-content): its
-    // clientWidth always equals the visible pane width because it CLIPS our
-    // overflow — it is never inflated by our content, and it shrinks/grows as the
-    // sidebar is dragged. Every other ancestor either inflates to our (possibly
-    // stale-wide) pinned width or is the full window. So WITH the pin in place the
-    // clip container is the UNIQUE NARROWEST ancestor — exactly the element to both
-    // pin to and observe.
-    // (Bug d, take 1, was the opposite: release the pin, then measure. That
-    // de-inflated every ancestor so the clip container no longer stood out; we
-    // latched the ResizeObserver onto an inflatable ancestor, which our re-pin then
-    // froze — so dragging the pane NARROWER never fired it and the editor kept the
-    // stale wide pin and clipped. Don't release.)
-    // Also skip our own elements + Zotero's section wrappers (collapsible-section /
-    // item-pane-custom-section / .zon-content): their width is driven by our host,
-    // so they neither report the pane width nor fire on a pane resize.
-    let isOurs = (el) => {
-      if (!el) return false;
-      if (el === host) return true;
-      let tag = (el.nodeName || "").toLowerCase();
-      if (tag === "collapsible-section" || tag === "item-pane-custom-section") return true;
-      return !!(el.classList && el.classList.contains("zon-content"));
-    };
-    let n = host.parentNode;
-    while (n && isOurs(n)) {
-      let p = n.parentNode;
-      if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
-      n = p;
-    }
+    // Release our own width pins BEFORE measuring. Sections live in a flex column
+    // that stretches EVERY section to the widest child, so a stale over-wide pin on
+    // our section drags the siblings out to match — and we'd just measure our own
+    // overshoot back. Releasing lets our section (and the siblings) collapse to the
+    // natural section width before we read it. Synchronous release→measure→re-pin,
+    // so the browser only paints the final state — no flicker.
+    host.style.width = ""; host.style.maxWidth = "";
+    try { if (rec.wrap) { rec.wrap.style.width = ""; rec.wrap.style.maxWidth = ""; } } catch (e) {}
     let min = Infinity, minEl = null;
-    for (let i = 0; i < 12 && n; i++) {
-      let cw = n.clientWidth || 0;
-      if (cw > 100 && cw < min) { min = cw; minEl = n; }
-      let p = n.parentNode;
-      if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
-      n = p;
+    // Preferred: match a SIBLING Zotero section's width exactly (see helper). The
+    // pane content deck reports ~a scrollbar WIDER (e.g. deck 503 vs sections 487);
+    // pinning to the deck made our section overshoot and pushed the other sections'
+    // +/collapse controls under the sidenav. Safe to observe the sibling: our pin
+    // (= its natural width) never exceeds it, so it never gets re-stretched/frozen.
+    let sib = this.siblingSectionWidth(host, win);
+    if (sib) {
+      min = sib.width; minEl = sib.el;
+    } else {
+      // Fallback: the pane clip-container deck. Measure WITH the pin in place (don't
+      // release — that de-inflates everything and the observer latches onto a
+      // wrapper our re-pin then freezes, so resizes stop re-wrapping). Skip our own
+      // wrappers (collapsible-section / item-pane-custom-section / .zon-content)
+      // since their width is driven by our host; the narrowest remaining ancestor is
+      // the pane-driven deck.
+      let isOurs = (el) => {
+        if (!el) return false;
+        if (el === host) return true;
+        let tag = (el.nodeName || "").toLowerCase();
+        if (tag === "collapsible-section" || tag === "item-pane-custom-section") return true;
+        return !!(el.classList && el.classList.contains("zon-content"));
+      };
+      let n = host.parentNode;
+      while (n && isOurs(n)) {
+        let p = n.parentNode;
+        if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
+        n = p;
+      }
+      for (let i = 0; i < 12 && n; i++) {
+        let cw = n.clientWidth || 0;
+        if (cw > 100 && cw < min) { min = cw; minEl = n; }
+        let p = n.parentNode;
+        if (p && p.nodeType === 11) p = p.host; // cross shadow boundary
+        n = p;
+      }
     }
     // Safety net: never pin wider than the room from the host's left edge to the
     // window's right edge — a hard guard against any residual inflated ancestor.
