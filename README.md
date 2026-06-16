@@ -3,12 +3,16 @@
 Open, edit, and keep an item's **Obsidian vault markdown note right inside the
 Zotero item pane** — and sync your PDF highlights into it as you read.
 
-> Status: **public beta** (v1.0.0-beta.1). Cross-platform
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/acatechnic)
+
+> Status: **public beta** (v1.0.0-beta.5). Cross-platform
 > (Windows / macOS / Linux), Zotero 7+, [AGPL-3.0](LICENSE).
 >
 > **Install:** download `obsidian-notepad-for-zotero.xpi` from the
 > [latest release](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/latest),
 > then in Zotero: Tools → Plugins → gear icon → *Install Plugin From File…*
+>
+> Like it? [**Buy me a coffee ☕**](https://buymeacoffee.com/acatechnic)
 
 <!-- TODO: screenshots — item-pane editor, annotation sync, onboarding -->
 
@@ -49,6 +53,8 @@ _Coming soon_ via the Zotero plugins directory and GitHub Releases. Until then,
 download the `.xpi` from a release and install it with **Tools → Plugins →
 gear menu → Install Plugin From File…**. The plugin auto-updates from GitHub
 Releases.
+
+If it saves you time, you can [**buy me a coffee ☕**](https://buymeacoffee.com/acatechnic) — much appreciated, never required.
 
 ## First-run setup
 
@@ -93,6 +99,12 @@ Copy `.env.example` to `.env` and set your Zotero path for `start` / `test:zoter
 
 Issues and PRs welcome. Please run `npm test` before submitting. Translations are
 welcome — UI strings are centralised (see `STRINGS` in `addon/bootstrap.js`).
+
+## Support
+
+This plugin is free and open source. If it's useful to you and you'd like to
+support its development, you can [**buy me a coffee ☕**](https://buymeacoffee.com/acatechnic).
+Entirely optional — bug reports and PRs are just as welcome.
 
 ## License
 
