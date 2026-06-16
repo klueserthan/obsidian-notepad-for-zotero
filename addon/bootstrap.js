@@ -202,6 +202,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       try {
         this.removeWraps(win);
         try { this.removeItemMenu(win); } catch (e) {}
+        try { if (win._zonFocusHandler) { win.removeEventListener("focus", win._zonFocusHandler, true); win._zonFocusHandler = null; } } catch (e) {}
         try { if (win._zonThemeMO) win._zonThemeMO.disconnect(); win._zonThemeMO = null; } catch (e) {}
         try { if (win._zonThemeMQ && win._zonThemeMQH) win._zonThemeMQ.removeEventListener("change", win._zonThemeMQH); } catch (e) {}
         for (let id of ["zon-editor-lib", "zon-core-lib", "zon-toolbar-css"]) {
@@ -249,6 +250,37 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     this.injectCore(win).catch((e) => this.log("core inject failed: " + e));
     this.watchTheme(win);
     try { this.addItemMenu(win); } catch (e) { this.log("addItemMenu failed: " + e); }
+    this.watchWindowFocus(win);
+  },
+
+  // Auto-detect external edits (e.g. you edited the note in Obsidian) the moment
+  // you return focus to Zotero — like Obsidian's own file watching. On focus we
+  // re-stat each open note: if it changed on disk we silently reload it (no unsaved
+  // edits) or raise the conflict bar (unsaved edits, so we never clobber). Debounced
+  // because focus fires often; the check is just a cheap mtime stat.
+  watchWindowFocus(win) {
+    try {
+      if (win._zonFocusHandler) win.removeEventListener("focus", win._zonFocusHandler, true);
+      let self = this, t = null;
+      win._zonFocusHandler = function () {
+        try { if (t) win.clearTimeout(t); } catch (e) {}
+        t = win.setTimeout(function () { self.checkExternalChanges().catch(function () {}); }, 200);
+      };
+      win.addEventListener("focus", win._zonFocusHandler, true);
+    } catch (e) { this.log("watchWindowFocus failed: " + e); }
+  },
+
+  // Re-check every open note against disk and reconcile (reload / conflict).
+  async checkExternalChanges() {
+    for (let rec of this.openRecs()) {
+      try {
+        if (!rec.path || rec.loading) continue;
+        if (!(await this.externallyChanged(rec))) continue;
+        let win = rec.host.ownerDocument.defaultView;
+        if (rec.timer) this.showConflict(rec); // unsaved edits → ask, don't clobber
+        else await this.reload(rec, win);        // clean → silently pull the new version
+      } catch (e) {}
+    }
   },
 
   // Re-theme live editors when Zotero's light/dark scheme changes. Each editor is
@@ -1000,12 +1032,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       style.textContent =
         // Section header — matches Zotero's native Tags/Related head (muted, bold,
         // 13px) with our crystal logo. context-fill so the SVG picks up the colour.
-        ".zon-header-bar{display:flex;align-items:center;gap:6px;padding:1px 2px 6px;cursor:pointer;user-select:none;}"
+        // Header flush-left (no left padding) so the icon + title line up with the
+        // native section heads (Tags/Related) above it.
+        ".zon-header-bar{display:flex;align-items:center;gap:6px;padding:2px 0 6px 0;cursor:pointer;user-select:none;}"
         + ".zon-header-icon{width:16px;height:16px;opacity:.9;-moz-context-properties:fill,stroke;fill:currentColor;color:var(--fill-secondary,#6a6a6a);}"
         + ".zon-header-title{font-weight:600;font-size:13px;color:var(--fill-secondary,#6a6a6a);}"
-        // Collapse chevron (right-aligned), and the collapsed state: hide every
-        // body row, keep only the header; rotate the chevron to point right.
-        + ".zon-header-chevron{margin-left:auto;font-size:12px;line-height:1;opacity:.75;color:var(--fill-secondary,#6a6a6a);transition:transform .12s ease;}"
+        // Collapse chevron — sized + right-aligned to match the native section twisty
+        // (a ~20px control at the right edge). Rotates to point right when collapsed.
+        + ".zon-header-chevron{margin-left:auto;width:20px;text-align:center;font-size:16px;line-height:1;opacity:.7;color:var(--fill-secondary,#6a6a6a);transition:transform .12s ease;}"
         + ".zon-content.zon-collapsed > :not(.zon-header-bar){display:none;}"
         + ".zon-content.zon-collapsed .zon-header-chevron{transform:rotate(-90deg);}"
         + ".zon-content.zon-collapsed .zon-header-bar{padding-bottom:2px;}"
@@ -1084,7 +1118,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     // template/colour selectors. "live-field" inserts a block that re-syncs from
     // Zotero on Refresh; "static-field" inserts a frozen one-time snapshot.
     let syncSel = h("select"); syncSel.title = this.t("tip.syncMode");
-    [["on", "live-field"], ["off", "static-field"]].forEach(([v, t]) => {
+    [["on", "live"], ["off", "static"]].forEach(([v, t]) => {
       let o = h("option"); o.value = v; o.textContent = t; syncSel.appendChild(o);
     });
 
@@ -1144,9 +1178,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     //  2. Note actions — operate on the whole note.
     //  3. View toggles — presentational, sit just above the editor they affect.
     let row1 = h("div", "zon-row"); row1.append(templateSel, colourSel, syncSel, insertBtn);
-    let row2 = h("div", "zon-row zon-row-actions"); row2.append(refreshBtn, migrateBtn, manageBtn, openBtn, reloadBtn);
-    let row3 = h("div", "zon-row zon-row-view"); row3.append(readLabel, frontLabel, markersLabel);
-    toolbar.append(row1, row2, row3, status);
+    let row2 = h("div", "zon-row zon-row-actions"); row2.append(refreshBtn, migrateBtn, manageBtn);
+    let row3 = h("div", "zon-row"); row3.append(openBtn, reloadBtn);
+    let row4 = h("div", "zon-row zon-row-view"); row4.append(readLabel, frontLabel, markersLabel);
+    toolbar.append(row1, row2, row3, row4, status);
 
     // When the template changes, reflect its pinned defaults (colour/sync).
     let applyTemplateDefaults = () => {
