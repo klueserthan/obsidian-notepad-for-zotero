@@ -35,6 +35,7 @@ var ZON = {
   PREF_SHOWMARKERS: "extensions.zotero-obsidian-notes.showMarkers",
   PREF_READMODE: "extensions.zotero-obsidian-notes.readMode",
   PREF_SHOWFRONTMATTER: "extensions.zotero-obsidian-notes.showFrontmatter",
+  PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
   // configured yet", handled by the pane's empty state rather than guessed.
@@ -53,6 +54,7 @@ var ZON = {
   DEFAULT_SHOWMARKERS: false, // editor presentation: hide %% zon/ann %% markers + zon: block by default (Obsidian-like)
   DEFAULT_READMODE: true, // reading view: render links/headings inline by default (toggle off for raw source)
   DEFAULT_SHOWFRONTMATTER: true, // show the YAML frontmatter by default (toggle off to hide it)
+  DEFAULT_COLLAPSED: false, // section starts expanded; the header chevron folds it (persisted)
   _templates: null,
 
   // Starter templates that ship WITH the plugin. They serve two purposes:
@@ -298,7 +300,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "btn.insert": "Insert",
     "btn.refresh": "Refresh",
     "btn.migrate": "Migrate",
-    "btn.manageFields": "Manage fields",
+    "btn.manageFields": "Sync Metadata",
     "btn.openObsidian": "Open in Obsidian",
     "btn.reload": "Reload",
     "btn.createNote": "Create note",
@@ -313,7 +315,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "label.frontmatter": "Frontmatter",
     "tip.template": "Template — Insert it at the cursor, or use it to create a note",
     "tip.colour": "Only pull highlights of this colour",
-    "tip.autoUpdate": "Keep inserted annotations in sync with Zotero (regenerate on Refresh). Uncheck to freeze them.",
+    "tip.syncMode": "live-field: the inserted block re-syncs from Zotero on Refresh. static-field: insert a frozen one-time snapshot.",
     "tip.insert": "Insert the selected template at the cursor",
     "tip.refresh": "Pull updated metadata + annotations from Zotero — keeps your own fields, prose and edits",
     "tip.migrate": "Convert a legacy annotation dump into a live block",
@@ -567,6 +569,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     seed(this.PREF_SHOWMARKERS, this.DEFAULT_SHOWMARKERS);
     seed(this.PREF_READMODE, this.DEFAULT_READMODE);
     seed(this.PREF_SHOWFRONTMATTER, this.DEFAULT_SHOWFRONTMATTER);
+    seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);
   },
 
   autoSyncEnabled() {
@@ -585,6 +588,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   showFrontmatterEnabled() {
     try { let v = Zotero.Prefs.get(this.PREF_SHOWFRONTMATTER, true); return v === undefined ? this.DEFAULT_SHOWFRONTMATTER : !!v; }
     catch (e) { return this.DEFAULT_SHOWFRONTMATTER; }
+  },
+  sectionCollapsed() {
+    try { let v = Zotero.Prefs.get(this.PREF_COLLAPSED, true); return v === undefined ? this.DEFAULT_COLLAPSED : !!v; }
+    catch (e) { return this.DEFAULT_COLLAPSED; }
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -993,9 +1000,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       style.textContent =
         // Section header — matches Zotero's native Tags/Related head (muted, bold,
         // 13px) with our crystal logo. context-fill so the SVG picks up the colour.
-        ".zon-header-bar{display:flex;align-items:center;gap:6px;padding:1px 2px 6px;}"
+        ".zon-header-bar{display:flex;align-items:center;gap:6px;padding:1px 2px 6px;cursor:pointer;user-select:none;}"
         + ".zon-header-icon{width:16px;height:16px;opacity:.9;-moz-context-properties:fill,stroke;fill:currentColor;color:var(--fill-secondary,#6a6a6a);}"
         + ".zon-header-title{font-weight:600;font-size:13px;color:var(--fill-secondary,#6a6a6a);}"
+        // Collapse chevron (right-aligned), and the collapsed state: hide every
+        // body row, keep only the header; rotate the chevron to point right.
+        + ".zon-header-chevron{margin-left:auto;font-size:12px;line-height:1;opacity:.75;color:var(--fill-secondary,#6a6a6a);transition:transform .12s ease;}"
+        + ".zon-content.zon-collapsed > :not(.zon-header-bar){display:none;}"
+        + ".zon-content.zon-collapsed .zon-header-chevron{transform:rotate(-90deg);}"
+        + ".zon-content.zon-collapsed .zon-header-bar{padding-bottom:2px;}"
         + ".zon-toolbar{display:flex;flex-direction:column;gap:7px;padding:4px 3px 9px;}"
         + ".zon-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}"
         // View toggles sit just above the editor; a hairline + a hair more space
@@ -1043,7 +1056,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let header = h("div", "zon-header-bar");
     let headerIcon = h("img", "zon-header-icon"); headerIcon.src = this.icon;
     let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = "Obsidian Notes";
-    header.append(headerIcon, headerTitle);
+    let chevron = h("span", "zon-header-chevron"); chevron.textContent = "⌄"; // ⌄
+    header.append(headerIcon, headerTitle, chevron);
+    // Click the header to collapse/expand the whole section (persisted, all panes).
+    header.addEventListener("click", () => {
+      let collapsed = !wrap.classList.contains("zon-collapsed");
+      try { Zotero.Prefs.set(this.PREF_COLLAPSED, collapsed, true); } catch (e) {}
+      this.applyCollapsedAll(collapsed);
+    });
 
     let toolbar = h("div", "zon-toolbar");
 
@@ -1060,11 +1080,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
      ["blue", "blue"], ["purple", "purple"], ["magenta", "magenta"], ["orange", "orange"], ["grey", "grey"]]
       .forEach(([v, t]) => { let o = h("option"); o.value = v; o.textContent = t; colourSel.appendChild(o); });
 
-    let autoLabel = h("label");
-    autoLabel.title = this.t("tip.autoUpdate");
-    let autoChk = h("input"); autoChk.type = "checkbox"; autoChk.checked = true;
-    let autoSpan = h("span"); autoSpan.textContent = this.t("label.autoUpdate");
-    autoLabel.append(autoChk, autoSpan);
+    // Live vs static (was the "auto-update" checkbox) — a dropdown styled like the
+    // template/colour selectors. "live-field" inserts a block that re-syncs from
+    // Zotero on Refresh; "static-field" inserts a frozen one-time snapshot.
+    let syncSel = h("select"); syncSel.title = this.t("tip.syncMode");
+    [["on", "live-field"], ["off", "static-field"]].forEach(([v, t]) => {
+      let o = h("option"); o.value = v; o.textContent = t; syncSel.appendChild(o);
+    });
 
     let insertBtn = h("button", "zon-primary"); insertBtn.textContent = this.t("btn.insert");
     insertBtn.title = this.t("tip.insert");
@@ -1121,7 +1143,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     //  1. Insert group — template + colour + auto-update lead INTO the Insert button.
     //  2. Note actions — operate on the whole note.
     //  3. View toggles — presentational, sit just above the editor they affect.
-    let row1 = h("div", "zon-row"); row1.append(templateSel, colourSel, autoLabel, insertBtn);
+    let row1 = h("div", "zon-row"); row1.append(templateSel, colourSel, syncSel, insertBtn);
     let row2 = h("div", "zon-row zon-row-actions"); row2.append(refreshBtn, migrateBtn, manageBtn, openBtn, reloadBtn);
     let row3 = h("div", "zon-row zon-row-view"); row3.append(readLabel, frontLabel, markersLabel);
     toolbar.append(row1, row2, row3, status);
@@ -1131,7 +1153,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let t = this.allTemplates(win)[templateSel.value] || {};
       let d = t.defaults || {};
       colourSel.value = "";
-      autoChk.checked = d.sync !== "off";
+      syncSel.value = d.sync === "off" ? "off" : "on";
     };
     templateSel.addEventListener("change", applyTemplateDefaults);
     applyTemplateDefaults();
@@ -1191,8 +1213,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     // always visible (the editor host is tall — 60vh — and would push them
     // off-screen if the bar were below it).
     wrap.append(header, toolbar, conflict, host, banner, setup);
+    if (this.sectionCollapsed()) wrap.classList.add("zon-collapsed");
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, markersChk, readChk, frontChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, syncSel, markersChk, readChk, frontChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
     setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
     settingsBtn.addEventListener("click", () => this.openSettings(win));
@@ -1200,7 +1223,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     overwriteBtn.addEventListener("click", () => this.save(rec, { force: true }).catch((e) => this.log("overwrite failed: " + e)));
     openBtn.addEventListener("click", () => this.openInObsidian(rec).catch((e) => this.log("open failed: " + e)));
     insertBtn.addEventListener("click", () =>
-      this.insertTemplate(rec, { name: templateSel.value, colour: colourSel.value, sync: autoChk.checked ? "on" : "off" })
+      this.insertTemplate(rec, { name: templateSel.value, colour: colourSel.value, sync: syncSel.value === "off" ? "off" : "on" })
         .catch((e) => this.log("insert failed: " + e)));
     refreshBtn.addEventListener("click", () => this.refreshNote(rec).catch((e) => this.log("refresh failed: " + e)));
     migrateBtn.addEventListener("click", () => this.migrateNote(rec).catch((e) => this.log("migrate failed: " + e)));
@@ -2151,6 +2174,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     for (let rec of this.openRecs()) {
       try { if (rec.frontChk && rec.frontChk.checked !== show) rec.frontChk.checked = show; } catch (e) {}
       try { if (rec.lib && rec.view && rec.lib.setShowFrontmatter) rec.lib.setShowFrontmatter(rec.view, show); } catch (e) {}
+    }
+  },
+
+  // Collapse/expand every open section's body (everything but the header) to match
+  // the global collapsed pref. Toggled by clicking the section header.
+  applyCollapsedAll(collapsed) {
+    for (let rec of this.openRecs()) {
+      try { if (rec.wrap) rec.wrap.classList.toggle("zon-collapsed", !!collapsed); } catch (e) {}
     }
   },
 
