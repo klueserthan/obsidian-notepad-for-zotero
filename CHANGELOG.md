@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Item-pane section redesign.** The section now has a proper header (crystal
+  logo + title, matching Zotero's Tags/Related headers) and is retitled
+  **"Obsidian Notes"**. The toolbar is regrouped: the template + colour + auto-update
+  controls now sit together and lead into the **Insert** button; the note actions
+  (Refresh / Migrate / Manage fields / Open in Obsidian / Reload) form their own
+  row; and the view toggles (Reading view / Frontmatter / Show markers) are grouped
+  under a hairline divider just above the editor.
+- **Auto-sync moved to Settings.** The live auto-sync toggle was global, so it now
+  lives only in *Settings → Obsidian Notes* rather than in every item's pane.
+
 ## [1.0.0-beta.2] — 2026-06-16
 
 ### Added

@@ -819,7 +819,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       // (the attribute isn't whitelisted), so the header was blank — set it
       // ourselves on every connected copy (idempotent). (bug 5)
       for (let cs of sections) {
-        try { if (cs.getAttribute("label") !== "Obsidian Note") cs.setAttribute("label", "Obsidian Note"); } catch (e) {}
+        try { if (cs.getAttribute("label") !== "Obsidian Notes") cs.setAttribute("label", "Obsidian Notes"); } catch (e) {}
+        // Zotero doesn't build its native styled .head for `custom` plugin
+        // sections — it dumps the label as a BARE, unstyled text node directly in
+        // the <collapsible-section>. Strip those; we render our own header (icon +
+        // muted-bold title, matching Tags/Related) inside .zon-content instead.
+        try { for (let n of [...cs.childNodes]) if (n.nodeType === 3 && n.textContent.trim()) n.remove(); } catch (e) {}
       }
       let win = (sections[0] && sections[0].ownerDocument.defaultView) || Zotero.getMainWindows()[0];
       // Prefer the active tab's section; fall back to the viewport-visible one,
@@ -986,8 +991,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
       style.id = "zon-toolbar-css";
       style.textContent =
-        ".zon-toolbar{display:flex;flex-direction:column;gap:6px;padding:6px 3px 9px;}"
+        // Section header — matches Zotero's native Tags/Related head (muted, bold,
+        // 13px) with our crystal logo. context-fill so the SVG picks up the colour.
+        ".zon-header-bar{display:flex;align-items:center;gap:6px;padding:1px 2px 6px;}"
+        + ".zon-header-icon{width:16px;height:16px;opacity:.9;-moz-context-properties:fill,stroke;fill:currentColor;color:var(--fill-secondary,#6a6a6a);}"
+        + ".zon-header-title{font-weight:600;font-size:13px;color:var(--fill-secondary,#6a6a6a);}"
+        + ".zon-toolbar{display:flex;flex-direction:column;gap:7px;padding:4px 3px 9px;}"
         + ".zon-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;}"
+        // View toggles sit just above the editor; a hairline + a hair more space
+        // separates these presentational switches from the action buttons above.
+        + ".zon-row-view{margin-top:1px;padding-top:8px;border-top:1px solid var(--fill-quinary,rgba(0,0,0,.07));}"
+        + ".zon-row-view label{color:var(--fill-secondary,#7a7a7a);}"
         + ".zon-toolbar button,.zon-toolbar select,.zon-banner button,.zon-banner select{"
         + "font:inherit;font-size:11px;line-height:1.45;padding:3px 9px;min-height:23px;"
         + "border:1px solid var(--fill-quinary,rgba(0,0,0,.16));border-radius:5px;"
@@ -1023,6 +1037,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     this.injectToolbarCSS(win);
 
+    // Our own section header. Zotero doesn't give `custom` plugin sections the
+    // native icon+title head (see paintSection), so we render one styled to match
+    // the Tags / Related headers: small logo + muted-bold title.
+    let header = h("div", "zon-header-bar");
+    let headerIcon = h("img", "zon-header-icon"); headerIcon.src = this.icon;
+    let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = "Obsidian Notes";
+    header.append(headerIcon, headerTitle);
+
     let toolbar = h("div", "zon-toolbar");
 
     // ONE unified Template dropdown: every template (your folder files + built-in
@@ -1054,18 +1076,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let reloadBtn = h("button"); reloadBtn.textContent = this.t("btn.reload"); reloadBtn.title = this.t("tip.reload");
     let status = h("span", "zon-status");
 
-    // Live auto-sync toggle (GLOBAL pref) — distinct from the per-block
-    // "auto-update" above: this one runs Refresh's annotation pass automatically
-    // whenever you highlight in the PDF, so the open note keeps up as you read.
-    let syncLabel = h("label");
-    syncLabel.title = this.t("tip.autoSync");
-    let syncChk = h("input"); syncChk.type = "checkbox"; syncChk.checked = this.autoSyncEnabled();
-    let syncSpan = h("span"); syncSpan.textContent = this.t("label.autoSync");
-    syncLabel.append(syncChk, syncSpan);
-    syncChk.addEventListener("change", () => {
-      try { Zotero.Prefs.set(this.PREF_AUTOSYNC, syncChk.checked, true); } catch (e) {}
-      this.syncAllAutoToggles(syncChk.checked); // keep every open pane's toggle in step
-    });
+    // NOTE: live auto-sync is a GLOBAL pref (PREF_AUTOSYNC) driven by the Notifier
+    // (registerNotifier reads autoSyncEnabled()). Its toggle lives in
+    // Settings → Obsidian Notes, not in this per-item toolbar, since it applies
+    // to every note rather than the one in front of you.
 
     // "Show markers" toggle (GLOBAL pref) — reveals the raw %% zon %% / %% ann %%
     // markers + the zon: block in the editor. Off (default) hides them like
@@ -1103,11 +1117,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       this.applyShowFrontmatterAll(frontChk.checked);
     });
 
-    // Tidy rows that wrap independently: primary action, insert options, then the
-    // note-level actions.
-    let row1 = h("div", "zon-row"); row1.append(templateSel, insertBtn);
-    let row2 = h("div", "zon-row"); row2.append(colourSel, autoLabel, markersLabel, readLabel, frontLabel);
-    let row3 = h("div", "zon-row"); row3.append(refreshBtn, syncLabel, migrateBtn, manageBtn, openBtn, reloadBtn);
+    // Three grouped rows, each wrapping independently:
+    //  1. Insert group — template + colour + auto-update lead INTO the Insert button.
+    //  2. Note actions — operate on the whole note.
+    //  3. View toggles — presentational, sit just above the editor they affect.
+    let row1 = h("div", "zon-row"); row1.append(templateSel, colourSel, autoLabel, insertBtn);
+    let row2 = h("div", "zon-row zon-row-actions"); row2.append(refreshBtn, migrateBtn, manageBtn, openBtn, reloadBtn);
+    let row3 = h("div", "zon-row zon-row-view"); row3.append(readLabel, frontLabel, markersLabel);
     toolbar.append(row1, row2, row3, status);
 
     // When the template changes, reflect its pinned defaults (colour/sync).
@@ -1174,9 +1190,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     // Conflict bar goes ABOVE the editor so its Reload/Overwrite buttons are
     // always visible (the editor host is tall — 60vh — and would push them
     // off-screen if the bar were below it).
-    wrap.append(toolbar, conflict, host, banner, setup);
+    wrap.append(header, toolbar, conflict, host, banner, setup);
 
-    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, autoSyncChk: syncChk, markersChk, readChk, frontChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
+    let rec = { view: null, lib: null, iframe: null, frameWin: null, host, toolbar, banner, bannerText, setup, conflict, noteTplSel, templateSel, colourSel, autoChk, markersChk, readChk, frontChk, applyTemplateDefaults, statusEl: status, wrap, path: null, item: null, loading: false, timer: null, diskMtime: null };
 
     setupBtn.addEventListener("click", () => this.runOnboarding(rec, win).catch((e) => this.log("onboarding failed: " + e)));
     settingsBtn.addEventListener("click", () => this.openSettings(win));
@@ -2111,14 +2127,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       }
     } catch (e) {}
     this.setStatus(rec, this.t("status.autoSynced", { count: anns.length }));
-  },
-
-  // Reflect the global auto-sync pref onto every open pane's toggle checkbox so
-  // they don't drift when you flip it in one pane (or in the preferences).
-  syncAllAutoToggles(on) {
-    for (let rec of this.openRecs()) {
-      try { if (rec.autoSyncChk && rec.autoSyncChk.checked !== on) rec.autoSyncChk.checked = on; } catch (e) {}
-    }
   },
 
   // Apply the "Show markers" state to every open editor (reveal/hide live) and
