@@ -48,6 +48,13 @@
         <html:span style="color:#888;font-size:11px;">New-note filename. Use {{citekey}} — e.g. @{{citekey}}.md</html:span>
       </html:label>
 
+      <html:label style="display:flex;flex-direction:column;gap:3px;">
+        <html:span>Tag sync field</html:span>
+        <html:input type="text" style="width:100%;box-sizing:border-box;"
+          preference="extensions.zotero-obsidian-notes.tagSyncField"/>
+        <html:span style="color:#888;font-size:11px;">Default frontmatter field mirrored to Zotero tags by <html:b>⋯ More → Push tags → Zotero</html:b> (e.g. <html:b>Topics</html:b>). A note can override this — once you push, the chosen field is recorded in the note's <html:b>zon:</html:b> map, so it's per-note. <html:b>[beta]</html:b> reverse sync; you confirm every change before it's written to Zotero.</html:span>
+      </html:label>
+
       <html:label style="display:flex;align-items:flex-start;gap:8px;">
         <html:input type="checkbox" preference="extensions.zotero-obsidian-notes.autoSync"/>
         <html:span style="display:flex;flex-direction:column;gap:3px;">

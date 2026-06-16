@@ -36,6 +36,7 @@ var ZON = {
   PREF_READMODE: "extensions.zotero-obsidian-notes.readMode",
   PREF_SHOWFRONTMATTER: "extensions.zotero-obsidian-notes.showFrontmatter",
   PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
+  PREF_TAGFIELD: "extensions.zotero-obsidian-notes.tagSyncField",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
   // configured yet", handled by the pane's empty state rather than guessed.
@@ -55,6 +56,7 @@ var ZON = {
   DEFAULT_READMODE: true, // reading view: render links/headings inline by default (toggle off for raw source)
   DEFAULT_SHOWFRONTMATTER: true, // show the YAML frontmatter by default (toggle off to hide it)
   DEFAULT_COLLAPSED: false, // section starts expanded; the header chevron folds it (persisted)
+  DEFAULT_TAGFIELD: "Topics", // default frontmatter field mirrored to Zotero tags (per-note override via `zon: tags:`)
   _templates: null,
 
   // Starter templates that ship WITH the plugin. They serve two purposes:
@@ -336,6 +338,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "btn.openObsidian": "Open in Obsidian",
     "btn.reload": "Reload",
     "btn.more": "⋯ More",
+    "btn.pushTags": "Push tags → Zotero…",
     "btn.createNote": "Create note",
     "btn.setup": "Set up…",
     "btn.openSettings": "Open Settings",
@@ -355,6 +358,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "tip.manageFields": "Give this note a self-contained zon: manifest so every field your template fills (Title, Author, Topics…) keeps syncing from Zotero — independent of later template edits. Static fields stay yours.",
     "tip.reload": "Re-read this note from disk",
     "tip.more": "More actions (advanced)",
+    "tip.pushTags": "Read this note's tag field and update the Zotero item's tags to match (you confirm the changes first)",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
     "tip.showMarkers": "Show the raw %% zon %% / %% ann %% provenance markers and the zon: block. Off = hidden (like Obsidian reading mode); the file always keeps them.",
     "tip.readMode": "Reading view: render links and headings inline. Off = raw markdown source. Presentational only — the file is unchanged.",
@@ -375,6 +379,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "status.fieldsManaged": "Managing {count} field(s) — synced",
     "status.noScaffold": "No note template found — set a Templates folder in Settings",
     "status.noLegacy": "No legacy annotations found",
+    "status.tagsInSync": "Tags already match Zotero ({field})",
+    "status.tagsPushed": "Pushed tags to Zotero — +{add} / −{remove}",
+    "status.noTagField": "No tag field ‘{field}’ in this note — set one in Settings or the note",
     "status.noPdf": "This item has no PDF attachment to read annotations from",
     "status.vaultUnset": "Set your Obsidian vault in Settings first",
     "status.notInVault": "This note isn't inside your Obsidian vault — can't open it in Obsidian",
@@ -385,6 +392,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "err.syncWrite": "Sync write failed — ",
     "err.refreshRead": "Refresh read failed — ",
     "err.refreshWrite": "Refresh write failed — ",
+    "err.tagPush": "Tag push failed — ",
     "err.migrateRead": "Migrate read failed — ",
     "err.migrateWrite": "Migrate write failed — ",
     "msg.noCitekey": "Couldn't determine a citekey for this item — set one in Better BibTeX or the Extra field.",
@@ -604,6 +612,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     seed(this.PREF_READMODE, this.DEFAULT_READMODE);
     seed(this.PREF_SHOWFRONTMATTER, this.DEFAULT_SHOWFRONTMATTER);
     seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);
+    seed(this.PREF_TAGFIELD, this.DEFAULT_TAGFIELD);
   },
 
   autoSyncEnabled() {
@@ -626,6 +635,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   sectionCollapsed() {
     try { let v = Zotero.Prefs.get(this.PREF_COLLAPSED, true); return v === undefined ? this.DEFAULT_COLLAPSED : !!v; }
     catch (e) { return this.DEFAULT_COLLAPSED; }
+  },
+  tagSyncField() {
+    try { let v = Zotero.Prefs.get(this.PREF_TAGFIELD, true); return (v == null || v === "") ? this.DEFAULT_TAGFIELD : String(v); }
+    catch (e) { return this.DEFAULT_TAGFIELD; }
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -1139,7 +1152,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let moreBtn = h("button"); moreBtn.textContent = this.t("btn.more"); moreBtn.title = this.t("tip.more");
     let migrateBtn = h("button"); migrateBtn.textContent = this.t("btn.migrate"); migrateBtn.title = this.t("tip.migrate");
     let manageBtn = h("button"); manageBtn.textContent = this.t("btn.manageFields"); manageBtn.title = this.t("tip.manageFields");
-    let moreMenu = h("div", "zon-more-menu"); moreMenu.append(manageBtn, migrateBtn); moreMenu.style.display = "none";
+    let pushTagsBtn = h("button"); pushTagsBtn.textContent = this.t("btn.pushTags"); pushTagsBtn.title = this.t("tip.pushTags");
+    let moreMenu = h("div", "zon-more-menu"); moreMenu.append(pushTagsBtn, manageBtn, migrateBtn); moreMenu.style.display = "none";
     let moreWrap = h("div", "zon-more-wrap"); moreWrap.append(moreBtn, moreMenu);
     moreBtn.addEventListener("click", (e) => {
       try { e.stopPropagation(); } catch (e2) {}
@@ -1290,6 +1304,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     refreshBtn.addEventListener("click", () => this.refreshNote(rec).catch((e) => this.log("refresh failed: " + e)));
     migrateBtn.addEventListener("click", () => this.migrateNote(rec).catch((e) => this.log("migrate failed: " + e)));
     manageBtn.addEventListener("click", () => this.manageFields(rec).catch((e) => this.log("manage-fields failed: " + e)));
+    pushTagsBtn.addEventListener("click", () => this.pushTagsToZotero(rec).catch((e) => this.log("push tags failed: " + e)));
     reloadBtn.addEventListener("click", () => this.reload(rec, win));
     createBtn.addEventListener("click", () =>
       this.createNote(rec, rec.noteTplSel && rec.noteTplSel.value)
@@ -2437,6 +2452,71 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try { await this.safeWrite(rec.path, res.markdown); rec.diskMtime = await this.noteMtime(rec.path); } catch (e) { this.setStatus(rec, this.t("err.migrateWrite") + e); this.log("migrate write failed: " + e); return; }
     this.setStatus(rec, this.t("status.migrating"));
     await this.syncAnnotations(rec); // fill the new live block from Zotero
+  },
+
+  // REVERSE SYNC (pilot): push this note's tags TO the Zotero item. The note is
+  // the authority for whichever frontmatter field is mapped to Zotero tags — the
+  // per-note `zon: tags:` map if set, else the global default field. ALWAYS shows
+  // the add/remove plan and asks before writing. Only MANUAL item tags are
+  // removable, so automatic tags (feeds etc.) are never stripped. If the mapped
+  // field isn't present in the note we abort rather than nuke every tag.
+  async pushTagsToZotero(rec) {
+    let item = rec.item;
+    if (!item || !rec.path) return;
+    let win = rec.host.ownerDocument.defaultView;
+    if (!win.ZONCore) await this.injectCore(win);
+    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
+    await this.flush(rec);
+    let C = win.ZONCore;
+    let content = "";
+    try { content = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.refreshRead") + e); return; }
+
+    let field = C.getTagField(content) || this.tagSyncField();
+    // Guard: the mapped field must actually exist in the note, else an empty read
+    // would propose removing ALL tags. (An existing-but-empty field is allowed.)
+    let fm = content.match(/^---\n([\s\S]*?)\n---/);
+    let present = fm && new RegExp("^" + field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":", "m").test(fm[1]);
+    if (!present) { this.setStatus(rec, this.t("status.noTagField", { field })); return; }
+
+    let noteTags = [], seen = {};
+    for (let r of C.frontmatterList(content, field)) {
+      let t = C.cleanTag(r);
+      if (t && !seen[t]) { seen[t] = 1; noteTags.push(t); }
+    }
+    let all = (item.getTags && item.getTags()) || [];
+    let itemAll = all.map((t) => t.tag);
+    let itemManual = all.filter((t) => !t.type).map((t) => t.tag); // type 0/undefined = manual
+    let plan = C.tagSyncPlan(noteTags, itemAll, itemManual);
+    if (!plan.changed) { this.setStatus(rec, this.t("status.tagsInSync", { field })); return; }
+
+    // Preview + confirm before touching the library.
+    let lines = ["Tag field: " + field, ""];
+    if (plan.add.length) lines.push("Add (" + plan.add.length + "):  " + plan.add.join(", "));
+    if (plan.remove.length) lines.push("Remove (" + plan.remove.length + "):  " + plan.remove.join(", "));
+    lines.push("", "Apply these tag changes to the Zotero item?");
+    let ok = false;
+    try { ok = Services.prompt.confirm(win, "Push tags → Zotero", lines.join("\n")); } catch (e) {}
+    if (!ok) return;
+
+    try {
+      for (let t of plan.add) item.addTag(t);
+      for (let t of plan.remove) item.removeTag(t);
+      await item.saveTx();
+    } catch (e) { this.setStatus(rec, this.t("err.tagPush") + e); this.log("tag push failed: " + e); return; }
+
+    // Make the note self-describing: record the field it syncs from (per-note),
+    // if not already, so future pushes use the same mapping.
+    if (!C.getTagField(content)) {
+      try {
+        let mapped = C.setTagField(content, field);
+        if (mapped !== content) {
+          await this.safeWrite(rec.path, mapped);
+          rec.diskMtime = await this.noteMtime(rec.path);
+          this.mountEditor(rec, win, mapped);
+        }
+      } catch (e) { this.log("write tag map failed: " + e); }
+    }
+    this.setStatus(rec, this.t("status.tagsPushed", { add: plan.add.length, remove: plan.remove.length }));
   },
 };
 

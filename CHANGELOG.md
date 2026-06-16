@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Push tags → Zotero (beta, reverse sync).** A first step toward bidirectional
+  metadata: read the tags from a note's frontmatter and update the Zotero item's
+  tags to match. Under **⋯ More → Push tags → Zotero**. Always previews the exact
+  add/remove changes and asks before writing; only *manual* item tags can be
+  removed (automatic tags are never touched); aborts if the mapped field is absent
+  (so it can't wipe all tags). The mapped field is **per-note** — set globally in
+  *Settings → Tag sync field* (default `Topics`), and once you push, the choice is
+  recorded in the note's `zon: tags:` map so each note carries its own mapping.
+
 ## [1.0.0-beta.4] — 2026-06-16
 
 ### Added

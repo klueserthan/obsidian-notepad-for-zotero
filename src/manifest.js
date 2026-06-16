@@ -30,6 +30,13 @@ import { makeEnv } from "./render.js";
 
 export const MANIFEST_KEY = "zon";
 
+// Reserved child keys inside the `zon:` map that configure note→Zotero (reverse)
+// sync rather than naming a frontmatter field to forward-render. `tags` records
+// the frontmatter field this note mirrors to Zotero tags (e.g. "Topics"), so the
+// field-map is per-note (different users map tags to Topics / tags / their own
+// spelling). These are skipped by the forward field-sync (applyManifest).
+export const SYNC_KEYS = new Set(["tags"]);
+
 const FM_RE = /^---\n([\s\S]*?)\n---\n?/;
 const TOP_KEY_RE = /^([A-Za-z0-9_-]+):(.*)$/;
 const CHILD_RE = /^(\s+)([A-Za-z0-9_-]+):\s?(.*)$/;
@@ -120,7 +127,8 @@ export function applyManifest(md, itemData = {}, opts = {}) {
   if (!present || man.length === 0) return String(md);
   const env = opts.env || makeEnv();
   const { frontmatter, body } = splitNote(md);
-  const manMap = new Map(man.map((e) => [e.key, e.expr]));
+  // Sync-config keys (e.g. `tags`) aren't field expressions — never apply them.
+  const manMap = new Map(man.filter((e) => !SYNC_KEYS.has(e.key)).map((e) => [e.key, e.expr]));
 
   const out = parseEntries(frontmatter).map((e) => {
     if (!e.key || e.key === MANIFEST_KEY || !manMap.has(e.key)) return e;
@@ -193,7 +201,7 @@ export function removeManifestEntry(md, key) {
 // `Key: ` space is dropped for scalars and re-added by applyManifest).
 // `reserved` keys are skipped (only the manifest key itself, by default).
 export function buildManifestFromScaffold(scaffoldMd, opts = {}) {
-  const reserved = new Set(opts.reserved || [MANIFEST_KEY]);
+  const reserved = new Set([...(opts.reserved || [MANIFEST_KEY]), ...SYNC_KEYS]);
   const { frontmatter } = splitNote(scaffoldMd);
   if (frontmatter == null) return {};
   const map = {};
@@ -216,4 +224,19 @@ export function writeManifest(md, map) {
     out = setManifestEntry(out, key, expr);
   }
   return out;
+}
+
+// ── reverse-sync field map (per-note) ────────────────────────────────────────
+
+// The frontmatter field this note mirrors to Zotero tags (e.g. "Topics"), read
+// from the reserved `zon: tags:` entry. Null if the note hasn't declared one.
+export function getTagField(md) {
+  const e = parseManifest(md).entries.find((x) => x.key === "tags");
+  const v = e ? String(e.expr).trim() : "";
+  return v || null;
+}
+
+// Record (per-note) which frontmatter field mirrors Zotero tags, in `zon: tags:`.
+export function setTagField(md, field) {
+  return setManifestEntry(md, "tags", String(field));
 }
