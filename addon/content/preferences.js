@@ -34,23 +34,13 @@
 
   // Wire the Browse… buttons. Guarded so a failure here can never block the
   // Default-note-template population below.
-  try {
-    const map = [
-      ["zon-vault-browse", "zon-vault", PREFIX + "vaultPath"],
-      ["zon-notes-browse", "zon-notes", PREFIX + "notesDir"],
-      ["zon-templates-browse", "zon-templates", PREFIX + "templatesDir"],
-    ];
-    for (const [btnId, inputId, prefKey] of map) {
-      const btn = document.getElementById(btnId);
-      if (btn) btn.addEventListener("click", () => browse(inputId, prefKey));
-    }
-  } catch (e) {}
 
-  // "Install starter templates…" — copy the plugin's bundled defaults into the
-  // Templates folder (existing files kept). If no folder is set yet, pick one
-  // first, persist it, then install. Delegates the write to Zotero.ZON.
+  // `Services` is not a reliable global in the Zotero prefs scope, so prefer
+  // Zotero's own alert helper; fall back through other options just in case.
   function notify(msg) {
-    try { Services.prompt.alert(window, "Note templates", msg); } catch (e) {}
+    try { if (Zotero && Zotero.alert) { Zotero.alert(window, "Note templates", msg); return; } } catch (e) {}
+    try { if (typeof Services !== "undefined") { Services.prompt.alert(window, "Note templates", msg); return; } } catch (e) {}
+    try { window.alert(msg); } catch (e) {}
   }
   function pickFolderAsync() {
     return new Promise((resolve) => {
@@ -61,9 +51,28 @@
       fp.open((rv) => resolve(rv === Ci.nsIFilePicker.returnOK && fp.file ? fp.file.path : ""));
     });
   }
-  try {
+
+  // Wire the Browse… buttons + "Install starter templates…". The pane's XHTML can
+  // be inserted a tick AFTER this script runs (same race as the dropdown below),
+  // so retry until the controls exist instead of bailing once — otherwise the
+  // listeners silently never attach. Each button is flagged so retries don't
+  // double-bind.
+  function wireControls(tries) {
     const instBtn = document.getElementById("zon-templates-install");
-    if (instBtn) instBtn.addEventListener("click", async () => {
+    if (!instBtn) {
+      if ((tries || 0) < 40) window.setTimeout(() => wireControls((tries || 0) + 1), 50);
+      return;
+    }
+    const wire = (el, fn) => { if (el && !el._zonWired) { el._zonWired = true; el.addEventListener("click", fn); } };
+    const map = [
+      ["zon-vault-browse", "zon-vault", PREFIX + "vaultPath"],
+      ["zon-notes-browse", "zon-notes", PREFIX + "notesDir"],
+      ["zon-templates-browse", "zon-templates", PREFIX + "templatesDir"],
+    ];
+    for (const [btnId, inputId, prefKey] of map) {
+      wire(document.getElementById(btnId), () => browse(inputId, prefKey));
+    }
+    wire(instBtn, async () => {
       const ZON = Zotero.ZON;
       if (!ZON || !ZON.installBuiltinTemplates) { notify("Plugin not ready — try reopening Settings."); return; }
       const input = document.getElementById("zon-templates");
@@ -82,7 +91,8 @@
       notify(n > 0 ? ("Added " + n + " template file(s) to:\n" + dir)
                    : ("No new files — templates already present in:\n" + dir));
     });
-  } catch (e) {}
+  }
+  wireControls();
 
   // Populate the "Default note template" dropdown from the note scaffolds
   // (note.md / note-*.md) in the Templates folder. Always includes "note" and
