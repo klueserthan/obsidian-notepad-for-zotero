@@ -16,6 +16,15 @@ export default defineConfig({
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
+  release: {
+    github: {
+      // Releases are cut locally (`npm run release`), not from CI — "local"
+      // enables the GitHub release step when run outside CI. Needs GITHUB_TOKEN
+      // in the environment (e.g. `GITHUB_TOKEN=$(gh auth token) npm run release`).
+      enable: "local",
+    },
+  },
+
   build: {
     assets: ["addon/**/*.*"],
     // Our Fluent message ids are already namespaced (`zon-*`) and the code

@@ -3,8 +3,12 @@
 Open, edit, and keep an item's **Obsidian vault markdown note right inside the
 Zotero item pane** — and sync your PDF highlights into it as you read.
 
-> Status: preparing the first public release. Cross-platform
+> Status: **public beta** (v1.0.0-beta.1). Cross-platform
 > (Windows / macOS / Linux), Zotero 7+, [AGPL-3.0](LICENSE).
+>
+> **Install:** download `obsidian-notepad-for-zotero.xpi` from the
+> [latest release](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/latest),
+> then in Zotero: Tools → Plugins → gear icon → *Install Plugin From File…*
 
 <!-- TODO: screenshots — item-pane editor, annotation sync, onboarding -->
 
