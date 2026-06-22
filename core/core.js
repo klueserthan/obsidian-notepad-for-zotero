@@ -3,7 +3,7 @@
 // template/merge logic (which depends on nunjucks + dayjs) without those living
 // in the bootstrap.
 export { render } from "../src/render.js";
-export { buildItemData, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
+export { buildItemData, filenameFields, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
 export { mergeNote, updateNoteAnnotations } from "../src/merge.js";
 export { renderAnnotationsSection, mapZoteroAnnotation } from "../src/annotations.js";
 export { syncBlocks, makeBlock, parseBlocks, migrateLegacyAnnotations } from "../src/blocks.js";

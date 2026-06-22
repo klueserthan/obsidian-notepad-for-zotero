@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildItemData, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
+import { buildItemData, filenameFields, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
 import { render } from "../src/render.js";
 
 const TEMPLATE = readFileSync(
@@ -53,6 +53,26 @@ describe("buildItemData (Zotero item -> template data)", () => {
   it("picks the right 'journal' field per item type", () => {
     const book = mockItem({ itemType: "book", fields: { publisher: "Routledge" } });
     expect(buildItemData(book, {}).publicationTitle).toBe("Routledge");
+  });
+});
+
+describe("filenameFields (scalars for filename patterns)", () => {
+  it("derives year (4-digit), author surname, and journal", () => {
+    const d = buildItemData(mockItem(), { citekey: "x" });
+    expect(filenameFields(d)).toEqual({ year: "2021", author: "Aitken", journal: "Punishment & Society" });
+  });
+
+  it("renders a multi-field pattern into a real filename", () => {
+    const d = buildItemData(mockItem(), { citekey: "aitken2021" });
+    const data = { ...d, ...filenameFields(d), citekey: "aitken2021" };
+    expect(render("{{author}} {{year}} - {{title}}", data))
+      .toBe("Aitken 2021 - Investigating prison suicides: The politics of independent oversight");
+    expect(render("@{{citekey}}", data)).toBe("@aitken2021");
+  });
+
+  it("is empty-safe when date/creators are missing", () => {
+    expect(filenameFields({})).toEqual({ year: "", author: "", journal: "" });
+    expect(filenameFields(null)).toEqual({ year: "", author: "", journal: "" });
   });
 });
 

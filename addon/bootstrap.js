@@ -429,6 +429,20 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   notesDir() { return Zotero.Prefs.get(this.PREF_NOTES, true) || this.DEFAULT_NOTES; },
   templatePath() { return Zotero.Prefs.get(this.PREF_TEMPLATE, true) || this.DEFAULT_TEMPLATE; },
   filenamePattern() { return Zotero.Prefs.get(this.PREF_FILENAME, true) || this.DEFAULT_FILENAME; },
+  // Render the new-note filename from the pattern (Nunjucks) over the item's data
+  // plus filename-friendly scalars (citekey, author, year, title, journal, …), so
+  // users can match an existing vault's naming. Falls back to @<citekey> if the
+  // pattern fails or renders empty. The caller appends .md and sanitises.
+  renderFilename(win, item, citekey) {
+    try {
+      let data = win.ZONCore.buildItemData(item, { citekey });
+      let extra = win.ZONCore.filenameFields(data);
+      let out = win.ZONCore.render(this.filenamePattern(), { ...data, ...extra, citekey });
+      out = String(out || "").trim();
+      if (out) return out;
+    } catch (e) { this.log("filename render failed, using citekey: " + e); }
+    return "@" + citekey;
+  },
   formatsDir() { return Zotero.Prefs.get(this.PREF_FORMATS_DIR, true) || this.DEFAULT_FORMATS_DIR; },
   templatesDir() { return Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true) || this.DEFAULT_TEMPLATES_DIR; },
   defaultNoteTemplate() { return Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) || this.DEFAULT_DEFAULT_NOTE; },
@@ -1895,7 +1909,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       // before it becomes a filename — strip separators / illegal chars.
       citekey = win.ZONCore.sanitizeFilename(citekey);
 
-      let filename = this.filenamePattern().replace(/\{\{\s*citekey\s*\}\}/g, citekey);
+      let filename = this.renderFilename(win, item, citekey);
       if (!/\.md$/i.test(filename)) filename += ".md";
       filename = win.ZONCore.sanitizeFilename(filename); // the pattern itself may add junk
       let dir = this.notesDir();

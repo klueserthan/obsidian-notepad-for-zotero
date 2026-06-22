@@ -86,3 +86,14 @@ export function buildItemData(item, opts = {}) {
     importDate: opts.importDate || "",
   };
 }
+
+// Convenience single-value scalars derived from buildItemData's output, handy for
+// filename patterns (where `creators` (an array) and `date` (a full string) are
+// awkward): `year` = the first 4-digit run of the date; `author` = the first
+// author's surname; `journal` = the per-type publication title. Pure.
+export function filenameFields(data) {
+  const year = (String((data && data.date) || "").match(/\d{4}/) || [""])[0];
+  const c = (data && data.creators && data.creators[0]) || null;
+  const author = c ? (c.lastName || c.firstName || "") : "";
+  return { year, author, journal: (data && data.publicationTitle) || "" };
+}

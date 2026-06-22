@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Filename pattern accepts more fields.** New-note filenames can now use
+  `{{author}}` (first author's surname), `{{year}}`, `{{title}}`, `{{journal}}`,
+  `{{date}}`, and `{{itemType}}` in addition to `{{citekey}}` — so you can match
+  how your vault already names notes (e.g. `{{author}} {{year}} - {{title}}.md`).
+  Previously only `{{citekey}}` was substituted. Illegal filename characters are
+  still stripped automatically, and `.md` is appended if omitted.
+
 ### Added
 - **Image (area) annotations are imported.** On sync, each image/area annotation's
   cached PNG is copied into a per-note folder in your vault (default
