@@ -25,12 +25,17 @@ export default defineConfig({
     },
     bumpp: {
       // After bumpp writes the new version (and before it commits/tags/pushes):
-      // rewrite the README's version-pinned .xpi links, then build. `all: true`
-      // makes the release commit include the README change alongside the version
-      // files. (Until we ship a stable, non-prerelease v1.0.0, GitHub's permanent
-      // /releases/latest/download/ URL 404s, so the README must pin the version —
-      // sync-version keeps it current. See scripts/sync-readme-version.mjs.)
-      execute: "npm run sync-version && npm run build",
+      // rewrite the README's version-pinned .xpi links, then rebuild dist (the
+      // release then uploads that dist). MUST be a SINGLE command — bumpp runs
+      // `execute` WITHOUT a shell, so a chained "a && b" string would pass "&& b"
+      // as literal argv to `a` and the build would silently never run (that bug
+      // shipped a stale xpi as v1.0.0-beta.7). `release:build` chains both steps
+      // inside one npm script, which npm runs via a shell. `all: true` folds the
+      // README change into the release commit.
+      // (Until a stable, non-prerelease v1.0.0, GitHub's permanent
+      // /releases/latest/download/ URL 404s, so the README pins the version;
+      // sync-version keeps it current — see scripts/sync-readme-version.mjs.)
+      execute: "npm run release:build",
       all: true,
     },
   },
