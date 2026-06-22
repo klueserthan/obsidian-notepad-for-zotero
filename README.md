@@ -23,7 +23,7 @@ Zotero item pane** — and sync your PDF highlights into it as you read.
 
 | The note, in Zotero | Synced highlights | Settings |
 | --- | --- | --- |
-| ![The Obsidian note rendered in the Zotero item pane](docs/images/01-editor-pane.png) | ![PDF highlights synced into the note](docs/images/02-annotation-sync.png) | ![Obsidian Notes settings](docs/images/03-setup.png) |
+| ![The Obsidian note rendered in the Zotero item pane](docs/images/01-editor-pane.png) | ![PDF highlights synced into the note](docs/images/02-annotation-sync.png) | ![Obsidian Notepad settings](docs/images/03-setup.png) |
 
 ## Why
 
@@ -39,11 +39,18 @@ file on disk stays a clean, plain-markdown Obsidian note.
   markdown highlighting. Saves straight to the file in your vault.
 - **Sync PDF annotations into the note** as customisable **live blocks**. Re-syncs
   are *idempotent*: your prose and any frozen blocks are never touched.
+- **Image annotations too.** Area/image annotations are exported into your vault
+  and embedded in the note (`![[…]]`) — and shown inline in the pane's reading view.
 - **Auto-sync (optional).** Turn it on and highlights flow into the open note as
-  you annotate — no clicking Refresh.
+  you annotate — no clicking Update.
+- **Links to your existing notes** by a `citekey:`/`ZoteroLink:` frontmatter field
+  or a **configurable filename pattern** (`{{author}} {{year}} - {{title}}`, …),
+  with a **Rescan** button to pick up notes added outside Zotero.
 - **Create a note from a template** for items that don't have one yet, populated
   with the item's metadata and a formatted bibliography.
 - **Open in Obsidian** — jump to the note in the Obsidian app.
+- **Push tags back to Zotero** *(opt-in, experimental)* — mirror a note's tag
+  field to the Zotero item, previewing every change first.
 - **Safe by design.** Writes are atomic, and if a note changed on disk (e.g. you
   edited it in Obsidian) the plugin never silently overwrites it — it offers to
   reload or overwrite.
@@ -69,11 +76,11 @@ If it saves you time, you can [**buy me a coffee ☕**](https://buymeacoffee.com
 
 ## First-run setup
 
-Open any item and look at the **Obsidian Note** section in the item pane. If
+Open any item and look at the **Obsidian Notepad** section in the item pane. If
 nothing's configured yet you'll see a **Set up…** button — it detects your
 installed Obsidian vaults, lets you pick one, and then pick the folder your
 literature notes live in. You can change these later in **Settings → Obsidian
-Notes** (with **Browse…** folder pickers).
+Notepad** (with **Browse…** folder pickers).
 
 ## Templates
 
@@ -94,7 +101,7 @@ tool.
 
 The note is a normal markdown file in your vault — nothing is stored in a
 hidden database. Annotation blocks are delimited by invisible Obsidian comments
-(`%% zon … %%`), so Refresh can regenerate just those blocks and leave your
+(`%% zon … %%`), so Update can regenerate just those blocks and leave your
 writing alone. Every write goes to a temporary file and is then renamed over the
 target (atomic), and the plugin tracks each open note's modified-time so it can
 detect and reconcile changes made outside Zotero.
@@ -107,8 +114,9 @@ This is an early public beta — please report anything odd, and:
   — especially before trying **Push tags → Zotero**, which is the one feature that
   writes to your library.
 - **Sync is one-way by default** (Zotero → note). Reverse sync (note → Zotero) is
-  currently **tags only**, opt-in, and previews every change before writing.
-  Pushing other fields (title, authors, …) back to Zotero isn't supported yet.
+  currently **tags only**, opt-in (behind *Settings → Enable experimental features*),
+  and previews every change before writing. Pushing other fields (title, authors, …)
+  back to Zotero isn't supported yet.
 - **Not yet in the Zotero plugins directory** — install the `.xpi` from Releases
   (it auto-updates from there).
 - Templates are written in **Nunjucks**; there's a small learning curve if you

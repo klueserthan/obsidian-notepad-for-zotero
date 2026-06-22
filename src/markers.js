@@ -40,7 +40,7 @@ export function findMarkerRanges(text) {
   const out = [];
 
   // 1. Frontmatter `zon:` manifest block (only inside a leading --- … --- fence).
-  const fm = s.match(/^---\n([\s\S]*?)\n---/);
+  const fm = s.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fm) {
     const fmBodyStart = 4; // after the opening "---\n"
     const lines = fm[1].split("\n");

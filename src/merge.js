@@ -40,7 +40,7 @@ export function parseNote(md) {
   let frontmatter = null;
   let rest = md;
 
-  const fm = md.match(/^---\n([\s\S]*?)\n---\n?/);
+  const fm = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (fm) {
     frontmatter = fm[1];
     rest = md.slice(fm[0].length);

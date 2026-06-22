@@ -1,13 +1,13 @@
-# Zotero → Obsidian Notes — Templates
+# Obsidian Notepad for Zotero — Templates
 
-This folder holds the templates the **Obsidian Notes** Zotero plugin uses. There
-are two kinds of file here, distinguished only by name:
+This folder holds the templates the **Obsidian Notepad for Zotero** plugin uses.
+There are two kinds of file here, distinguished only by name:
 
 - **`note.md`** (and any **`note-*.md`**) — *whole-note scaffolds*. Used by
   **Create note from template** when an item has no note yet. Renders the
   frontmatter, citation, abstract, and empty section headings. You can keep
   several (`note.md`, `note-book.md`, `note-minimal.md`, …); the **default** is
-  set in Settings → Obsidian Notes → *Default note template* (which can be **any**
+  set in Settings → Obsidian Notepad → *Default note template* (which can be **any**
   template, not just `note-*` — including a per-annotation or field template, in
   which case a created note is just that block), and the Create panel lets you pick
   a different one per note.
@@ -17,7 +17,7 @@ are two kinds of file here, distinguished only by name:
   template renders the item's annotations into a live block.
 
 You manage all of this from Obsidian: add a file → it shows up in the dropdown;
-edit a file → the new look applies on the next Insert/Refresh.
+edit a file → the new look applies on the next Insert/Update.
 
 ---
 
@@ -35,7 +35,7 @@ Templates are written in **Nunjucks**.You have `{{ variable }}`,
 | `{{page}}`      | page label shown in the PDF (e.g. `12`, `iv`)          |
 | `{{link}}`      | `zotero://open-pdf/...` deep link back to that page    |
 | `{{colour}}`    | annotation colour name (`yellow`, `red`, …)            |
-| `{{type}}`      | `highlight`, `note`, `image`                           |
+| `{{type}}`      | `highlight`, `underline`, `image`, `note` (ink isn't rendered) |
 | `{{citekey}}`   | the item's citekey                                     |
 | `{{imageBaseName}}` | filename for an image annotation                   |
 

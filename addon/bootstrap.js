@@ -1,6 +1,6 @@
 "use strict";
 
-// Zotero Obsidian Notes – open each item's vault markdown note in the item pane.
+// Obsidian Notepad for Zotero – open each item's vault markdown note in the item pane.
 //
 // Pane lifecycle/registration patterns are lifted from the citation-links
 // plugin (FTL insert-per-window, registerSection, the "find the CONNECTED
@@ -155,13 +155,13 @@ KeyIdea:
 
 These files are used by the **Obsidian Notepad for Zotero** plugin. They were
 copied here by the plugin so you can customise them — edit any file in Obsidian
-and the change applies on the next *Create note* / *Insert* / *Refresh*.
+and the change applies on the next *Create note* / *Insert* / *Update*.
 
 Two kinds of file, distinguished only by name:
 
 - **\`note.md\`** and any **\`note-*.md\`** — *whole-note scaffolds*, used by
   **Create note** when an item has no note yet. The default is set in
-  *Settings → Obsidian Notes → Default note template* (it can be any template).
+  *Settings → Obsidian Notepad → Default note template* (it can be any template).
 - **Every other file** (\`highlight.md\`, \`key-quote.md\`, \`abstract.md\`, …) —
   an *insertable block template*; it appears in the **Template** dropdown in the
   item pane and renders the item's annotations (or a field) into a live block.
@@ -190,7 +190,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         Zotero.PreferencePanes.register({
           pluginID: this.pluginID,
           src: this.rootURI + "content/preferences.xhtml",
-          label: "Obsidian Notes",
+          label: "Obsidian Notepad",
           scripts: [this.rootURI + "content/preferences.js"],
         });
       }
@@ -355,14 +355,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "btn.openSettings": "Open Settings",
     "btn.reloadDisk": "Reload from disk",
     "btn.overwrite": "Overwrite with mine",
-    "label.autoUpdate": "auto-update",
     "label.autoSync": "Auto-sync",
     "label.showMarkers": "Show markers",
     "label.readMode": "Reading view",
     "label.frontmatter": "Frontmatter",
     "tip.template": "Template — Insert it at the cursor, or use it to create a note",
     "tip.colour": "Only pull highlights of this colour",
-    "tip.syncMode": "live-field: the inserted block re-syncs from Zotero on Refresh. static-field: insert a frozen one-time snapshot.",
+    "tip.syncMode": "live: the inserted block re-syncs from Zotero on Update. static: insert a frozen one-time snapshot.",
     "tip.insert": "Insert the selected template at the cursor",
     "tip.refresh": "Pull updated metadata + annotations from Zotero — keeps your own fields, prose and edits",
     "tip.migrate": "Convert a legacy annotation dump into a live block",
@@ -387,7 +386,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "status.conflict": "Changed outside Zotero — reload or overwrite",
     "status.synced": "Synced ({count} annotation(s))",
     "status.autoSynced": "Auto-synced ({count} annotation(s))",
-    "status.refreshed": "Refreshed metadata + {count} annotation(s)",
+    "status.refreshed": "Updated metadata + {count} annotation(s)",
     "status.migrating": "Migrated — syncing…",
     "status.fieldsManaged": "Managing {count} field(s) — synced",
     "status.noScaffold": "No note template found — set a Templates folder in Settings",
@@ -403,8 +402,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "err.autoSyncWrite": "Auto-sync write failed — ",
     "err.syncRead": "Sync read failed — ",
     "err.syncWrite": "Sync write failed — ",
-    "err.refreshRead": "Refresh read failed — ",
-    "err.refreshWrite": "Refresh write failed — ",
+    "err.refreshRead": "Update read failed — ",
+    "err.refreshWrite": "Update write failed — ",
     "err.tagPush": "Tag push failed — ",
     "err.migrateRead": "Migrate read failed — ",
     "err.migrateWrite": "Migrate write failed — ",
@@ -437,20 +436,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   notesDir() { return Zotero.Prefs.get(this.PREF_NOTES, true) || this.DEFAULT_NOTES; },
   templatePath() { return Zotero.Prefs.get(this.PREF_TEMPLATE, true) || this.DEFAULT_TEMPLATE; },
   filenamePattern() { return Zotero.Prefs.get(this.PREF_FILENAME, true) || this.DEFAULT_FILENAME; },
-  // Render the new-note filename from the pattern (Nunjucks) over the item's data
-  // plus filename-friendly scalars (citekey, author, year, title, journal, …), so
-  // users can match an existing vault's naming. Falls back to @<citekey> if the
-  // pattern fails or renders empty. The caller appends .md and sanitises.
-  renderFilename(win, item, citekey) {
-    try {
-      let data = win.ZONCore.buildItemData(item, { citekey });
-      let extra = win.ZONCore.filenameFields(data);
-      let out = win.ZONCore.render(this.filenamePattern(), { ...data, ...extra, citekey });
-      out = String(out || "").trim();
-      if (out) return out;
-    } catch (e) { this.log("filename render failed, using citekey: " + e); }
-    return "@" + citekey;
-  },
   formatsDir() { return Zotero.Prefs.get(this.PREF_FORMATS_DIR, true) || this.DEFAULT_FORMATS_DIR; },
   templatesDir() { return Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true) || this.DEFAULT_TEMPLATES_DIR; },
   defaultNoteTemplate() { return Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) || this.DEFAULT_DEFAULT_NOTE; },
@@ -590,8 +575,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       else out[name] = Object.assign({ kind: "format" }, this.parseTemplateText(text));
     }
   },
-  // Back-compat alias — some call sites still say loadCustomFormats.
-  async loadCustomFormats() { return this.loadTemplates(); },
 
   // The full unified template list (shipped formats + the user's files), keyed by
   // name. Used to populate the Template dropdown / Create picker.
@@ -796,15 +779,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   },
 
   // The filename the plugin would give this item's note: the pattern rendered over
-  // the item's data, `.md` ensured, sanitised. Single source of truth for BOTH
-  // creating a note (writeNoteForItem) and matching one by filename (resolvePath),
-  // so the two can't drift.
+  // the item's data (+.md, sanitised) via the pure `resolveNoteFilename`. Single
+  // source of truth for BOTH creating a note (writeNoteForItem) and matching one
+  // by filename (resolvePath), so the two can't drift.
   expectedNoteFilename(win, item) {
-    let ck = this.getCitekey(item);
-    ck = ck ? win.ZONCore.sanitizeFilename(ck) : "";
-    let fn = this.renderFilename(win, item, ck);
-    if (!/\.md$/i.test(fn)) fn += ".md";
-    return win.ZONCore.sanitizeFilename(fn);
+    let citekey = this.getCitekey(item);
+    let data = win.ZONCore.buildItemData(item, { citekey });
+    return win.ZONCore.resolveNoteFilename(this.filenamePattern(), data, citekey);
   },
 
   // Force a fresh index scan, then relink every open pane to its (possibly new)
@@ -1231,7 +1212,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     // muted-bold title + a collapse chevron.
     let header = h("div", "zon-header-bar");
     let headerIcon = h("img", "zon-header-icon"); headerIcon.src = this.icon;
-    let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = "Obsidian Notes";
+    let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = "Obsidian Notepad";
     let chevron = h("span", "zon-header-chevron"); chevron.textContent = "⌄";
     header.append(headerIcon, headerTitle, chevron);
     // Click the header to collapse/expand the whole section (persisted, all panes).
@@ -1297,7 +1278,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     // NOTE: live auto-sync is a GLOBAL pref (PREF_AUTOSYNC) driven by the Notifier
     // (registerNotifier reads autoSyncEnabled()). Its toggle lives in
-    // Settings → Obsidian Notes, not in this per-item toolbar, since it applies
+    // Settings → Obsidian Notepad, not in this per-item toolbar, since it applies
     // to every note rather than the one in front of you.
 
     // "Show markers" toggle (GLOBAL pref) — reveals the raw %% zon %% / %% ann %%
@@ -1821,7 +1802,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         + "The plugin can copy starter templates — a default note layout plus "
         + "highlight / quote / abstract blocks — into a folder in your vault, so "
         + "you can edit them in Obsidian.\n\n"
-        + "You can skip this and set it up later in Settings → Obsidian Notes.",
+        + "You can skip this and set it up later in Settings → Obsidian Notepad.",
         flags, "Choose folder…", "Skip", null, null, {});
       if (btn !== 0) return;
       let tdir = await this.pickFolder(win, "Choose or create a folder for your note templates", defaultPath);
@@ -2697,7 +2678,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let field = C.getTagField(content) || this.tagSyncField();
     // Guard: the mapped field must actually exist in the note, else an empty read
     // would propose removing ALL tags. (An existing-but-empty field is allowed.)
-    let fm = content.match(/^---\n([\s\S]*?)\n---/);
+    let fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     let present = fm && new RegExp("^" + field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":", "m").test(fm[1]);
     if (!present) { this.setStatus(rec, this.t("status.noTagField", { field })); return; }
 

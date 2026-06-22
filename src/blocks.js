@@ -89,9 +89,14 @@ function annotationContext(a, opts) {
 }
 
 function matchesFilter(a, cfg) {
+  const wantType = cfg.type;
+  // Ink (freehand) annotations aren't supported yet — Zotero caches only the
+  // strokes (no text, no page content), so they'd render as empty `""` items.
+  // Exclude them unless a block explicitly asks for `type=ink`.
+  if (a.type === "ink" && (!wantType || wantType === "all")) return false;
   const wantColour = cfg.colour || cfg.color;
   if (wantColour && wantColour !== "all" && (a.colourName || "") !== wantColour) return false;
-  if (cfg.type && cfg.type !== "all" && a.type !== cfg.type) return false;
+  if (wantType && wantType !== "all" && a.type !== wantType) return false;
   return true;
 }
 

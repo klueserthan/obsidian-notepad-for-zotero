@@ -41,7 +41,7 @@ export const MANIFEST_KEY = "zon";
 //                 default seeds it, then the note owns its own.
 export const SYNC_KEYS = new Set(["tags", "attachments"]);
 
-const FM_RE = /^---\n([\s\S]*?)\n---\n?/;
+const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 const TOP_KEY_RE = /^([A-Za-z0-9_-]+):(.*)$/;
 const CHILD_RE = /^(\s+)([A-Za-z0-9_-]+):\s?(.*)$/;
 

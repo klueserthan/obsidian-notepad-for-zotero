@@ -18,7 +18,7 @@
 // when the note doesn't open with one. (Mirrors the fence the markers layer uses.)
 export function findFrontmatterRange(text) {
   const s = String(text);
-  const m = s.match(/^---\n[\s\S]*?\n---(?=\n|$)/);
+  const m = s.match(/^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)/);
   if (!m) return null;
   return { from: 0, to: m[0].length };
 }

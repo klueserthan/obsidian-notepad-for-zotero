@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Consistent naming.** The item-pane section, Settings pane and docs now all read
+  **"Obsidian Notepad"** (was a mix of "Obsidian Notes"/"Obsidian Notepad").
+- **"Refresh" → "Update" everywhere.** The button was renamed in an earlier beta;
+  its tooltips, statuses, errors and docs now match (e.g. the status reads
+  "Updated metadata + N annotation(s)").
+
+### Fixed
+- **Ink (freehand) annotations no longer create empty `""` items** in annotation
+  blocks. They're excluded by default (Zotero caches only the strokes, with no
+  text or page content), unless a block explicitly sets `type=ink`.
+- **CRLF notes work.** Frontmatter detection accepted only `\n`; notes saved with
+  Windows-style `\r\n` line endings silently failed tag-push ("no tag field"),
+  manifest refresh, and reading-view frontmatter hiding. Detection now accepts
+  `\r?\n`.
+
+### Docs
+- README Features list updated (image annotations + inline display, configurable
+  filename patterns + Rescan, tag push). Clarified that Push tags and the ⋯ More
+  menu live behind *Enable experimental features*.
+
+### Internal
+- Extracted the filename-pattern resolution into a pure, unit-tested
+  `src/filename.js` (`resolveNoteFilename`); removed dead code
+  (`loadCustomFormats`, the unused `auto-update` label); exported
+  `findImageEmbedRanges` / `resolveNoteFilename` from the core bundle. Tests: 189.
+
+## [1.0.0-beta.9] — 2026-06-22
+
+### Changed
 - **A custom filename pattern now outranks the bare-citekey filename guess** when
   linking a note. If you keep, say, `@<citekey>.md` for one purpose and
   `@<citekey> (litnote).md` for another, set the pattern to the suffixed form and
@@ -20,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README): every block attribute (`kind`/`colour`/`type`/`sync`/`format`), the
   `ann:` anchors, how Update regenerates `sync=on` vs frozen `sync=off` blocks,
   and the `zon:` frontmatter map — for migrating templates from other tools.
+- Corrected the prose-preservation note: a `sync=on` block is regenerated from
+  Zotero, so only prose **after the last annotation** survives; per-highlight
+  notes belong in the annotation's Zotero comment.
 
 ## [1.0.0-beta.8] — 2026-06-22
 
