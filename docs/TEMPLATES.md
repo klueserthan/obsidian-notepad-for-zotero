@@ -23,8 +23,7 @@ edit a file → the new look applies on the next Insert/Refresh.
 
 ## The language is Nunjucks
 
-Templates are written in **Nunjucks** — the *same* templating language as your
-existing `Zotero Template.md`. Nothing new to learn. You have `{{ variable }}`,
+Templates are written in **Nunjucks**.You have `{{ variable }}`,
 `{% if %}` / `{% for %}`, and filters like `{{ date | format("YYYY") }}`.
 
 ### Variables available in a *block* template (per annotation)
@@ -113,20 +112,33 @@ them. The open marker carries the block's settings as `key=value` attributes:
 ### The `%% ann:KEY %%` anchors
 
 Inside an `annotations` block, each rendered highlight ends in an invisible
-`%% ann:<annotationKey> %%` anchor. That's how Update knows which Zotero
-annotation each item came from, so it can update edited highlights in place and
-drop deleted ones. **Free prose you type *after* the last anchor is preserved** —
-a good place for a synthesis paragraph. (Prose *between* anchored items is also
-kept, attached to the following annotation.)
+`%% ann:<annotationKey> %%` anchor marking where that annotation's entry ends.
+Its job is to let the plugin find the **end of the last annotation**, so prose you
+add *after* it can be kept (see below).
 
 ### How Update treats a block
 
-- `sync=on` → **mirrors Zotero**: edited highlight text / changed comments replace
-  the old text, new annotations appear in Zotero's order, removed ones disappear.
+- `sync=on` → **mirrors Zotero**. The *whole block body is regenerated* from the
+  item's current annotations every time you Update: edited highlight text / changed
+  comments update, new annotations appear in Zotero's order, removed ones disappear.
+  **The only writing of your own the block keeps is free prose after the last
+  annotation** (a closing/synthesis paragraph). Text you type *between* annotations
+  is part of the regenerated body and will be replaced — that's expected.
 - `sync=off` → **left exactly as-is**. Flip a block to `sync=off` once you've
-  hand-edited it and want it frozen.
-- Everything outside `%% zon %%` blocks — your own writing, headings, links — is
-  never touched.
+  hand-edited it and want it frozen against further Updates.
+- Everything **outside** `%% zon %%` blocks — your own writing, headings, links —
+  is never touched.
+
+### Where to put your own notes
+
+Because a `sync=on` block belongs to Zotero, put your writing where it survives:
+
+- **A thought on one specific highlight** → add it as that annotation's **comment
+  in Zotero**. It renders under the highlight (via `{{comment}}`) and re-syncs on
+  every Update — the durable home for per-annotation notes.
+- **A synthesis / summary** → *after* the last annotation in the block (kept as the
+  trailing prose), or anywhere **outside** the block.
+- **Want to hand-curate a block freely?** → set it `sync=off` to freeze it.
 
 ## The `zon:` frontmatter (managed fields)
 
