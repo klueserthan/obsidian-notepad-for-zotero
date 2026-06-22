@@ -108,6 +108,10 @@
         "-y",
         "@upstash/context7-mcp"
       ]
+    },
+    "codegraph": {
+      "type": "local",
+      "enabled": false
     }
   }
 }
