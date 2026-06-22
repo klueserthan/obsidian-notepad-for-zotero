@@ -93,8 +93,8 @@ My free-written thoughts — keep these.
   });
 });
 
-describe("A2 — preserve manual edits inside sync=on blocks", () => {
-  // A fresh sync now anchors each annotation with %% ann:KEY %%.
+describe("sync=on mirrors Zotero (regenerates on Refresh)", () => {
+  // A fresh sync anchors each annotation with %% ann:KEY %%.
   it("anchors each rendered annotation so it can be tracked", () => {
     const body = renderBlockBody({ colour: "all", format: "list" }, ANNS, {});
     expect(body).toContain("%% ann:A %%");
@@ -111,49 +111,53 @@ ${block}
 %% /zon %%
 `;
 
-  it("preserves user text appended after an annotation's anchor across a sync", () => {
+  it("propagates an EDITED annotation (extended/contracted text) on the next sync", () => {
     const first = syncBlocks(noteWith(""), ANNS, {});
-    // User edits inside the block: add a note line after annotation B's anchor.
-    const edited = first.replace(
-      /(%% ann:B %%)/,
-      "$1\n  - my own follow-up thought on this point"
-    );
-    const resynced = syncBlocks(edited, ANNS, {});
-    expect(resynced).toContain("my own follow-up thought on this point");
-    // All three annotations still present, single block.
-    expect(resynced).toContain("yellow point");
-    expect(resynced).toContain("red point");
+    expect(first).toContain('"yellow point"');
+    // Zotero-side edit: annotation A's highlighted text is extended.
+    const edited = ANNS.map((a) => (a.key === "A" ? { ...a, annotatedText: "yellow point, now extended" } : a));
+    const resynced = syncBlocks(first, edited, {});
+    expect(resynced).toContain("yellow point, now extended"); // new text pulled in
+    expect(resynced).not.toContain('"yellow point"');          // stale text replaced
     expect(resynced.match(/%% zon /g).length).toBe(1);
   });
 
-  it("is idempotent once anchored, even with a manual edit present", () => {
+  it("propagates an edited comment too", () => {
     const first = syncBlocks(noteWith(""), ANNS, {});
-    const edited = first.replace(/(%% ann:A %%)/, "$1\n  - note on A");
-    const once = syncBlocks(edited, ANNS, {});
-    const twice = syncBlocks(once, ANNS, {});
-    expect(twice).toBe(once);
+    const edited = ANNS.map((a) => (a.key === "B" ? { ...a, comment: "now reconsidered" } : a));
+    const resynced = syncBlocks(first, edited, {});
+    expect(resynced).toContain("now reconsidered");
+    expect(resynced).not.toContain("important");
   });
 
-  it("drops an annotation removed from Zotero but keeps surviving edits", () => {
-    const first = syncBlocks(noteWith(""), ANNS, {});
-    const edited = first.replace(/(%% ann:A %%)/, "$1\n  - note on A");
-    const fewer = syncBlocks(edited, ANNS.filter((a) => a.key !== "C"), {});
-    expect(fewer).toContain("note on A");        // edit on a surviving annotation kept
-    expect(fewer).toContain("yellow point");     // A kept
-    expect(fewer).not.toContain("another yellow"); // C gone
+  it("inserts new annotations in Zotero order and drops removed ones", () => {
+    const first = syncBlocks(noteWith(""), ANNS.filter((a) => a.key !== "C"), {});
+    expect(first).not.toContain("another yellow");
+    const more = syncBlocks(first, ANNS, {}); // C added in Zotero
+    expect(more).toContain("another yellow");
+    const fewer = syncBlocks(more, ANNS.filter((a) => a.key !== "A"), {}); // A removed
+    expect(fewer).not.toContain('"yellow point"');
+    expect(fewer).toContain("red point");
   });
 
-  it("preserves edits in a MULTI-LINE format (quote) where the anchor ends the item", () => {
-    const note = `---\ncitekey: "x"\n---\n\n%% zon kind=annotations colour=all sync=on format=quote %%\n%% /zon %%\n`;
-    const first = syncBlocks(note, ANNS, {});
-    // quote items span multiple lines; the anchor lands on the last line.
-    expect(first).toMatch(/> red point[\s\S]*%% ann:B %%/);
-    const edited = first.replace(/(%% ann:B %%)/, "$1\n> my reflection added below B");
+  it("preserves free prose written AFTER the last annotation", () => {
+    const first = syncBlocks(noteWith(""), ANNS, {});
+    const edited = first.replace(/(%% ann:C %%)/, "$1\n\nSynthesis: these three points connect.");
     const resynced = syncBlocks(edited, ANNS, {});
-    expect(resynced).toContain("my reflection added below B");
+    expect(resynced).toContain("Synthesis: these three points connect.");
     expect(resynced.match(/%% zon /g).length).toBe(1);
-    // and still idempotent with that multi-line edit present
-    expect(syncBlocks(resynced, ANNS, {})).toBe(resynced);
+  });
+
+  it("is idempotent", () => {
+    const once = syncBlocks(noteWith(""), ANNS, {});
+    expect(syncBlocks(once, ANNS, {})).toBe(once);
+  });
+
+  it("sync=off freezes the block (no regeneration)", () => {
+    const note = `---\ncitekey: "x"\n---\n\n%% zon kind=annotations colour=all sync=off format=list %%\n- hand-curated, frozen\n%% /zon %%\n`;
+    const out = syncBlocks(note, ANNS, {});
+    expect(out).toContain("hand-curated, frozen");
+    expect(out).not.toContain("yellow point");
   });
 
   it("cleanly re-renders a pre-A2 (anchorless) block on first sync", () => {

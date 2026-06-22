@@ -164,17 +164,16 @@ function parseAnchoredItems(body) {
   return { blocks, tail: seen ? tail : "", hadAnchors: seen };
 }
 
-// Merge freshly-rendered anchored items into the existing block body: for every
-// annotation key still present in Zotero, keep the EXISTING text (so manual
-// edits inside the block survive); insert new annotations in Zotero order; drop
-// annotations no longer in Zotero. Trailing user text after the last anchor is
-// preserved. Idempotent: merge(render, render) === render. (A2)
+// Regenerate the block body from current Zotero annotations. A `sync=on` block
+// MIRRORS Zotero: every annotation is re-rendered from current data, so edits
+// (a highlight extended/contracted, a changed comment) propagate on Refresh; new
+// ones appear in Zotero order, removed ones drop. Free prose AFTER the last
+// annotation anchor is preserved (a place for closing notes). To hand-curate a
+// block and freeze it against resync, set `sync=off`. Idempotent.
 function mergeAnnotationItems(existingBody, freshItems, sep) {
-  const existing = parseAnchoredItems(existingBody);
-  const byKey = new Map(existing.blocks.map((b) => [b.key, b]));
-  const merged = freshItems.map((f) => (byKey.has(f.key) ? byKey.get(f.key).text : f.text));
-  let out = merged.join(sep);
-  if (existing.tail) out += sep + existing.tail;
+  const { tail } = parseAnchoredItems(existingBody);
+  let out = freshItems.map((f) => f.text).join(sep);
+  if (tail) out += (out ? sep : "") + tail;
   return out;
 }
 

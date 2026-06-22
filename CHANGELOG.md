@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-beta.6] — 2026-06-22
+
+### Fixed
+- **Edited annotations now update on Refresh.** A `sync=on` block now *mirrors*
+  Zotero: if you extend/contract a highlight or change its comment in the PDF,
+  the new text replaces the old on the next Refresh (previously the in-block text
+  was kept, so edits never showed). New annotations still appear in Zotero order
+  and removed ones drop; free prose written *after* the last annotation is
+  preserved. To hand-curate and freeze a block against resync, set `sync=off`.
+- **Duplicate section header removed.** Recent Zotero renders its own native
+  collapsible-section head (logo + "Obsidian Notes" + twisty), so the plugin's
+  custom header bar was showing as a second, redundant heading. The custom header
+  (and its separate collapse state) is gone; the native head is used.
+
+### Changed
+- **"⋯ More" menu is now opt-in.** The advanced/early actions (*Sync Metadata*,
+  *Migrate*, *Push tags → Zotero*) are hidden by default to keep the toolbar tidy.
+  Turn them on with **Settings → Enable experimental features** (reopen the item
+  or restart Zotero to apply).
+
 ## [1.0.0-beta.5] — 2026-06-16
 
 ### Added
