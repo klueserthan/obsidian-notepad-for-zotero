@@ -9,12 +9,13 @@ Zotero item pane** — and sync your PDF highlights into it as you read.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/acatechnic)
 
-> Status: **public beta** (v1.0.0-beta.5). Cross-platform
+> Status: **public beta** (v1.0.0-beta.6). Cross-platform
 > (Windows / macOS / Linux), Zotero 7+, [AGPL-3.0](LICENSE).
 >
-> **Install:** download `obsidian-notepad-for-zotero.xpi` from the
-> [latest release](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/latest),
+> **Install:** download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.6/obsidian-notepad-for-zotero.xpi)**
+> (or browse [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases)),
 > then in Zotero: Tools → Plugins → gear icon → *Install Plugin From File…*
+> It auto-updates after that.
 >
 > Like it? [**Buy me a coffee ☕**](https://buymeacoffee.com/acatechnic)
 
@@ -57,10 +58,12 @@ file on disk stays a clean, plain-markdown Obsidian note.
 
 ## Install
 
-_Coming soon_ via the Zotero plugins directory and GitHub Releases. Until then,
-download the `.xpi` from a release and install it with **Tools → Plugins →
-gear menu → Install Plugin From File…**. The plugin auto-updates from GitHub
-Releases.
+1. Download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.6/obsidian-notepad-for-zotero.xpi)**
+   (latest beta) — or pick a build from [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases).
+2. In Zotero: **Tools → Plugins → gear menu → Install Plugin From File…** and choose the `.xpi`.
+3. That's it — the plugin **auto-updates** from GitHub Releases from then on.
+
+_A listing in the Zotero plugins directory is coming later._
 
 If it saves you time, you can [**buy me a coffee ☕**](https://buymeacoffee.com/acatechnic) — much appreciated, never required.
 
