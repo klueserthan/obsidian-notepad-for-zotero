@@ -1,4 +1,4 @@
-name: opencode-pr-review
+name: opencode-issue-large
 
 on:
   issue_comment:
