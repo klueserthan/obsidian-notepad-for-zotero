@@ -161,6 +161,20 @@ a no-op (see the file's header comment).
 - For trivial one-file edits, switch the agent to `build` (the orchestrator
   delegates instead of reading).
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues at `github.com/klueserthan/obsidian-notepad-for-zotero` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles mapped verbatim: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` and one `docs/adr/` at the repo root, created lazily as terms and decisions are recorded. See `docs/agents/domain.md`.
+
 ## Things to avoid
 
 - Do **not** put `&&` in any `zotero-plugin.config.ts` field that takes a
