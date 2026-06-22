@@ -720,35 +720,35 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (this.indexing) return this.indexing;
     this.indexing = (async () => {
       let map = new Map();      // itemKey  -> path (from ZoteroLink)
-      let ckMap = new Map();    // citekey  -> path (frontmatter or @<citekey>.md)
-      let fileMap = new Map();  // filename (lowercased) -> path (for pattern matching)
+      let ckFront = new Map();  // citekey  -> path (from a `citekey:` frontmatter field)
+      let ckFile = new Map();   // citekey  -> path (from an @?<citekey>.md filename stem)
+      let fileMap = new Map();  // filename (lowercased) -> path (for filename-pattern matching)
       let dir = this.notesDir();
+      let done = () => { this.index = map; this.ckFrontIndex = ckFront; this.ckFileIndex = ckFile; this.fileIndex = fileMap; };
       let children;
       try { children = await IOUtils.getChildren(dir); }
-      catch (e) { this.log("cannot read notes dir " + dir + ": " + e); this.index = map; this.citekeyIndex = ckMap; this.fileIndex = fileMap; return map; }
+      catch (e) { this.log("cannot read notes dir " + dir + ": " + e); done(); return map; }
       let reLink = /ZoteroLink:[^\n]*items\/([A-Z0-9]+)/i;
       let reCite = /^citekey:\s*"?([^"\n]+?)"?\s*$/im;
       for (let p of children) {
         if (!p.endsWith(".md")) continue;
         fileMap.set(PathUtils.filename(p).toLowerCase(), p); // for filename-pattern matching
+        // Filename stem (minus optional @) — indexed separately so it ranks BELOW
+        // the configured filename pattern (a `@citekey.md` sibling mustn't outrank
+        // a `@citekey (litnote).md` the user's pattern targets).
+        let fm = PathUtils.filename(p).match(/^@?(.+)\.md$/i);
+        if (fm) ckFile.set(fm[1], p);
         try {
           let text = await IOUtils.readUTF8(p);
           let head = text.slice(0, 2000); // keys live in frontmatter
           let m = head.match(reLink);
           if (m) map.set(m[1], p);
           let cm = head.match(reCite);
-          let ck = cm ? cm[1].trim() : null;
-          if (!ck) {
-            let fm = PathUtils.filename(p).match(/^@?(.+)\.md$/i); // @<citekey>.md
-            if (fm) ck = fm[1];
-          }
-          if (ck) ckMap.set(ck, p);
+          if (cm) ckFront.set(cm[1].trim(), p);
         } catch (e) {}
       }
-      this.index = map;
-      this.citekeyIndex = ckMap;
-      this.fileIndex = fileMap;
-      this.log("indexed " + map.size + " by item-key, " + ckMap.size + " by citekey, " + fileMap.size + " files, from " + dir);
+      done();
+      this.log("indexed " + map.size + " by item-key, " + ckFront.size + " by citekey field, " + fileMap.size + " files (" + ckFile.size + " by filename stem), from " + dir);
       return map;
     })();
     let r = await this.indexing;
@@ -767,22 +767,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         if (parent) item = parent;
       }
     } catch (e) {}
+    let ck = null;
+    try { ck = this.getCitekey(item, false); } catch (e) {} // strict — no surname+year guess
     // 1. Most reliable: a ZoteroLink (item key) in the note's frontmatter.
     let p = this.index.get(item.key);
     if (p) return p;
-    // 2. A `citekey:` frontmatter field, or a citekey-named file (@<citekey>.md /
-    //    <citekey>.md). Strict citekey only (no surname+year guess) — avoids
-    //    false matches.
-    try {
-      let ck = this.getCitekey(item, false);
-      if (ck && this.citekeyIndex) {
-        let cp = this.citekeyIndex.get(ck);
-        if (cp) return cp;
-      }
-    } catch (e) {}
+    // 2. An explicit `citekey:` frontmatter field.
+    if (ck && this.ckFrontIndex) { let cp = this.ckFrontIndex.get(ck); if (cp) return cp; }
     // 3. The configured filename convention: render the pattern for this item and
-    //    look for a file with exactly that name. Lets citekey-/title-named vaults
-    //    link without per-note frontmatter (1 & 2 are preferred + more robust).
+    //    look for a file of exactly that name. This OUTRANKS the bare-citekey
+    //    filename guess below, so a custom pattern (e.g. `@{{citekey}} (litnote).md`)
+    //    wins over a plain `@<citekey>.md` sibling.
     try {
       if (this.fileIndex && this.fileIndex.size) {
         let win = Zotero.getMainWindows()[0];
@@ -794,6 +789,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         }
       }
     } catch (e) {}
+    // 4. Legacy fallback: an @?<citekey>.md filename stem (covers `<citekey>.md`
+    //    without an `@`, and notes named by citekey before a custom pattern was set).
+    if (ck && this.ckFileIndex) { let cp = this.ckFileIndex.get(ck); if (cp) return cp; }
     return null;
   },
 
@@ -815,7 +813,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // memory lookup; never writes, renames, or disturbs unsaved editor content
   // (re-rendering a pane whose link is unchanged is a no-op).
   async rescan() {
-    this.index = null; this.citekeyIndex = null; this.fileIndex = null;
+    this.index = null; this.ckFrontIndex = null; this.ckFileIndex = null; this.fileIndex = null;
     await this.buildIndex();
     for (let rec of this.openRecs()) {
       if (!rec.item || !rec.wrap) continue;

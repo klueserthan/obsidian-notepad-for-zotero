@@ -80,9 +80,15 @@ Notes** (with **Browse…** folder pickers).
 Notes and annotation blocks are authored in **Nunjucks** (the same templating
 language as the popular Zotero-to-Obsidian export templates). A templates folder
 holds your whole-note scaffold (`note.md`) and any insertable annotation-block
-templates. See **[docs/TEMPLATES.md](docs/TEMPLATES.md)** for the variables,
-the optional `%%! … %%` directive, and examples. Built-in block formats
-(`list`, `quote`, `callout`, `compact`) are always available even with no folder.
+templates. Built-in block formats (`list`, `quote`, `callout`, `compact`) are
+always available even with no folder.
+
+See **[docs/TEMPLATES.md](docs/TEMPLATES.md)** for the full guide: the available
+variables, the optional `%%! … %%` template directive, a reference for the
+**`%% zon … %%` blocks** the plugin writes into your notes (every attribute, the
+`ann:` anchors, how Update regenerates them) and the **`zon:` frontmatter** that
+keeps managed fields synced — useful if you're translating templates from another
+tool.
 
 ## How it works / safety
 

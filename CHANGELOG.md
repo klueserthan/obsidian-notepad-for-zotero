@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A custom filename pattern now outranks the bare-citekey filename guess** when
+  linking a note. If you keep, say, `@<citekey>.md` for one purpose and
+  `@<citekey> (litnote).md` for another, set the pattern to the suffixed form and
+  it links the right file (a plain `@<citekey>.md` sibling no longer wins). Order
+  is now: `ZoteroLink:` → `citekey:` frontmatter → your filename pattern →
+  legacy `@?<citekey>.md`.
+
+### Docs
+- **`%% zon … %%` block reference** added to TEMPLATES.md (and linked from the
+  README): every block attribute (`kind`/`colour`/`type`/`sync`/`format`), the
+  `ann:` anchors, how Update regenerates `sync=on` vs frozen `sync=off` blocks,
+  and the `zon:` frontmatter map — for migrating templates from other tools.
+
+## [1.0.0-beta.8] — 2026-06-22
+
+### Changed
 - **Filename pattern accepts more fields.** New-note filenames can now use
   `{{author}}` (first author's surname), `{{year}}`, `{{title}}`, `{{journal}}`,
   `{{date}}`, and `{{itemType}}` in addition to `{{citekey}}` — so you can match
@@ -25,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Settings, and there's a new **Rescan** button (in the "no note found" state) to
   pick up notes you added or renamed outside Zotero. Rescanning only reads files —
   it never writes or disturbs unsaved edits.
+
+### Fixed
+- **Release builds reliably.** A release-flow bug could upload a stale build; the
+  build step now runs as a single command so the published `.xpi` always matches
+  the tag. (beta.7 was re-published with the correct artifacts.)
+
+## [1.0.0-beta.7] — 2026-06-22
 
 ### Added
 - **Image (area) annotations are imported.** On sync, each image/area annotation's

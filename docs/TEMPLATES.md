@@ -83,20 +83,74 @@ Anything you set in the toolbar at Insert time overrides these defaults.
 
 ---
 
-## What `%% zon … %%` is (in your finished notes)
+## `%% zon … %%` blocks — reference
 
-When you Insert, the plugin wraps the rendered annotations in an invisible marker:
+This is the part to read if you're migrating templates from another tool and want
+to understand what ends up *in* your notes.
+
+When you Insert, the plugin wraps the rendered output in a pair of invisible
+markers — **Obsidian's own comment syntax** (`%% … %%`), so they don't show in
+reading view:
 
 ```
-%% zon kind=annotations colour=yellow sync=on format=key-quote %%
-> …your annotations…
+%% zon kind=annotations colour=yellow type=highlight sync=on format=key-quote %%
+> "A highlighted sentence." %% ann:ABCD1234 %%
+> — [p.12](zotero://open-pdf/library/items/KEY?page=12&annotation=ABCD1234)
 %% /zon %%
 ```
 
-`%% … %%` is **Obsidian's own comment syntax** — it's invisible in reading view.
-It's there so **Refresh** can find the block and regenerate it from Zotero without
-touching your prose or any frozen (`sync=off`) blocks. You don't write these by
-hand — Insert does it. `format=` records which template produced the block.
+You never write these by hand — **Insert** creates them and **Update** regenerates
+them. The open marker carries the block's settings as `key=value` attributes:
+
+| Attribute | Values | What it does |
+| --- | --- | --- |
+| `kind` | `annotations` (default), `field`, `section`, `custom` | `annotations` renders the body once **per highlight**; the others render **once over the item's data** (abstract, citation, a metadata field) — see the directive section above. |
+| `colour` | `all`, `yellow`, `red`, `green`, `blue`, `purple`, `magenta`, `orange`, `grey` | Only pull highlights of this colour (`annotations` blocks only). |
+| `type` | `all`, `highlight`, `underline`, `image`, `ink`, `note` | Only pull annotations of this type. Omitted = all types. |
+| `sync` | `on` (default), `off` | `on` = the block **mirrors Zotero** and is regenerated on every Update. `off` = a **frozen** one-time snapshot Update never touches — use it to hand-curate. |
+| `format` | a template name (`list`, `quote`, `callout`, `compact`, or your own file) | Which per-annotation template rendered the body, so Update can re-render it the same way. |
+
+### The `%% ann:KEY %%` anchors
+
+Inside an `annotations` block, each rendered highlight ends in an invisible
+`%% ann:<annotationKey> %%` anchor. That's how Update knows which Zotero
+annotation each item came from, so it can update edited highlights in place and
+drop deleted ones. **Free prose you type *after* the last anchor is preserved** —
+a good place for a synthesis paragraph. (Prose *between* anchored items is also
+kept, attached to the following annotation.)
+
+### How Update treats a block
+
+- `sync=on` → **mirrors Zotero**: edited highlight text / changed comments replace
+  the old text, new annotations appear in Zotero's order, removed ones disappear.
+- `sync=off` → **left exactly as-is**. Flip a block to `sync=off` once you've
+  hand-edited it and want it frozen.
+- Everything outside `%% zon %%` blocks — your own writing, headings, links — is
+  never touched.
+
+## The `zon:` frontmatter (managed fields)
+
+Separately from blocks, a note's YAML frontmatter can carry a reserved `zon:` map
+that records **which frontmatter fields stay synced from Zotero, and how** — each
+as a one-line Nunjucks expression:
+
+```yaml
+---
+Title: "Policing the Crisis"
+Year: "1978"
+zon:
+  Title: "\"{{title}}\""
+  Year: "\"{{date | format('YYYY')}}\""
+  tags: Topics          # reverse sync: this note's `Topics` field → Zotero tags
+  attachments: References/Attachments   # where image annotations export to
+---
+```
+
+On Update, each managed key is re-rendered from the item; unmanaged keys, the
+`zon:` map itself, and the note body are left alone. Because the expression lives
+**in the note**, editing a template later never retroactively rewrites existing
+notes. The reserved keys `tags:` and `attachments:` configure reverse tag sync and
+the image-export folder per-note (both have global defaults in Settings).
 
 ---
 
