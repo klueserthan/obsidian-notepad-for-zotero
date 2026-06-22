@@ -30,12 +30,16 @@ import { makeEnv } from "./render.js";
 
 export const MANIFEST_KEY = "zon";
 
-// Reserved child keys inside the `zon:` map that configure note→Zotero (reverse)
-// sync rather than naming a frontmatter field to forward-render. `tags` records
-// the frontmatter field this note mirrors to Zotero tags (e.g. "Topics"), so the
-// field-map is per-note (different users map tags to Topics / tags / their own
-// spelling). These are skipped by the forward field-sync (applyManifest).
-export const SYNC_KEYS = new Set(["tags"]);
+// Reserved child keys inside the `zon:` map that configure sync behaviour rather
+// than naming a frontmatter field to forward-render. They're per-note so each
+// note carries its own rules, and are skipped by the forward field-sync
+// (applyManifest):
+//   tags        — the frontmatter field this note mirrors to Zotero tags
+//                 (e.g. "Topics"); different users spell it differently.
+//   attachments — the vault-relative folder this note's image annotations are
+//                 exported into (e.g. "References/Attachments"); the global
+//                 default seeds it, then the note owns its own.
+export const SYNC_KEYS = new Set(["tags", "attachments"]);
 
 const FM_RE = /^---\n([\s\S]*?)\n---\n?/;
 const TOP_KEY_RE = /^([A-Za-z0-9_-]+):(.*)$/;
@@ -239,4 +243,17 @@ export function getTagField(md) {
 // Record (per-note) which frontmatter field mirrors Zotero tags, in `zon: tags:`.
 export function setTagField(md, field) {
   return setManifestEntry(md, "tags", String(field));
+}
+
+// Per-note vault-relative folder for exported image annotations (`zon: attachments:`).
+// Returns null when unset so the caller can fall back to the global default.
+export function getAttachmentFolder(md) {
+  const e = parseManifest(md).entries.find((x) => x.key === "attachments");
+  const v = e ? String(e.expr).trim() : "";
+  return v || null;
+}
+
+// Record (per-note) the image-annotation export folder, in `zon: attachments:`.
+export function setAttachmentFolder(md, folder) {
+  return setManifestEntry(md, "attachments", String(folder));
 }

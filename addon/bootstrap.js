@@ -37,6 +37,7 @@ var ZON = {
   PREF_SHOWFRONTMATTER: "extensions.zotero-obsidian-notes.showFrontmatter",
   PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
   PREF_TAGFIELD: "extensions.zotero-obsidian-notes.tagSyncField",
+  PREF_ATTACHFOLDER: "extensions.zotero-obsidian-notes.attachmentFolder",
   PREF_EXPERIMENTAL: "extensions.zotero-obsidian-notes.experimental",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
@@ -58,6 +59,7 @@ var ZON = {
   DEFAULT_SHOWFRONTMATTER: true, // show the YAML frontmatter by default (toggle off to hide it)
   DEFAULT_COLLAPSED: false, // section starts expanded; the header chevron folds it (persisted)
   DEFAULT_TAGFIELD: "Topics", // default frontmatter field mirrored to Zotero tags (per-note override via `zon: tags:`)
+  DEFAULT_ATTACHFOLDER: "References/Attachments", // vault-relative folder for exported image annotations (per-note override via `zon: attachments:`)
   DEFAULT_EXPERIMENTAL: false, // hide the "⋯ More" menu (Sync Metadata / Migrate / Push tags) unless opted in
   _templates: null,
 
@@ -615,6 +617,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     seed(this.PREF_SHOWFRONTMATTER, this.DEFAULT_SHOWFRONTMATTER);
     seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);
     seed(this.PREF_TAGFIELD, this.DEFAULT_TAGFIELD);
+    seed(this.PREF_ATTACHFOLDER, this.DEFAULT_ATTACHFOLDER);
     seed(this.PREF_EXPERIMENTAL, this.DEFAULT_EXPERIMENTAL);
   },
 
@@ -646,6 +649,21 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   tagSyncField() {
     try { let v = Zotero.Prefs.get(this.PREF_TAGFIELD, true); return (v == null || v === "") ? this.DEFAULT_TAGFIELD : String(v); }
     catch (e) { return this.DEFAULT_TAGFIELD; }
+  },
+  // Global default vault-relative folder for exported image annotations.
+  attachmentFolder() {
+    try { let v = Zotero.Prefs.get(this.PREF_ATTACHFOLDER, true); return (v == null || v === "") ? this.DEFAULT_ATTACHFOLDER : String(v); }
+    catch (e) { return this.DEFAULT_ATTACHFOLDER; }
+  },
+  // Resolve the folder for THIS note: its own `zon: attachments:` wins, else the
+  // global default — same per-note-over-global pattern as the tag sync field.
+  resolveAttachmentFolder(md, win) {
+    try {
+      let C = win && win.ZONCore;
+      let perNote = C && C.getAttachmentFolder ? C.getAttachmentFolder(md || "") : null;
+      if (perNote) return perNote.replace(/^\/+|\/+$/g, "");
+    } catch (e) {}
+    return this.attachmentFolder().replace(/^\/+|\/+$/g, "");
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -1802,7 +1820,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         });
       } catch (e) { this.log("buildItemData failed: " + e); }
     }
-    return { citekey, formats: this.formatMap(win), itemData };
+    return {
+      citekey,
+      formats: this.formatMap(win),
+      itemData,
+      attachmentFolder: extra.attachmentFolder || this.attachmentFolder(),
+    };
   },
 
   async renderDocument(win, item, templateText) {
@@ -1811,7 +1834,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
-    try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data }); } catch (e) {}
+    let attachmentFolder = this.resolveAttachmentFolder(md, win);
+    try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) { this.log("image export failed: " + e); }
+    try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder }); } catch (e) {}
     return md;
   },
 
@@ -1828,6 +1853,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let anns = this.gatherAnnotations(item, win);
     let bibliography = await this.getBibliography(item);
     let blockOpts = this.syncOpts(win, item, { bibliography });
+    try { await this.exportAnnotationImages(anns, this.getCitekey(item), blockOpts.attachmentFolder, win); }
+    catch (e) { this.log("image export failed: " + e); }
     let cfg = this.blockConfigFor(t, name, {});
     return win.ZONCore.makeBlock(cfg, anns, blockOpts) + "\n";
   },
@@ -2100,9 +2127,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // ---------------------------------------------------------------- annotations
 
   // Read all annotations from the item's PDF attachments, mapped to our shape.
+  // For image (area) annotations we also assign a stable, citekey-/page-/key-based
+  // `imageBaseName` (so the embed filename is deterministic and re-sync is
+  // idempotent) and stash the annotation id for exportAnnotationImages to copy
+  // the cached PNG out of Zotero. Naming only — the file copy is a separate step.
   gatherAnnotations(item, win) {
     let out = [];
     try {
+      let citekey = this.getCitekey(item) || "ref";
+      let C = win.ZONCore;
       let ids = item.getAttachments ? item.getAttachments() : [];
       for (let id of ids) {
         let att = Zotero.Items.get(id);
@@ -2111,10 +2144,47 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
           : (att.attachmentContentType === "application/pdf");
         if (!isPDF) continue;
         let anns = att.getAnnotations ? att.getAnnotations() : [];
-        for (let a of anns) out.push(win.ZONCore.mapZoteroAnnotation(a, att.key));
+        for (let a of anns) {
+          let m = C.mapZoteroAnnotation(a, att.key);
+          if (m.type === "image") {
+            let page = (m.pageLabel != null && String(m.pageLabel).trim() !== "")
+              ? String(m.pageLabel).trim() : String((m.pageIndex ?? 0) + 1);
+            let base = `${citekey}-p${page}-${m.key}`;
+            m.imageBaseName = (C.sanitizeFilename ? C.sanitizeFilename(base) : base) + ".png";
+            m._annotationID = a.id; // for exportAnnotationImages (not serialised)
+          }
+          out.push(m);
+        }
       }
     } catch (e) { this.log("gatherAnnotations failed: " + e); }
     return out;
+  },
+
+  // Copy the cached PNG for each image annotation into the note's attachment
+  // folder (vault-relative), so the `![[…]]` embeds resolve in Obsidian. Returns
+  // the count exported. Idempotent: skips files already present. No-op when the
+  // vault path is unset. Naming/embeds are produced in gatherAnnotations; this
+  // just realises the files. (Image/area annotations only — ink is deferred.)
+  async exportAnnotationImages(anns, citekey, folder, win) {
+    let imgs = (anns || []).filter((a) => a.type === "image" && a.imageBaseName && a._annotationID != null);
+    if (!imgs.length) return 0;
+    let vault = this.vaultPath();
+    if (!vault) return 0;
+    let segs = String(folder).split(/[\\/]/).filter(Boolean);
+    let dir = PathUtils.join(vault, ...segs, citekey || "ref");
+    let n = 0;
+    for (let a of imgs) {
+      try {
+        let src = await Zotero.Annotations.getCacheImagePath(Zotero.Items.get(a._annotationID));
+        if (!src || !(await IOUtils.exists(src))) continue;
+        let dest = PathUtils.join(dir, a.imageBaseName);
+        if (await IOUtils.exists(dest)) { n++; continue; }
+        await IOUtils.makeDirectory(dir, { ignoreExisting: true, createAncestors: true });
+        await IOUtils.copy(src, dest);
+        n++;
+      } catch (e) { this.log("exportAnnotationImages: " + e); }
+    }
+    return n;
   },
 
   // Does the item have a PDF attachment at all? Lets us tell "no annotations yet"
@@ -2222,8 +2292,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let existing = "";
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
     let anns = this.gatherAnnotations(item, win);
+    let folder = this.resolveAttachmentFolder(existing, win);
+    try { await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win); }
+    catch (e) { this.log("image export failed: " + e); }
     let updated;
-    try { updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item)); }
+    try { updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item, { attachmentFolder: folder })); }
     catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
     if (updated === existing) return; // nothing to do — no write, no caret disruption
     try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
@@ -2315,7 +2388,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (!anns.length && !this.hasPdfAttachment(item)) { this.setStatus(rec, this.t("status.noPdf")); return; }
     let existing = "";
     try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { this.setStatus(rec, this.t("err.syncRead") + e); return; }
-    let updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item));
+    let folder = this.resolveAttachmentFolder(existing, win);
+    try { await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win); }
+    catch (e) { this.log("image export failed: " + e); }
+    let updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item, { attachmentFolder: folder }));
     if (updated !== existing) {
       try { await this.safeWrite(rec.path, updated); } catch (e) { this.setStatus(rec, this.t("err.syncWrite") + e); this.log("sync write failed: " + e); return; }
     }
@@ -2374,7 +2450,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
 
     let anns = this.gatherAnnotations(item, win);
-    try { merged = win.ZONCore.syncBlocks(merged, anns, { citekey, formats: this.formatMap(win), itemData: data }); }
+    let attachmentFolder = this.resolveAttachmentFolder(existing, win);
+    try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); }
+    catch (e) { this.log("image export failed: " + e); }
+    try { merged = win.ZONCore.syncBlocks(merged, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder }); }
     catch (e) { this.log("annotation refresh failed: " + e); }
 
     if (merged !== existing) {
@@ -2441,7 +2520,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       // Compute bibliography for the first render of a field/section element; an
       // annotations block doesn't need it (skip the QuickCopy cost).
       let bibliography = (item && cfg.kind !== "annotations") ? await this.getBibliography(item) : "";
-      text = win.ZONCore.makeBlock(cfg, anns, this.syncOpts(win, item, { bibliography }));
+      let curMd = ""; try { curMd = rec.lib.getDoc(rec.view) || ""; } catch (e) {}
+      let folder = this.resolveAttachmentFolder(curMd, win);
+      if (item) { try { await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win); } catch (e) { this.log("image export failed: " + e); } }
+      text = win.ZONCore.makeBlock(cfg, anns, this.syncOpts(win, item, { bibliography, attachmentFolder: folder }));
     }
     rec.lib.insertAtCursor(rec.view, "\n" + String(text).trim() + "\n");
     // The edit fires the debounced save automatically (onEdit).

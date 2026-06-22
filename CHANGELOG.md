@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Image (area) annotations are imported.** On sync, each image/area annotation's
+  cached PNG is copied into a per-note folder in your vault (default
+  `References/Attachments/<citekey>/`) and linked in the note with an Obsidian
+  embed `![[…]]`, which renders in Obsidian. Previously these showed as an empty
+  `""`. The snapshot includes the underlying page content (text/figures), like the
+  Zotero Integration plugin. The folder is set in **Settings → Image-annotation
+  folder** and can be overridden per-note via `zon: attachments:` (same
+  global-default-plus-per-note pattern as tag sync). Export is idempotent —
+  re-syncing won't duplicate files. *(Ink/drawing annotations are not exported yet:
+  Zotero only caches the strokes, with no underlying page content.)*
+
 ## [1.0.0-beta.6] — 2026-06-22
 
 ### Fixed

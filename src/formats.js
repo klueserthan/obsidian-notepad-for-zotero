@@ -5,22 +5,27 @@
 //
 // Available variables per annotation: text, comment, page (= pageLabel),
 // pageIndex, key, colour, type, link (zotero://open-pdf deep link), citekey,
-// imageBaseName.
+// imageBaseName, attachmentFolder.
+//
+// Image (area) annotations have no `text`; they carry an `imageBaseName` pointing
+// at the PNG the plugin exported to `<attachmentFolder>/<citekey>/`. Each format
+// emits an Obsidian embed `![[…]]` in that case, and the plain text version
+// otherwise — so for text highlights the output is byte-identical to before.
 export const DEFAULT_FORMATS = {
   list: {
-    item: `- [p.{{page}}]({{link}}) "{{text}}"{% if comment %} — *{{comment}}*{% endif %}`,
+    item: `- [p.{{page}}]({{link}}) {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}"{{text}}"{% endif %}{% if comment %} — *{{comment}}*{% endif %}`,
     sep: "\n",
   },
   quote: {
-    item: `> {{text}}\n> — [p.{{page}}]({{link}}){% if comment %}\n>\n> {{comment}}{% endif %}`,
+    item: `> {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}{{text}}{% endif %}\n> — [p.{{page}}]({{link}}){% if comment %}\n>\n> {{comment}}{% endif %}`,
     sep: "\n\n",
   },
   callout: {
-    item: `> [!quote] p.{{page}}\n> {{text}}{% if comment %}\n>\n> {{comment}}{% endif %}`,
+    item: `> [!quote] p.{{page}}\n> {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}{{text}}{% endif %}{% if comment %}\n>\n> {{comment}}{% endif %}`,
     sep: "\n\n",
   },
   compact: {
-    item: `- "{{text}}" (p.{{page}}){% if comment %} — {{comment}}{% endif %}`,
+    item: `- {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}"{{text}}"{% endif %} (p.{{page}}){% if comment %} — {{comment}}{% endif %}`,
     sep: "\n",
   },
 };

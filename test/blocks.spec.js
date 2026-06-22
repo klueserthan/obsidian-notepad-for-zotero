@@ -14,6 +14,45 @@ describe("config parsing", () => {
   });
 });
 
+describe("image annotations render Obsidian embeds", () => {
+  const IMG = [
+    { key: "IMG1", type: "image", attachmentKey: "PDF", pageLabel: "2", pageIndex: 2, sortIndex: "1", annotatedText: "", comment: "", colourName: "yellow", imageBaseName: "armstrong2018-p2-IMG1.png" },
+  ];
+  const opts = { citekey: "armstrong2018", attachmentFolder: "References/Attachments" };
+
+  it("emits ![[folder/citekey/imageBaseName]] instead of empty quotes (list)", () => {
+    const body = renderBlockBody({ colour: "all", format: "list" }, IMG, opts);
+    expect(body).toContain("![[References/Attachments/armstrong2018/armstrong2018-p2-IMG1.png]]");
+    expect(body).not.toContain('""'); // the old empty-text bug
+    expect(body).toContain("?page=2&annotation=IMG1"); // page link preserved
+  });
+
+  it("honours a per-note attachment folder + comment", () => {
+    const img = [{ ...IMG[0], comment: "key figure" }];
+    const body = renderBlockBody({ colour: "all", format: "list" }, img, { citekey: "armstrong2018", attachmentFolder: "Z/imgs" });
+    expect(body).toContain("![[Z/imgs/armstrong2018/armstrong2018-p2-IMG1.png]]");
+    expect(body).toContain("— *key figure*");
+  });
+
+  it("embeds in quote/callout/compact too", () => {
+    for (const format of ["quote", "callout", "compact"]) {
+      const body = renderBlockBody({ colour: "all", format }, IMG, opts);
+      expect(body, format).toContain("![[References/Attachments/armstrong2018/armstrong2018-p2-IMG1.png]]");
+    }
+  });
+
+  it("falls back to the default folder when none is given", () => {
+    const body = renderBlockBody({ colour: "all", format: "list" }, IMG, { citekey: "armstrong2018" });
+    expect(body).toContain("![[References/Attachments/armstrong2018/armstrong2018-p2-IMG1.png]]");
+  });
+
+  it("leaves text annotations as quotes (no embed)", () => {
+    const body = renderBlockBody({ colour: "all", format: "list" }, ANNS, {});
+    expect(body).not.toContain("![[");
+    expect(body).toContain('"yellow point"');
+  });
+});
+
 describe("renderBlockBody filtering + format", () => {
   it("filters by colour and renders the chosen format", () => {
     const body = renderBlockBody({ colour: "yellow", format: "list" }, ANNS, {});

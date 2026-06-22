@@ -84,6 +84,7 @@ function annotationContext(a, opts) {
     link: pdfLink(a),
     citekey: opts.citekey || "",
     imageBaseName: a.imageBaseName || "",
+    attachmentFolder: opts.attachmentFolder || "References/Attachments",
   };
 }
 

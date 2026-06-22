@@ -7,6 +7,8 @@ import {
   removeManifestEntry,
   buildManifestFromScaffold,
   writeManifest,
+  getAttachmentFolder,
+  setAttachmentFolder,
 } from "../src/manifest.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -150,5 +152,29 @@ describe("buildManifestFromScaffold", () => {
     expect(out).toContain(`- "[[Jane Doe]]"`); // re-rendered from creators
     expect(out).not.toContain("Old Name");      // stale list replaced
     expect(applyManifest(out, ITEM)).toBe(out);  // idempotent on the multi-line value
+  });
+});
+
+describe("attachment folder (per-note, like tag field)", () => {
+  it("returns null when no zon: attachments: is set", () => {
+    expect(getAttachmentFolder(NOTE)).toBe(null);
+    expect(getAttachmentFolder("no frontmatter at all")).toBe(null);
+  });
+
+  it("round-trips a per-note attachment folder", () => {
+    const out = setAttachmentFolder(NOTE, "Z/imgs");
+    expect(getAttachmentFolder(out)).toBe("Z/imgs");
+    expect(out).toContain("attachments:");
+  });
+
+  it("is a reserved sync key — applyManifest never renders it as a field", () => {
+    const note = setAttachmentFolder(`---\nTitle: "x"\nzon:\n  Title: "\\"{{title}}\\""\n---\nbody\n`, "References/Attachments");
+    const out = applyManifest(note, ITEM);
+    // The managed Title still refreshes...
+    expect(out).toContain(`Title: "A New Title"`);
+    // ...but `attachments` is not emitted as a top-level frontmatter field.
+    expect(out).not.toMatch(/^attachments: /m);
+    // and it's still readable as a per-note setting after a refresh.
+    expect(getAttachmentFolder(out)).toBe("References/Attachments");
   });
 });
