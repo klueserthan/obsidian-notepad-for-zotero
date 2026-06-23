@@ -5,6 +5,9 @@
     // plan-post-approval is loaded explicitly with its options here (not auto-discovered),
     // so the handoff knob never reaches a provider request body (fixes GLM/Vertex/Fireworks
     // "Extra inputs are not permitted" errors).
+    //
+    // Set ORCHESTRATOR_AUTO_APPROVAL=1 (truthy) in the runner env to auto-reply
+    // "Approve" to every PlanApprove question — useful for non-interactive / CI runs.
     [
       "./plugin-src/plan-post-approval.ts",
       {

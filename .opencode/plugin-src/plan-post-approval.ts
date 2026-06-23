@@ -7,6 +7,49 @@ const APPROVE_LABEL = "Approve";
 const PROMPT_MAX_RETRIES = 2;
 const PROMPT_BACKOFF_MS = 500;
 
+/**
+ * Env var that, when set to a truthy value, auto-replies "Approve" to every
+ * PlanApprove question before the user sees it. Use for low-stakes, non-
+ * interactive runs (e.g. GitHub Actions). The default flow is unchanged when
+ * unset or any falsy value.
+ */
+const AUTO_APPROVE_ENV = "ORCHESTRATOR_AUTO_APPROVAL";
+
+const AUTO_APPROVE_TRUTHY = new Set(["1", "true", "yes", "on"]);
+
+function isAutoApproveEnabled(): boolean {
+  const raw = process.env[AUTO_APPROVE_ENV];
+  if (typeof raw !== "string") return false;
+  return AUTO_APPROVE_TRUTHY.has(raw.trim().toLowerCase());
+}
+
+/** POST /question/{requestID}/reply against the opencode server. */
+async function replyToQuestion(input: {
+  serverUrl: URL;
+  directory: string;
+  requestID: string;
+  answers: Array<Array<string>>;
+}): Promise<void> {
+  const url = new URL(
+    `/question/${encodeURIComponent(input.requestID)}/reply`,
+    input.serverUrl,
+  );
+  if (input.directory) {
+    url.searchParams.set("directory", input.directory);
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ answers: input.answers }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `question reply failed (${res.status} ${res.statusText}): ${text.slice(0, 200)}`,
+    );
+  }
+}
+
 type QuestionAskedProperties = {
   id: string;
   sessionID: string;
@@ -323,7 +366,26 @@ async function promptWithRetry(
   return false;
 }
 
-const PlanPostApprovalPlugin: Plugin = async ({ client, directory }, options) => {
+const PlanPostApprovalPlugin: Plugin = async (
+  { client, directory, serverUrl },
+  options,
+) => {
+  const autoApprove = isAutoApproveEnabled();
+  if (autoApprove) {
+    try {
+      await client.app.log({
+        query: { directory },
+        body: {
+          service: "plan-post-approval",
+          level: "info",
+          message: `${AUTO_APPROVE_ENV} is set; PlanApprove questions will be auto-approved.`,
+          extra: { directory },
+        },
+      });
+    } catch {
+      /* optional logging */
+    }
+  }
   return {
     event: async ({ event: raw }) => {
       const event = raw as unknown as QuestionEvent;
@@ -335,6 +397,43 @@ const PlanPostApprovalPlugin: Plugin = async ({ client, directory }, options) =>
             sessionID: props.sessionID,
             planFile: extractPlanFile(first.question),
           });
+          if (autoApprove) {
+            try {
+              await replyToQuestion({
+                serverUrl,
+                directory,
+                requestID: props.id,
+                answers: [[APPROVE_LABEL]],
+              });
+              await client.app.log({
+                query: { directory },
+                body: {
+                  service: "plan-post-approval",
+                  level: "info",
+                  message: `Auto-approved plan (${AUTO_APPROVE_ENV}=${process.env[AUTO_APPROVE_ENV]}).`,
+                  extra: {
+                    sessionID: props.sessionID,
+                    requestID: props.id,
+                    planFile: extractPlanFile(first.question),
+                  },
+                },
+              });
+            } catch (e) {
+              await client.app.log({
+                query: { directory },
+                body: {
+                  service: "plan-post-approval",
+                  level: "error",
+                  message: `Auto-approve POST failed; question will remain pending.`,
+                  extra: {
+                    sessionID: props.sessionID,
+                    requestID: props.id,
+                    error: String(e),
+                  },
+                },
+              });
+            }
+          }
         }
         return;
       }

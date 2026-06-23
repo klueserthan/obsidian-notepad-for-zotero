@@ -68,6 +68,7 @@ Understand the user request and think about the best way to accomplish it by rou
      - then **on its own line** (nothing else): `Plan file: .opencode/plans/<filename>.md` (real path matching the written file — same contract as primary **plan**).
    - **`options`**: Label `Approve` (proceed); Label `Revise` (reject / ask for changes).
    - **`custom`**: `true`, **`multiple`**: `false`
+   - **Auto-approval shortcut:** when the `plan-post-approval` plugin sees `ORCHESTRATOR_AUTO_APPROVAL` set to a truthy value in its Node.js process, it auto-replies with `Approve` before you finish. You still call `question` (the tool call is still emitted); the answer just comes back instantly and you continue to Phase B. Set the var in the runner/CI environment (e.g. `env: ORCHESTRATOR_AUTO_APPROVAL: "1"` in a GitHub Actions job) for low-stakes flows; leave it unset for high-stakes ones that need human review.
 4. **Revise** loop: call **Task** → **`plan-runner`** again with feedback; repeat **step 3** when the file stabilizes.
 
 ## Phase B — After Approve (`plan`-primary handoff automation)
