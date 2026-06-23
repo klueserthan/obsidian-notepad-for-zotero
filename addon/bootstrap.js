@@ -2135,15 +2135,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (r.status === "no-citekey") { setMsg(this.t("msg.noCitekey")); return; }
     if (r.status === "outside") { setMsg(this.t("msg.outsideNotes")); return; }
     if (r.status === "error") { setMsg(this.t("msg.createFailed") + r.error); return; }
-    // Surface auto-run LLM state on the banner (preserved/ran/none).
+    // Open the newly-created note in the editor.
+    try { await this.renderInto(rec.wrap, item); } catch (e) {}
+
+    // Surface auto-run LLM state in the *status bar* (the create banner is hidden once a note exists).
     if (r.status === "created" && r.llm) {
       if (r.llm.state === "preserved" && r.llm.count > 0) {
-        setMsg(this.t("status.llmBlocksPreserved", { count: r.llm.count }));
+        this.setStatus(rec, this.t("status.llmBlocksPreserved", { count: r.llm.count }));
       } else if (r.llm.state === "ran") {
-        setMsg(this.t("status.llmRunDone", { count: r.llm.count }));
+        this.setStatus(rec, this.t("status.llmRunDone", { count: r.llm.count }));
       }
     }
-    try { await this.renderInto(rec.wrap, item); } catch (e) {}
   },
 
   // ---------------------------------------------------------- item context menu
@@ -2723,30 +2725,35 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // or response bodies (metadata-only). Returns "" for NO_BLOCKS (caller handles).
   describeLLMFailure(result) {
     if (!result || !result.code) return this.t("err.llmRunFailed", { error: "unknown" });
-    let code = result.code;
-    // LLM_RUN_ERRORS values: defined in src/llm-runner.js
-    if (code === "llm.run.httpFailed") {
+
+    // Prefer the canonical exported codes to avoid drift from string literals.
+    let C;
+    try { C = Zotero.getMainWindow && Zotero.getMainWindow().ZONCore; } catch (e) { C = null; }
+    const E = C && C.LLM_RUN_ERRORS;
+
+    const code = result.code;
+    if (E && code === E.HTTP_FAILED) {
       let e = result.error;
       let status = (e && typeof e.status === "number") ? e.status : null;
       let errStr = status ? ("HTTP " + status) : "network error";
       return this.t("err.llmRunHttp", { i: result.blockIndex + 1, n: result.n, error: errStr });
     }
-    if (code === "llm.run.emptyResponse") {
+    if (E && code === E.EMPTY_RESPONSE) {
       return this.t("err.llmRunEmpty", { i: result.blockIndex + 1, n: result.n });
     }
-    if (code === "llm.run.contextUnsupported"
-        || code === "llm.run.contextMissing"
-        || code === "llm.run.renderFailed") {
+    if (E && (code === E.CONTEXT_UNSUPPORTED || code === E.CONTEXT_MISSING || code === E.RENDER_FAILED)) {
       let first = result.errors && result.errors[0];
       return this.t("err.llmRunBlock",
         { line: first && first.line != null ? (first.line + 1) : "?", message: first ? first.message : "unknown" });
     }
-    if (code === "llm.run.parseErrors") {
+    if (E && code === E.PARSE_ERRORS) {
       return this.t("err.llmBlocksInvalid", { count: result.errors ? result.errors.length : 0 });
     }
-    if (code === "llm.run.noBlocks") return "";
+    if (E && code === E.NO_BLOCKS) return "";
+
+    // Fallback: show the raw code (still metadata-only).
     return this.t("err.llmRunFailed", { error: code || "error" });
-  },
+  }
 
   // Run LLM: find every unresolved {% llm %} block, render each prompt against
   // current item data, send one OpenAI-compatible Chat Completions request per
