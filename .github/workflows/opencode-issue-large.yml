@@ -21,6 +21,7 @@ jobs:
     env:
       AGENT_NAME: orchestrator
       MODEL_NAME: opencode-go/glm-5.2
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
