@@ -3,8 +3,8 @@ description: Review a diff for correctness, maintainability, simplicity, reposit
 mode: subagent
 hidden: true
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
     "*": deny

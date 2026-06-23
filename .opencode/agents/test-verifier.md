@@ -3,11 +3,11 @@ description: Run focused verification after code changes. Check tests, lint, typ
 mode: subagent
 hidden: true
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
-    "*": ask
+    "*": deny
 
     "pwd": allow
     "ls *": allow
@@ -23,9 +23,9 @@ permission:
     "uv run ruff *": allow
     "uv run pytest *": allow
 
-    "rm *": ask
-    "mv *": ask
-    "cp *": ask
+    "rm *": deny
+    "mv *": deny
+    "cp *": deny
 
     "pytest": allow
     "pytest *": allow
@@ -33,6 +33,11 @@ permission:
     "ruff *": allow
     "mypy": allow
     "mypy *": allow
+
+    "npx vitest": allow
+    "npx vitest *": allow
+    "npx eslint": allow
+    "npx eslint *": allow
 
     "npm test": allow
     "npm test *": allow

@@ -31,9 +31,9 @@
   // Minimal workspace baseline; per-agent tool policy lives in agents/<id>.md frontmatter. If you want it more permissive you can copy to your project workspace ./opencode/opencode.jsonc with "allow" instead
   "permission": {
     "bash": {
-      "*": "ask",
+      "*": "deny",
     },
-    "edit": "ask",
+    "edit": "deny",
   },
   // Strong models for the primary agents
   "agent": {
@@ -66,7 +66,7 @@
       "temperature": 0.1,
     },
     "spec-critic": {
-      "model": "oopencode-go/minimax-m3",
+      "model": "opencode-go/minimax-m3",
       "temperature": 0.4,
     },
     "security-reviewer": {
