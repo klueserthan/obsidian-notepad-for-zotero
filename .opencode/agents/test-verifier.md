@@ -35,11 +35,6 @@ permission:
     "mypy": allow
     "mypy *": allow
 
-    "npx vitest": allow
-    "npx vitest *": allow
-    "npx eslint": allow
-    "npx eslint *": allow
-
     "npm test": allow
     "npm test *": allow
     "npm run test": allow
@@ -48,6 +43,11 @@ permission:
     "npm run lint *": allow
     "npm run build": allow
     "npm run build *": allow
+
+    "npx vitest": allow
+    "npx vitest *": allow
+    "npx eslint": allow
+    "npx eslint *": allow
 
     "pnpm test": allow
     "pnpm test *": allow
