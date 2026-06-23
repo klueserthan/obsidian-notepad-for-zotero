@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.11] — 2026-06-23
+
 ### Added
 - **`{{dateAdded}}` and `{{dateModified}}` template variables** — the Zotero
   "Date Added" / "Date Modified" timestamps (as `YYYY-MM-DD`), usable in
