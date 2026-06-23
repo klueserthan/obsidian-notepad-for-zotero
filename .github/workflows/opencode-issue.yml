@@ -16,8 +16,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      pull-requests: read
-      issues: read
+      pull-requests: write
+      issues: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -37,6 +37,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ORCHESTRATOR_AUTO_APPROVAL: 1
         with:
           model: opencode-go/glm-5.2
           prompt: |

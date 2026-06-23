@@ -16,8 +16,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      pull-requests: read
-      issues: read
+      pull-requests: write
+      issues: write
     env:
       AGENT_NAME: orchestrator
       MODEL_NAME: opencode-go/glm-5.2
@@ -47,6 +47,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ORCHESTRATOR_AUTO_APPROVAL: 1
         with:
           model: ${{ env.MODEL_NAME }}
           agent: ${{ env.AGENT_NAME }}

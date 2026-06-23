@@ -121,6 +121,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ORCHESTRATOR_AUTO_APPROVAL: 1
         with:
           model: ${{ env.MODEL_NAME }}
           agent: ${{ env.AGENT_NAME }}
