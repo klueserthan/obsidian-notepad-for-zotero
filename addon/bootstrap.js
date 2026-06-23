@@ -438,6 +438,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "err.llmCoreMissing": "LLM core module is not loaded. Try restarting Zotero.",
     "label.llmAutoRun": "Run LLM automatically on note create/insert",
     "tip.llmAutoRun": "Automatically run the LLM interpreter when creating or inserting a note (requires base URL and model)",
+    "err.llmBlockInvalid": "LLM block error (line {line}): {message}",
+    "err.llmBlocksInvalid": "LLM block errors — fix the template before inserting. ({count} error(s))",
+    "status.llmBlocksPreserved": "LLM blocks preserved (run-on-create disabled) — {count} placeholder(s)",
   },
 
   // Look up a string by key, interpolating {name} placeholders from `args`.
@@ -532,6 +535,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let t = String(text || "");
     if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return "document";
     if (/%%\s*zon\b/.test(t)) return "document";
+    if (/\{%\s*llm\b/.test(t)) return "document";   // mirrors hasLLMBlocks
     return "format";
   },
 
@@ -1974,9 +1978,25 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let t = this.allTemplates(win)[name];
     if (!t) {
       let text = await this.resolveNoteScaffoldText(name);
+      if (text) {
+        let v = this.validateLLMTemplate(win, text);
+        if (!v.valid) {
+          throw new Error(this.t("err.llmBlocksInvalid", { count: v.errors.length })
+            + " " + v.errors.map(e => "line " + (e.line != null ? e.line : "?") + ": " + e.message).join("; "));
+        }
+      }
       return this.renderDocument(win, item, text);
     }
-    if (t.kind === "document") return this.renderDocument(win, item, t.text);
+    if (t.kind === "document") {
+      if (t.text) {
+        let v = this.validateLLMTemplate(win, t.text);
+        if (!v.valid) {
+          throw new Error(this.t("err.llmBlocksInvalid", { count: v.errors.length })
+            + " " + v.errors.map(e => "line " + (e.line != null ? e.line : "?") + ": " + e.message).join("; "));
+        }
+      }
+      return this.renderDocument(win, item, t.text);
+    }
     let anns = this.gatherAnnotations(item, win);
     let bibliography = await this.getBibliography(item);
     let blockOpts = this.syncOpts(win, item, { bibliography });
@@ -2000,6 +2020,19 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (kind !== "annotations") return { kind, sync, format: name };
     let colour = over.colour || d.colour || "all";
     return { kind: "annotations", colour, sync, format: name };
+  },
+
+  // Validate LLM block syntax/placement in a template. Returns { valid, errors }
+  // with a safe fallback — a validator crash won't block the user.
+  validateLLMTemplate(win, text) {
+    try {
+      if (!win.ZONCore || !win.ZONCore.validateLLMBlocks) return { valid: true, errors: [] };
+      const r = win.ZONCore.validateLLMBlocks(text);
+      return { valid: r.valid, errors: r.errors };
+    } catch (e) {
+      this.log("validateLLMTemplate failed: " + e);
+      return { valid: true, errors: [] };
+    }
   },
 
   // Write @<citekey>.md for `item` from `templateName` (or the default note
@@ -2665,6 +2698,18 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     await this.loadTemplates();
     let name = opts.name;
     let t = this.allTemplates(win)[name] || {};
+    // Validate LLM block syntax + placement (no context-availability check).
+    if (t.text) {
+      let v = this.validateLLMTemplate(win, t.text);
+      if (!v.valid) {
+        let first = v.errors[0];
+        this.setStatus(rec, this.t("err.llmBlockInvalid", {
+          line: first.line != null ? first.line : "?",
+          message: first.message,
+        }));
+        return;
+      }
+    }
     let text;
     if (t.kind === "document") {
       text = item ? await this.renderDocument(win, item, t.text) : (t.text || "");
