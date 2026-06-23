@@ -3,6 +3,8 @@
 
 import { parseLLMBlocks } from "./llm-blocks.js";
 import { renderAnnotationsContext } from "./annotations.js";
+import { renderFulltextContext } from "./fulltext.js";
+import { LLM_DEFAULTS } from "./llm.js";
 import { render } from "./render.js";
 
 export const GROUNDING_SYSTEM_PROMPT =
@@ -15,13 +17,14 @@ export const GROUNDING_SYSTEM_PROMPT =
   "sufficient to complete the task, respond with a brief Markdown note stating " +
   "what is missing.";
 
-export const RUNNABLE_CONTEXTS = ["abstract", "annotations"];
+export const RUNNABLE_CONTEXTS = ["abstract", "annotations", "fulltext"];
 
 export const LLM_RUN_ERRORS = {
   NO_BLOCKS: "llm.run.noBlocks",
   PARSE_ERRORS: "llm.run.parseErrors",
   CONTEXT_UNSUPPORTED: "llm.run.contextUnsupported",
   CONTEXT_MISSING: "llm.run.contextMissing",
+  CONTEXT_TOO_LARGE: "llm.run.contextTooLarge",
   RENDER_FAILED: "llm.run.renderFailed",
   EMPTY_RESPONSE: "llm.run.emptyResponse",
   HTTP_FAILED: "llm.run.httpFailed",
@@ -47,7 +50,7 @@ export function classifyLLMOutput(content) {
   return { ok: true, output: normalizeLLMOutput(c) };
 }
 
-export function prepareLLMRun(text, itemData) {
+export function prepareLLMRun(text, itemData, opts = {}) {
   const { blocks, errors } = parseLLMBlocks(text);
 
   if (errors.length > 0) {
@@ -57,6 +60,9 @@ export function prepareLLMRun(text, itemData) {
   if (blocks.length === 0) {
     return { ok: false, code: LLM_RUN_ERRORS.NO_BLOCKS, errors: [], blocks: [], tasks: [] };
   }
+
+  const maxContextChars = (typeof opts?.maxContextChars === "number" && opts.maxContextChars > 0)
+    ? Math.floor(opts.maxContextChars) : LLM_DEFAULTS.maxContextChars;
 
   const tasks = [];
 
@@ -76,7 +82,7 @@ export function prepareLLMRun(text, itemData) {
       };
     }
 
-    // Context resolution — abstract or annotations
+    // Context resolution — abstract, annotations, or fulltext
     const ctxKind = block.contexts[0];
     let contextText = "";
     let contextLabel = ctxKind;
@@ -112,6 +118,21 @@ export function prepareLLMRun(text, itemData) {
           tasks: [],
         };
       }
+    } else if (ctxKind === "fulltext") {
+      contextText = renderFulltextContext(itemData);
+      if (contextText === "") {
+        return {
+          ok: false,
+          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+          errors: [{
+            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+            message: "no extracted full text available for the primary PDF — cannot run with context='fulltext'",
+            line: block.lineFrom,
+          }],
+          blocks,
+          tasks: [],
+        };
+      }
     } else {
       // Unreachable (RUNNABLE_CONTEXTS gate above), but keep defensive.
       return {
@@ -120,6 +141,21 @@ export function prepareLLMRun(text, itemData) {
         errors: [{
           code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
           message: "context '" + block.contexts.join(", ") + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
+          line: block.lineFrom,
+        }],
+        blocks,
+        tasks: [],
+      };
+    }
+
+    // maxContextChars enforcement — applies to all context kinds
+    if (contextText.length > maxContextChars) {
+      return {
+        ok: false,
+        code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
+        errors: [{
+          code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
+          message: `context is ${contextText.length} characters, exceeds the configured limit of ${maxContextChars} — reduce the context or raise maxContextChars`,
           line: block.lineFrom,
         }],
         blocks,

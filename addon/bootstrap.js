@@ -2395,6 +2395,35 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     return false;
   },
 
+  // Resolve the primary PDF's .zotero-ft-cache full text for LLM context="fulltext"
+  // blocks. Builds a real Zotero adapter and delegates to C.resolvePrimaryPDFFulltext.
+  // Returns {ok:true, attachmentTitle, text} or {ok:false, reason}.
+  // LOGGING CONTRACT: Never log the returned text to this.log() or Zotero.debug.
+  // Only metadata (attachment title, char count, missing reason) is loggable.
+  async getPrimaryPDFFulltext(item, C) {
+    const adapter = {
+      getBestAttachment: async (it) => it.getBestAttachment(),
+      isPDFAttachment: (att) => att.isPDFAttachment(),
+      fileExists: (att) => att.fileExists(),
+      getCacheFile: (att) => {
+        try { let f = Zotero.Fulltext.getItemCacheFile(att); return f ? f.path : null; }
+        catch (e) { return null; }
+      },
+      exists: (p) => IOUtils.exists(p),
+      readUTF8: (p) => IOUtils.readUTF8(p),
+      getAttachmentTitle: (att) => {
+        try { return att.getField("title") || ""; }
+        catch (e) { return ""; }
+      },
+    };
+    try {
+      return await C.resolvePrimaryPDFFulltext(item, adapter);
+    } catch (e) {
+      this.log("fulltext resolver threw: " + (e && e.message ? e.message : e));
+      return { ok: false, reason: "fetchError" };
+    }
+  },
+
   // ------------------------------------------------------------ auto-sync
   // When enabled (PREF_AUTOSYNC), regenerate a note's live annotation blocks
   // automatically as you highlight in the PDF reader — no Refresh click. We
@@ -2721,16 +2750,40 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try { annotations = this.gatherAnnotations(item, win); }
     catch (e) { this.log("gatherAnnotations (llm) failed: " + e); }
 
+    // Detect whether any block requests context="fulltext" (avoids unnecessary I/O).
+    let needFulltext = false;
+    try {
+      let parsed = C.parseLLMBlocks(existing);
+      if (!parsed.errors.length) {
+        needFulltext = parsed.blocks.some(b => b.contexts && b.contexts.includes("fulltext"));
+      }
+    } catch (e) { this.log("parseLLMBlocks (fulltext detect) failed: " + e); }
+
+    // Fetch full text if needed, then thread into itemData for context resolution.
+    // LOGGING CONTRACT: Never pass fulltext.text or data.fulltext.text to this.log()
+    // or Zotero.debug. Only metadata (attachment title, char count, missing reason)
+    // is loggable.
+    let fulltext = null;
+    if (needFulltext) {
+      fulltext = await this.getPrimaryPDFFulltext(item, C);
+      if (fulltext && fulltext.ok) {
+        this.log("fulltext context: " + (fulltext.attachmentTitle || "(untitled)") + " (" + fulltext.text.length + " chars)");
+      } else if (fulltext) {
+        this.log("fulltext context missing: " + fulltext.reason);
+      }
+    }
+
     // Build item data with parity to renderDocument so prompts can use any field.
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = {};
-    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations }); }
+    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
     // Plan the run (pure): parse + validate + resolve context + render prompts +
     // assemble messages. Any pre-flight failure aborts here — no HTTP yet.
-    let prepared = C.prepareLLMRun(existing, data);
+    // maxContextChars enforces the user's configured context-size limit.
+    let prepared = C.prepareLLMRun(existing, data, { maxContextChars: settings.maxContextChars });
     if (!prepared.ok) {
       if (prepared.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
         this.setStatus(rec, this.t("status.llmRunNoBlocks"));
