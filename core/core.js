@@ -5,7 +5,7 @@
 export { render } from "../src/render.js";
 export { buildItemData, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
 export { mergeNote, updateNoteAnnotations } from "../src/merge.js";
-export { renderAnnotationsSection, mapZoteroAnnotation } from "../src/annotations.js";
+export { renderAnnotationsSection, renderAnnotationsContext, mapZoteroAnnotation } from "../src/annotations.js";
 export { syncBlocks, makeBlock, parseBlocks, migrateLegacyAnnotations } from "../src/blocks.js";
 export { DEFAULT_FORMATS } from "../src/formats.js";
 export { parseTemplateFile, templateKind, templateUserOwnedKeys } from "../src/templates.js";
