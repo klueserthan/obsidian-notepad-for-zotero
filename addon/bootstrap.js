@@ -125,6 +125,24 @@ KeyIdea:
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
+    "note-by-colour": `---
+citekey: "{{citekey}}"
+Title: "{{title}}"
+Year: "{{date | format("YYYY")}}"
+ZoteroLink: "{{desktopURI}}"
+---
+
+**Citation:** {{bibliography}}
+
+## Key passages (yellow)
+{{ highlights(colour="yellow", format="quote") }}
+
+## Critiques (red)
+{{ highlights(colour="red", format="quote") }}
+
+## To follow up (blue)
+{{ highlights(colour="blue", format="quote") }}
+`,
     "abstract": `%%! kind=field sync=on %%
 > [!abstract] Abstract
 > {{abstractNote}}

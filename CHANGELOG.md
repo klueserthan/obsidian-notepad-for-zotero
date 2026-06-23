@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Route highlights by colour in a note template.** A new `highlights(...)`
+  helper lets a whole-note template place annotation blocks where you want them —
+  e.g. yellow highlights in one section, blue in another — each filled and kept
+  in sync automatically: `{{ highlights(colour="blue", format="quote") }}`.
+  Accepts `colour`, `type`, `format` and `sync`. A ready-made **`note-by-colour`**
+  starter template demonstrates it. See docs/TEMPLATES.md.
+
 ## [1.0.0-beta.12] — 2026-06-23
 
 ### Changed

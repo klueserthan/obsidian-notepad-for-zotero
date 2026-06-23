@@ -51,6 +51,48 @@ Modified" timestamps as `YYYY-MM-DD`.
 
 ---
 
+## Routing highlights by colour in a *note* template
+
+A whole-note template can place annotation blocks wherever you want — so you can
+send, say, blue highlights to one section and yellow to another. Use the
+`highlights(...)` helper: each call drops in a block that fills with the matching
+highlights and **stays in sync** on every Update.
+
+```nunjucks
+---
+Title: "{{title}}"
+Year: "{{date | format("YYYY")}}"
+---
+
+## Key passages (yellow)
+{{ highlights(colour="yellow", format="quote") }}
+
+## Critiques (red)
+{{ highlights(colour="red", format="quote") }}
+
+## To follow up (blue)
+{{ highlights(colour="blue", format="quote") }}
+```
+
+When you create a note from this template, each `highlights(...)` expands into a
+managed block and is filled with just that colour's highlights, in the right
+place. (The shipped **`note-by-colour`** starter template is exactly this — copy
+and tweak it.)
+
+`highlights(...)` options (all optional):
+
+| Argument  | Example | Meaning |
+| --- | --- | --- |
+| `colour`  | `highlights(colour="blue")` or `highlights("blue")` | Only this colour (`yellow`/`red`/`green`/`blue`/`purple`/`magenta`/`orange`/`grey`). Omit for **all** colours. |
+| `type`    | `type="image"` | Only this annotation type. Omit for all. |
+| `format`  | `format="quote"` | Which per-annotation format to render with (`list`, `quote`, `callout`, `compact`, or your own). Defaults to `list`. |
+| `sync`    | `sync="off"` | `off` inserts a frozen one-time snapshot instead of a live block. |
+
+This is the same machinery as the Insert dropdown — `highlights()` just lets a
+note template lay the blocks out for you up front.
+
+---
+
 ## The optional first-line directive: `%%! … %%`
 
 A block template *may* begin with one special line that pins its defaults:
@@ -178,6 +220,8 @@ the image-export folder per-note (both have global defaults in Settings).
 - **`snapshot.md`** — a frozen one-time list (`%%! sync=off %%`).
 - **`abstract.md`** — a `kind=field` element: the item's abstract in a callout,
   kept in sync (`%%! kind=field %%`).
+- **`note-by-colour.md`** — a whole-note scaffold that routes each highlight
+  colour into its own section using `highlights(colour="…")` (see above).
 
 Copy any of these to make your own. Rename freely — the filename is the label.
 The built-in templates `list`, `quote`, `callout`, `compact` are always present

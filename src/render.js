@@ -16,6 +16,7 @@
 
 import nunjucks from "nunjucks";
 import dayjs from "dayjs";
+import { DEFAULT_FORMAT_NAME } from "./formats.js";
 
 // `{% persist "key" %} ... {% endpersist %}` -> renders its body, ignores the key.
 function PersistExtension() {
@@ -69,6 +70,40 @@ export function makeEnv() {
           return true;
       }
     });
+  });
+
+  // {{ highlights(colour="blue", format="quote") }} — used in a WHOLE-NOTE
+  // template to drop in a managed annotations block that the sync layer then
+  // fills with the matching highlights (and keeps in sync on every Update). This
+  // is how a note template routes, e.g., blue highlights to one section and
+  // yellow to another: call it once per section with a different colour. It
+  // returns the `%% zon … %%` marker pair with an empty body; renderDocument
+  // runs syncBlocks right after rendering, which populates it.
+  //
+  // Args (all optional, named or first-positional colour):
+  //   colour  yellow|red|green|blue|purple|magenta|orange|grey|all (default all)
+  //   type    highlight|underline|image|note|all (default all)
+  //   format  a format template name (default the built-in default)
+  //   sync    on (default) | off (insert a frozen one-time snapshot)
+  env.addGlobal("highlights", function (...args) {
+    // nunjucks passes named args as a trailing { __keywords: true, ... } object.
+    let kw = {};
+    const last = args[args.length - 1];
+    let positional = args;
+    if (last && typeof last === "object" && last.__keywords) {
+      kw = last;
+      positional = args.slice(0, -1);
+    }
+    const cfg = { kind: "annotations" };
+    const colour = kw.colour || kw.color || positional[0];
+    if (colour && colour !== "all") cfg.colour = colour;
+    if (kw.type && kw.type !== "all") cfg.type = kw.type;
+    cfg.format = kw.format || DEFAULT_FORMAT_NAME;
+    cfg.sync = kw.sync === "off" ? "off" : "on";
+    const attrs = Object.entries(cfg)
+      .map(([k, v]) => (v === true ? k : `${k}=${v}`))
+      .join(" ");
+    return new nunjucks.runtime.SafeString(`%% zon ${attrs} %%\n%% /zon %%`);
   });
 
   return env;
