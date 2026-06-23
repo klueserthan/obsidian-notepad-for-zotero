@@ -26,3 +26,4 @@ custom-formats/
 .DS_Store
 *.log
 .opencode/INCIDENTS.md
+.opencode/IMPROVEMENTS.md
