@@ -33,11 +33,13 @@ function PersistExtension() {
   };
 }
 
-// `{% llm context="..." %} ... {% endllm %}` -> renders body, preserves the LLM
-// block tag verbatim so the merging layer can find it. The template author writes
-// a prompt as the block body; this extension renders it (resolving {{variables}})
-// then wraps the result back in the raw `{% llm %}` / `{% endllm %}` tags so the
-// final merged note retains the prompt structure.
+// `{% llm context="..." %} ... {% endllm %}` -> renders body, then reconstructs an LLM
+// wrapper so the merging layer can find it later. Note: the wrapper is normalized
+// to `{% llm context="..." %}\n...\n{% endllm %}` (it is not byte-for-byte identical
+// to the author's original tag formatting). The template author writes a prompt as
+// the block body; this extension renders it (resolving {{variables}}) then wraps
+// the result back in `{% llm %}` / `{% endllm %}` tags so the final merged note
+// retains the prompt structure.
 function LLMExtension() {
   this.tags = ["llm"];
   this.parse = function (parser, nodes) {

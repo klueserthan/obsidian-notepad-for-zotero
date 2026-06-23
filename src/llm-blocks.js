@@ -108,6 +108,12 @@ export function parseLLMBlocks(text) {
       continue;
     }
 
+    // If we're inside an open LLM block, treat everything as body text except a closing tag.
+    if (openLLM && !LLM_CLOSE_RE.test(line)) {
+      openLLM.bodyLines.push(line);
+      continue;
+    }
+
     // 3b. Fence delimiter → toggle state
     const fenceM = line.match(FENCE_RE);
     if (fenceM) {
