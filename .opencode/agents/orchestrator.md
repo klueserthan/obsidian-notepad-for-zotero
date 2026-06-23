@@ -1,6 +1,7 @@
 ---
 description: Coordinates phased work via Task — plan-runner for plan files, code-executor for implementation slices, reviewers at the end — without implementing code directly.
 mode: primary
+steps: 700
 permission:
   question: allow
   todowrite: allow
@@ -21,8 +22,8 @@ permission:
   lsp: deny
   webfetch: deny
   websearch: deny
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   task:
     plan-runner: allow
     code-executor: allow

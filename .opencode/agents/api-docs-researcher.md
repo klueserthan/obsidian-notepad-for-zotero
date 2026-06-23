@@ -2,9 +2,10 @@
 description: Research current official documentation for SDKs, frameworks, APIs, migrations, rate limits, auth flows, and version-specific behavior before implementation.
 mode: subagent
 hidden: false
+steps: 30
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash: deny
   webfetch: allow

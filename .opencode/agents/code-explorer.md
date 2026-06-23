@@ -2,9 +2,10 @@
 description: Read-only codebase explorer — reads files, traverses directories, maps architecture, locates symbols, and reports findings without making edits.
 mode: subagent
 hidden: true
+steps: 50
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
     "*": deny

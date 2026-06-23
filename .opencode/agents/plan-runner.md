@@ -2,6 +2,7 @@
 description: Subagent that drafts evidence-based implementation plans under .opencode/plans/ and returns structured output to the orchestrator parent; does not emit PlanApprove gates.
 mode: subagent
 hidden: true
+steps: 100
 permission:
   question: allow
   todowrite: allow
@@ -9,8 +10,8 @@ permission:
   edit:
     "*": allow
     ".opencode/plans/**": allow
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   bash:
     "*": allow
   task:

@@ -2,9 +2,10 @@
 description: Check whether a code change requires documentation updates in README, setup steps, env vars, config docs, examples, CLI docs, or public API docs.
 mode: subagent
 hidden: true
+steps: 100
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
     "*": deny

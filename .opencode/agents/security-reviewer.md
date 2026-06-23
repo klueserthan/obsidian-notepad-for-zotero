@@ -2,9 +2,10 @@
 description: Review code and diffs for security risks involving auth, authorization, secrets, input validation, file handling, shelling out, network access, and tenant boundaries.
 mode: subagent
 hidden: true
+steps: 100
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
     "*": deny

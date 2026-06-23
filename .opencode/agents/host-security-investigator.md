@@ -1,7 +1,8 @@
 ---
-description: "Read-only investigation of hosting and service security posture: network exposure, TLS, authentication, exposed services, containers, relevant logs, and infrastructure-as-code in the workspace. Remote SSH, scp, rsync, and sftp require user approval for each invocation."
+description: "Read-only investigation of hosting and service security posture: network exposure, TLS, authentication, exposed services, containers, relevant logs, and infrastructure-as-code in the workspace."
 mode: subagent
 hidden: true
+steps: 50
 permission:
   read: allow
   glob: allow
@@ -10,8 +11,8 @@ permission:
   edit: deny
   todowrite: deny
   task: deny
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   webfetch: allow
   websearch: allow
   bash:
@@ -84,13 +85,13 @@ permission:
     "nslookup *": allow
     "resolvectl *": allow
 
-    "curl *": ask
-    "wget *": ask
+    "curl *": deny
+    "wget *": deny
 
-    "ssh *": ask
-    "scp *": ask
-    "rsync *": ask
-    "sftp *": ask
+    "ssh *": deny
+    "scp *": deny
+    "rsync *": deny
+    "sftp *": deny
 ---
 
 You are a hosting and infrastructure security investigator.

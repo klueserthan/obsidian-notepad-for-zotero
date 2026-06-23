@@ -2,9 +2,10 @@
 description: Critique implementation plans before coding. Find missing requirements, hidden coupling, edge cases, rollback risks, and weak acceptance criteria.
 mode: subagent
 hidden: true
+steps: 50
 permission:
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   edit: deny
   bash:
     "*": deny

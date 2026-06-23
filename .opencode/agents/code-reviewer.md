@@ -2,6 +2,7 @@
 description: Review a diff for correctness, maintainability, simplicity, repository fit, and regression risk without making edits.
 mode: subagent
 hidden: true
+steps: 100
 permission:
   external_directory: deny
   doom_loop: deny

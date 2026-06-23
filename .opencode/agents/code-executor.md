@@ -2,17 +2,18 @@
 description: Implements one scoped coding task with edits and shell commands; may delegate explore, docs research, or test verification via Task; does not perform final repo-wide code or docs reviews.
 mode: subagent
 hidden: true
+steps: 200
 permission:
   edit: allow
-  external_directory: ask
-  doom_loop: ask
+  external_directory: deny
+  doom_loop: deny
   bash:
     "*": allow
     "git *": allow
-    "git commit *": ask
-    "git rebase *": ask
-    "git reset *": ask
-    "git clean *": ask
+    "git commit *": deny
+    "git rebase *": deny
+    "git reset *": deny
+    "git clean *": deny
     "git push *": deny
   task:
     "*": deny

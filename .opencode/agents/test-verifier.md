@@ -2,6 +2,7 @@
 description: Run focused verification after code changes. Check tests, lint, typecheck, build output, and whether acceptance criteria were actually met.
 mode: subagent
 hidden: true
+steps: 100
 permission:
   external_directory: deny
   doom_loop: deny
