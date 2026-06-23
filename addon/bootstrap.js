@@ -40,6 +40,14 @@ var ZON = {
   PREF_TAGFIELD: "extensions.zotero-obsidian-notes.tagSyncField",
   PREF_ATTACHFOLDER: "extensions.zotero-obsidian-notes.attachmentFolder",
   PREF_EXPERIMENTAL: "extensions.zotero-obsidian-notes.experimental",
+  PREF_LLM_BASE_URL: "extensions.zotero-obsidian-notes.llmBaseURL",
+  PREF_LLM_MODEL: "extensions.zotero-obsidian-notes.llmModel",
+  PREF_LLM_API_KEY: "extensions.zotero-obsidian-notes.llmApiKey",
+  PREF_LLM_TEMPERATURE: "extensions.zotero-obsidian-notes.llmTemperature",
+  PREF_LLM_MAX_TOKENS: "extensions.zotero-obsidian-notes.llmMaxTokens",
+  PREF_LLM_MAX_CONTEXT: "extensions.zotero-obsidian-notes.llmMaxContextChars",
+  PREF_LLM_TIMEOUT: "extensions.zotero-obsidian-notes.llmTimeoutSeconds",
+  PREF_LLM_AUTORUN: "extensions.zotero-obsidian-notes.llmAutoRun",
   // Defaults are intentionally empty — the vault and folders are user-specific and
   // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
   // configured yet", handled by the pane's empty state rather than guessed.
@@ -62,6 +70,14 @@ var ZON = {
   DEFAULT_TAGFIELD: "Topics", // default frontmatter field mirrored to Zotero tags (per-note override via `zon: tags:`)
   DEFAULT_ATTACHFOLDER: "References/Attachments", // vault-relative folder for exported image annotations (per-note override via `zon: attachments:`)
   DEFAULT_EXPERIMENTAL: false, // hide the "⋯ More" menu (Sync Metadata / Migrate / Push tags) unless opted in
+  DEFAULT_LLM_BASE_URL: "http://localhost:11434/v1",
+  DEFAULT_LLM_MODEL: "",
+  DEFAULT_LLM_API_KEY: "",
+  DEFAULT_LLM_TEMPERATURE: 0.2,
+  DEFAULT_LLM_MAX_TOKENS: 2048,
+  DEFAULT_LLM_MAX_CONTEXT: 100000,
+  DEFAULT_LLM_TIMEOUT: 60,
+  DEFAULT_LLM_AUTORUN: false,
   _templates: null,
 
   // Starter templates that ship WITH the plugin. They serve two purposes:
@@ -413,6 +429,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
+    "btn.testLLM": "Test LLM connection",
+    "status.llmTestOk": "LLM connection successful",
+    "status.llmTestFail": "LLM connection failed: {error}",
+    "status.llmTestEmpty": "LLM connection returned an empty response",
+    "status.llmTesting": "Testing…",
+    "err.llmNotConfigured": "LLM interpreter is not configured. Set base URL and model in preferences.",
+    "err.llmCoreMissing": "LLM core module is not loaded. Try restarting Zotero.",
+    "label.llmAutoRun": "Run LLM automatically on note create/insert",
+    "tip.llmAutoRun": "Automatically run the LLM interpreter when creating or inserting a note (requires base URL and model)",
   },
 
   // Look up a string by key, interpolating {name} placeholders from `args`.
@@ -620,6 +645,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     seed(this.PREF_TAGFIELD, this.DEFAULT_TAGFIELD);
     seed(this.PREF_ATTACHFOLDER, this.DEFAULT_ATTACHFOLDER);
     seed(this.PREF_EXPERIMENTAL, this.DEFAULT_EXPERIMENTAL);
+    seed(this.PREF_LLM_BASE_URL, this.DEFAULT_LLM_BASE_URL);
+    seed(this.PREF_LLM_MODEL, this.DEFAULT_LLM_MODEL);
+    seed(this.PREF_LLM_API_KEY, this.DEFAULT_LLM_API_KEY);
+    seed(this.PREF_LLM_TEMPERATURE, this.DEFAULT_LLM_TEMPERATURE);
+    seed(this.PREF_LLM_MAX_TOKENS, this.DEFAULT_LLM_MAX_TOKENS);
+    seed(this.PREF_LLM_MAX_CONTEXT, this.DEFAULT_LLM_MAX_CONTEXT);
+    seed(this.PREF_LLM_TIMEOUT, this.DEFAULT_LLM_TIMEOUT);
+    seed(this.PREF_LLM_AUTORUN, this.DEFAULT_LLM_AUTORUN);
   },
 
   autoSyncEnabled() {
@@ -655,6 +688,97 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   attachmentFolder() {
     try { let v = Zotero.Prefs.get(this.PREF_ATTACHFOLDER, true); return (v == null || v === "") ? this.DEFAULT_ATTACHFOLDER : String(v); }
     catch (e) { return this.DEFAULT_ATTACHFOLDER; }
+  },
+  // ---- LLM prefs
+  llmBaseURL() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_BASE_URL, true); return v === undefined ? this.DEFAULT_LLM_BASE_URL : v; }
+    catch (e) { return this.DEFAULT_LLM_BASE_URL; }
+  },
+  llmModel() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_MODEL, true); return v === undefined ? this.DEFAULT_LLM_MODEL : v; }
+    catch (e) { return this.DEFAULT_LLM_MODEL; }
+  },
+  llmApiKey() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_API_KEY, true); return v === undefined ? this.DEFAULT_LLM_API_KEY : v; }
+    catch (e) { return this.DEFAULT_LLM_API_KEY; }
+  },
+  llmTemperature() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_TEMPERATURE, true); return v === undefined ? this.DEFAULT_LLM_TEMPERATURE : v; }
+    catch (e) { return this.DEFAULT_LLM_TEMPERATURE; }
+  },
+  llmMaxTokens() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_MAX_TOKENS, true); return v === undefined ? this.DEFAULT_LLM_MAX_TOKENS : v; }
+    catch (e) { return this.DEFAULT_LLM_MAX_TOKENS; }
+  },
+  llmMaxContextChars() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_MAX_CONTEXT, true); return v === undefined ? this.DEFAULT_LLM_MAX_CONTEXT : v; }
+    catch (e) { return this.DEFAULT_LLM_MAX_CONTEXT; }
+  },
+  llmTimeoutSeconds() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_TIMEOUT, true); return v === undefined ? this.DEFAULT_LLM_TIMEOUT : v; }
+    catch (e) { return this.DEFAULT_LLM_TIMEOUT; }
+  },
+  llmAutoRunPref() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_AUTORUN, true); return v === undefined ? this.DEFAULT_LLM_AUTORUN : !!v; }
+    catch (e) { return this.DEFAULT_LLM_AUTORUN; }
+  },
+  llmConfigured() {
+    return !!(this.llmBaseURL().trim() && this.llmModel().trim());
+  },
+  getLLMSettings() {
+    return {
+      baseURL: this.llmBaseURL(),
+      model: this.llmModel(),
+      apiKey: this.llmApiKey(),
+      temperature: this.llmTemperature(),
+      maxTokens: this.llmMaxTokens(),
+      maxContextChars: this.llmMaxContextChars(),
+      timeoutSeconds: this.llmTimeoutSeconds(),
+      autoRun: this.llmAutoRunPref(),
+    };
+  },
+  llmAutoRun() {
+    let autoRun = this.llmAutoRunPref();
+    if (autoRun && !this.llmConfigured()) {
+      autoRun = false;
+      try { Zotero.Prefs.set(this.PREF_LLM_AUTORUN, false, true); } catch (e) {}
+    }
+    return autoRun;
+  },
+  async testLLMConnection(settings) {
+    let win = Zotero.getMainWindow();
+    if (!win || !win.ZONCore) {
+      return { ok: false, message: this.t("err.llmCoreMissing") };
+    }
+    let C = win.ZONCore;
+    let s = C.sanitizeLLMSettings(settings || this.getLLMSettings());
+    if (!C.isLLMConfigured(s)) {
+      return { ok: false, message: this.t("err.llmNotConfigured") };
+    }
+    let url = C.buildChatCompletionsURL(s.baseURL);
+    let headers = C.buildLLMHeaders(s);
+    let payload = C.buildTestConnectionPayload(s);
+    this.log("LLM test connection: " + JSON.stringify(C.sanitizeLogMetadata(s)));
+    try {
+      let resp = await Zotero.HTTP.request("POST", url, {
+        headers: headers,
+        body: JSON.stringify(payload),
+        responseType: "text",
+        timeout: s.timeoutSeconds * 1000,
+      });
+      let content = C.parseChatCompletionsResponse(resp.responseText);
+      if (!content) {
+        this.log("LLM test connection: empty response");
+        return { ok: false, message: this.t("status.llmTestEmpty") };
+      }
+      this.log("LLM test connection: success");
+      return { ok: true, message: this.t("status.llmTestOk") };
+    } catch (e) {
+      let status = (e && typeof e.status === "number") ? e.status : null;
+      let errStr = status ? ("HTTP " + status) : C.sanitizeError(e);
+      this.log("LLM test connection: failed" + (status ? (" (HTTP " + status + ")") : ""));
+      return { ok: false, message: this.t("status.llmTestFail", { error: errStr }) };
+    }
   },
   // Resolve the folder for THIS note: its own `zon: attachments:` wins, else the
   // global default — same per-note-over-global pattern as the tag sync field.
