@@ -8,6 +8,8 @@ import {
   classifyLLMOutput,
   prepareLLMRun,
   applyLLMOutputs,
+  decideLLMAction,
+  executeLLMBlocks,
 } from "../src/llm-runner.js";
 import { parseLLMBlocks } from "../src/llm-blocks.js";
 import { item } from "./fixtures/data.js";
@@ -536,5 +538,266 @@ describe("provider message assembly", () => {
     expect(result.ok).toBe(true);
     const expected = "Task:\nSummarize this.\n\nContext:\n" + item.abstractNote;
     expect(result.tasks[0].messages[1].content).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decideLLMAction
+// ---------------------------------------------------------------------------
+describe("decideLLMAction", () => {
+  it("returns {action:'none', count:0} for plain text with no LLM tags", () => {
+    expect(decideLLMAction("Just some plain text.", {})).toEqual({ action: "none", count: 0 });
+  });
+
+  it("returns {action:'none', count:0} for empty string", () => {
+    expect(decideLLMAction("", {})).toEqual({ action: "none", count: 0 });
+  });
+
+  it("returns {action:'preserve', count:1} for one block when autoRun is false and configured", () => {
+    const md = '{% llm context="abstract" %}Summarize.{% endllm %}';
+    const result = decideLLMAction(md, { baseURL: "http://localhost:11434", model: "llama3", autoRun: false });
+    expect(result).toEqual({ action: "preserve", count: 1 });
+  });
+
+  it("returns {action:'preserve', count:2} for two blocks when autoRun is false and configured", () => {
+    const md = [
+      '{% llm context="abstract" %}first{% endllm %}',
+      "prose",
+      '{% llm context="abstract" %}second{% endllm %}',
+    ].join("\n");
+    const result = decideLLMAction(md, { baseURL: "http://localhost:11434", model: "llama3", autoRun: false });
+    expect(result).toEqual({ action: "preserve", count: 2 });
+  });
+
+  it("returns {action:'run', count:1} when autoRun is true and configured", () => {
+    const md = '{% llm context="abstract" %}Summarize.{% endllm %}';
+    const result = decideLLMAction(md, { baseURL: "http://localhost:11434", model: "llama3", autoRun: true });
+    expect(result).toEqual({ action: "run", count: 1 });
+  });
+
+  it("returns {action:'preserve', count:1} when autoRun is true but baseURL is empty", () => {
+    const md = '{% llm context="abstract" %}Summarize.{% endllm %}';
+    const result = decideLLMAction(md, { baseURL: "", model: "llama3", autoRun: true });
+    expect(result).toEqual({ action: "preserve", count: 1 });
+  });
+
+  it("returns {action:'preserve', count:1} when autoRun is true but model is empty", () => {
+    const md = '{% llm context="abstract" %}Summarize.{% endllm %}';
+    const result = decideLLMAction(md, { baseURL: "http://localhost:11434", model: "", autoRun: true });
+    expect(result).toEqual({ action: "preserve", count: 1 });
+  });
+
+  it("returns {action:'preserve', count:1} when autoRun is false and not configured", () => {
+    const md = '{% llm context="abstract" %}Summarize.{% endllm %}';
+    const result = decideLLMAction(md, { baseURL: "", model: "", autoRun: false });
+    expect(result).toEqual({ action: "preserve", count: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// executeLLMBlocks
+// ---------------------------------------------------------------------------
+describe("executeLLMBlocks", () => {
+  const configuredSettings = { baseURL: "http://localhost:11434/v1", model: "llama3", autoRun: true };
+
+  // Helper: create a mock fetchFn that returns responses in sequence.
+  // Each element is treated as content to wrap in a JSON response;
+  // if it is an Error instance it is thrown as the HTTP failure.
+  const makeFetch = (responses) => {
+    let i = 0;
+    return async (_url, _headers, _payload, _timeout) => {
+      const r = responses[i++];
+      if (r instanceof Error) throw r;
+      return JSON.stringify({ choices: [{ message: { content: r } }] });
+    };
+  };
+
+  it("replaces a single block with the LLM output", async () => {
+    const text = [
+      "line0",
+      '{% llm context="abstract" %}',
+      "Summarize this.",
+      "{% endllm %}",
+      "line4",
+    ].join("\n");
+    const fetch = makeFetch(["Summary."]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(result.md).toBe("line0\nSummary.\nline4");
+    expect(result.blocks).toHaveLength(1);
+  });
+
+  it("replaces two blocks when both succeed", async () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "First task.",
+      "{% endllm %}",
+      "prose",
+      '{% llm context="abstract" %}',
+      "Second task.",
+      "{% endllm %}",
+    ].join("\n");
+    const fetch = makeFetch(["First output.", "Second output."]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(result.md).toBe("First output.\nprose\nSecond output.");
+  });
+
+  it("aborts on HTTP failure — returns ok:false with blockIndex and no md", async () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "First.",
+      "{% endllm %}",
+      '{% llm context="abstract" %}',
+      "Second.",
+      "{% endllm %}",
+    ].join("\n");
+    const fetch = makeFetch(["First output.", new Error("Connection refused")]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.HTTP_FAILED);
+    expect(result.blockIndex).toBe(1);
+    expect(result.n).toBe(2);
+    expect(result).not.toHaveProperty("md");
+  });
+
+  it("aborts on empty response — returns ok:false with EMPTY_RESPONSE and no md", async () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "First.",
+      "{% endllm %}",
+      '{% llm context="abstract" %}',
+      "Second.",
+      "{% endllm %}",
+    ].join("\n");
+    const fetch = makeFetch(["First output.", ""]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.EMPTY_RESPONSE);
+    expect(result.blockIndex).toBe(1);
+    expect(result.n).toBe(2);
+    expect(result).not.toHaveProperty("md");
+  });
+
+  it("returns EMPTY_RESPONSE for whitespace-only response", async () => {
+    const text = ['{% llm context="abstract" %}', "body", "{% endllm %}"].join("\n");
+    const fetch = makeFetch(["   "]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.EMPTY_RESPONSE);
+  });
+
+  it("trims the LLM output (spaced response → trimmed content)", async () => {
+    const text = ['{% llm context="abstract" %}', "body", "{% endllm %}"].join("\n");
+    const fetch = makeFetch(["  spaced  "]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(result.md).toBe("spaced");
+  });
+
+  it("returns CONTEXT_UNSUPPORTED for an unsupported context (pre-flight)", async () => {
+    const text = '{% llm context="annotations" %}prompt{% endllm %}';
+    const fetch = makeFetch([]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED);
+    expect(result.blocks).toHaveLength(1);
+  });
+
+  it("returns CONTEXT_MISSING when abstractNote is empty (pre-flight)", async () => {
+    const text = ['{% llm context="abstract" %}', "body", "{% endllm %}"].join("\n");
+    const data = { ...item, abstractNote: "" };
+    const fetch = makeFetch([]);
+    const result = await executeLLMBlocks(text, data, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+  });
+
+  it("returns NO_BLOCKS when there are no LLM tags", async () => {
+    const fetch = makeFetch([]);
+    const result = await executeLLMBlocks("Just plain text with no blocks.", item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.NO_BLOCKS);
+    expect(result.errors).toEqual([]);
+    expect(result.blocks).toEqual([]);
+  });
+
+  it("calls onProgress with (i+1, n) for each block", async () => {
+    const calls = [];
+    const onProgress = (i, n) => calls.push({ i, n });
+    const text = [
+      '{% llm context="abstract" %}first{% endllm %}',
+      '{% llm context="abstract" %}second{% endllm %}',
+    ].join("\n");
+    const fetch = makeFetch(["A", "B"]);
+    await executeLLMBlocks(text, item, configuredSettings, fetch, onProgress);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ i: 1, n: 2 });
+    expect(calls[1]).toEqual({ i: 2, n: 2 });
+  });
+
+  it("passes correct fetchFn arguments: URL ends with /chat/completions, headers include Content-Type, payload has model/messages/stream:false", async () => {
+    const captured = [];
+    const fetch = async (url, headers, payload, timeout) => {
+      captured.push({ url, headers, payload, timeout });
+      return JSON.stringify({ choices: [{ message: { content: "response" } }] });
+    };
+    const text = ['{% llm context="abstract" %}Do it.{% endllm %}'].join("\n");
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toMatch(/\/chat\/completions$/);
+    expect(captured[0].headers["Content-Type"]).toBe("application/json");
+    expect(captured[0].payload.model).toBe("llama3");
+    expect(captured[0].payload.stream).toBe(false);
+    expect(Array.isArray(captured[0].payload.messages)).toBe(true);
+  });
+
+  it("renders prompt body from itemData (template variables resolved)", async () => {
+    const text = ['{% llm context="abstract" %}', "Summarise {{title}}.", "{% endllm %}"].join("\n");
+    const data = { title: "X", abstractNote: "Has abstract." };
+    const captured = [];
+    const fetch = async (url, headers, payload, timeout) => {
+      captured.push(payload);
+      return JSON.stringify({ choices: [{ message: { content: "done" } }] });
+    };
+    const result = await executeLLMBlocks(text, data, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    const userMsg = captured[0].messages.find((m) => m.role === "user");
+    expect(userMsg.content).toContain("Summarise X.");
+    expect(userMsg.content).not.toContain("{{title}}");
+  });
+
+  it("HTTP error result carries the raw error object and no prompt/response body", async () => {
+    const err = new Error("network error");
+    const fetch = makeFetch([err]);
+    const text = ['{% llm context="abstract" %}body{% endllm %}'].join("\n");
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.HTTP_FAILED);
+    expect(result.error).toBe(err);
+    expect(result.blockIndex).toBe(0);
+    expect(result.n).toBe(1);
+    expect(result).not.toHaveProperty("md");
+  });
+
+  it("returns PARSE_ERRORS from pre-flight when block syntax is malformed (fetch never called)", async () => {
+    let fetchCalled = 0;
+    const fetch = async () => { fetchCalled++; };
+    const text = ['{% llm context="abstract" %}', "body without endllm"].join("\n");
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.PARSE_ERRORS);
+    expect(fetchCalled).toBe(0);
+  });
+
+  it("returns RENDER_FAILED from pre-flight when prompt body has invalid nunjucks (fetch never called)", async () => {
+    let fetchCalled = 0;
+    const fetch = async () => { fetchCalled++; };
+    const text = ['{% llm context="abstract" %}', '{% for x in %}', "{% endllm %}"].join("\n");
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.RENDER_FAILED);
+    expect(fetchCalled).toBe(0);
   });
 });

@@ -2085,35 +2085,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         // Guarantee a durable item-key link so the note resolves even if the
         // citekey/filename later changes (no-op if the template already has one).
         try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
-        // Auto-run LLM blocks (if enabled + configured).
-        let llm = { state: "none", count: 0 };
-        let C = win.ZONCore;
-        if (C.decideLLMAction && C.executeLLMBlocks) {
-          let decision = C.decideLLMAction(md, this.getLLMSettings());
-          if (decision.action === "run") {
-            let citekey2 = this.getCitekey(item);
-            let bibliography2 = await this.getBibliography(item);
-            let data2 = C.buildItemData(item, { citekey: citekey2, bibliography: bibliography2, importDate: new Date().toISOString() });
-            let result = await C.executeLLMBlocks(md, data2, this.getLLMSettings(), this.llmFetchFn());
-            if (result.ok) {
-              md = result.md;
-              llm = { state: "ran", count: decision.count };
-            } else if (result.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
-              llm = { state: "none", count: 0 };
-            } else {
-              // HARD-ABORT: do NOT write the note. Surface error.
-              this.log("auto-run (create) failed: " + this.describeLLMFailure(result) + " — note NOT written");
-              return { status: "error", error: this.t("err.llmRunFailed", { error: this.describeLLMFailure(result) }) };
-            }
-          } else if (decision.action === "preserve") {
-            llm = { state: "preserved", count: decision.count };
-          }
-        }
         await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
         await this.safeWrite(path, md);
         this.log("created note " + path);
         if (this.index) this.index.set(item.key, path);
-        return { status: "created", path, llm };
+        return { status: "created", path };
       }
       this.log("note already exists, linking: " + path);
       if (this.index) this.index.set(item.key, path);
@@ -2135,14 +2111,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (r.status === "no-citekey") { setMsg(this.t("msg.noCitekey")); return; }
     if (r.status === "outside") { setMsg(this.t("msg.outsideNotes")); return; }
     if (r.status === "error") { setMsg(this.t("msg.createFailed") + r.error); return; }
-    // Surface auto-run LLM state on the banner (preserved/ran/none).
-    if (r.status === "created" && r.llm) {
-      if (r.llm.state === "preserved" && r.llm.count > 0) {
-        setMsg(this.t("status.llmBlocksPreserved", { count: r.llm.count }));
-      } else if (r.llm.state === "ran") {
-        setMsg(this.t("status.llmRunDone", { count: r.llm.count }));
-      }
-    }
     try { await this.renderInto(rec.wrap, item); } catch (e) {}
   },
 
@@ -2247,7 +2215,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let created = 0, existed = 0, skipped = 0, failed = 0;
     for (let item of items) {
       let r = await this.writeNoteForItem(win, item, null);
-      if (r.llm) this.log("bulk create " + (this.getCitekey(item) || item.key) + ": llm " + r.llm.state);
       if (r.status === "created") created++;
       else if (r.status === "exists") existed++;
       else if (r.status === "no-citekey") skipped++;
@@ -2706,48 +2673,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     this.setStatus(rec, this.t("status.refreshed", { count: anns.length }));
   },
 
-  // llmFetchFn: returns a bound async function wrapping Zotero.HTTP.request
-  // for use with C.executeLLMBlocks (injected to keep src/ pure).
-  llmFetchFn() {
-    return async (url, headers, payload, timeoutSeconds) => {
-      const resp = await Zotero.HTTP.request("POST", url, {
-        headers, body: JSON.stringify(payload), responseType: "text",
-        timeout: timeoutSeconds * 1000,
-      });
-      return resp.responseText;
-    };
-  },
-
-  // describeLLMFailure: map C.executeLLMBlocks result.code to a human-readable
-  // error string using existing err.llmRun* STRINGS keys. Never includes prompt
-  // or response bodies (metadata-only). Returns "" for NO_BLOCKS (caller handles).
-  describeLLMFailure(result) {
-    if (!result || !result.code) return this.t("err.llmRunFailed", { error: "unknown" });
-    let code = result.code;
-    // LLM_RUN_ERRORS values: defined in src/llm-runner.js
-    if (code === "llm.run.httpFailed") {
-      let e = result.error;
-      let status = (e && typeof e.status === "number") ? e.status : null;
-      let errStr = status ? ("HTTP " + status) : "network error";
-      return this.t("err.llmRunHttp", { i: result.blockIndex + 1, n: result.n, error: errStr });
-    }
-    if (code === "llm.run.emptyResponse") {
-      return this.t("err.llmRunEmpty", { i: result.blockIndex + 1, n: result.n });
-    }
-    if (code === "llm.run.contextUnsupported"
-        || code === "llm.run.contextMissing"
-        || code === "llm.run.renderFailed") {
-      let first = result.errors && result.errors[0];
-      return this.t("err.llmRunBlock",
-        { line: first && first.line != null ? (first.line + 1) : "?", message: first ? first.message : "unknown" });
-    }
-    if (code === "llm.run.parseErrors") {
-      return this.t("err.llmBlocksInvalid", { count: result.errors ? result.errors.length : 0 });
-    }
-    if (code === "llm.run.noBlocks") return "";
-    return this.t("err.llmRunFailed", { error: code || "error" });
-  },
-
   // Run LLM: find every unresolved {% llm %} block, render each prompt against
   // current item data, send one OpenAI-compatible Chat Completions request per
   // block, and replace ALL blocks with static markdown only if the whole run
@@ -2763,7 +2688,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let C = win.ZONCore;
 
     // Guard: runner exports present (graceful if an old bundle is cached).
-    if (!C.prepareLLMRun || !C.applyLLMOutputs || !C.executeLLMBlocks) {
+    if (!C.prepareLLMRun || !C.applyLLMOutputs) {
       this.setStatus(rec, this.t("err.llmCoreMissing"));
       return;
     }
@@ -2797,60 +2722,67 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
-    // Execute all blocks via the pure orchestration function.
-    // Handles pre-flight (prepareLLMRun → parse/validate/context/render) and
-    // the HTTP loop (one request per block), all-or-nothing.
-    let result = await C.executeLLMBlocks(
-      existing, data, settings, this.llmFetchFn(),
-      (i, n) => this.setStatus(rec, this.t("status.llmRunning", { i, n }))
-    );
-
-    if (!result.ok) {
-      if (result.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
+    // Plan the run (pure): parse + validate + resolve context + render prompts +
+    // assemble messages. Any pre-flight failure aborts here — no HTTP yet.
+    let prepared = C.prepareLLMRun(existing, data);
+    if (!prepared.ok) {
+      if (prepared.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
         this.setStatus(rec, this.t("status.llmRunNoBlocks"));
         return;
       }
-      if (result.code === C.LLM_RUN_ERRORS.PARSE_ERRORS) {
-        let first = result.errors[0];
-        this.setStatus(rec, this.t("err.llmBlocksInvalid", { count: result.errors.length })
+      if (prepared.code === C.LLM_RUN_ERRORS.PARSE_ERRORS) {
+        let first = prepared.errors[0];
+        this.setStatus(rec, this.t("err.llmBlocksInvalid", { count: prepared.errors.length })
           + " " + (first ? this.t("err.llmBlockInvalid",
             { line: first.line != null ? (first.line + 1) : "?", message: first.message }) : ""));
         return;
       }
-      // Pre-flight: CONTEXT_UNSUPPORTED / CONTEXT_MISSING / RENDER_FAILED.
-      if (result.code === C.LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED
-          || result.code === C.LLM_RUN_ERRORS.CONTEXT_MISSING
-          || result.code === C.LLM_RUN_ERRORS.RENDER_FAILED) {
-        let first = result.errors[0];
-        this.setStatus(rec, this.t("err.llmRunBlock",
-          { line: first.line != null ? (first.line + 1) : "?", message: first.message }));
-        if (first.detail) this.log("llm run pre-flight: " + first.detail);
-        return;
-      }
-      if (result.code === C.LLM_RUN_ERRORS.HTTP_FAILED) {
-        let e = result.error;
-        let status = (e && typeof e.status === "number") ? e.status : null;
-        let errStr = status ? ("HTTP " + status) : "network error";
-        this.log("llm run http failed (block " + (result.blockIndex + 1) + "/" + result.n + ")"
-          + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
-        this.setStatus(rec, this.t("err.llmRunFailed",
-          { error: this.t("err.llmRunHttp", { i: result.blockIndex + 1, n: result.n, error: errStr }) }));
-        return;
-      }
-      if (result.code === C.LLM_RUN_ERRORS.EMPTY_RESPONSE) {
-        this.log("llm run empty response (block " + (result.blockIndex + 1) + "/" + result.n + ")");
-        this.setStatus(rec, this.t("err.llmRunFailed",
-          { error: this.t("err.llmRunEmpty", { i: result.blockIndex + 1, n: result.n }) }));
-        return;
-      }
-      // Unknown code — safe fallback.
-      this.log("llm run unknown code: " + (result.code || "(none)"));
-      this.setStatus(rec, this.t("err.llmRunFailed", { error: result.code || "error" }));
+      // Per-block pre-flight: CONTEXT_UNSUPPORTED / CONTEXT_MISSING / RENDER_FAILED.
+      let first = prepared.errors[0];
+      this.setStatus(rec, this.t("err.llmRunBlock",
+        { line: first.line != null ? (first.line + 1) : "?", message: first.message }));
+      if (first.detail) this.log("llm run pre-flight: " + first.detail);
       return;
     }
 
+    // Execute HTTP per block, in document order, collecting outputs.
+    // All-or-nothing: break on the first failure and DO NOT write.
+    let url = C.buildChatCompletionsURL(settings.baseURL);
+    let headers = C.buildLLMHeaders(settings);
+    let outputs = [];
+    let n = prepared.tasks.length;
+    for (let i = 0; i < n; i++) {
+      let task = prepared.tasks[i];
+      this.setStatus(rec, this.t("status.llmRunning", { i: i + 1, n }));
+      let payload = C.buildChatCompletionsPayload(settings, task.messages);
+      let content = "";
+      try {
+        let resp = await Zotero.HTTP.request("POST", url, {
+          headers, body: JSON.stringify(payload), responseType: "text",
+          timeout: settings.timeoutSeconds * 1000,
+        });
+        content = C.parseChatCompletionsResponse(resp.responseText);
+      } catch (e) {
+        let status = (e && typeof e.status === "number") ? e.status : null;
+        let errStr = status ? ("HTTP " + status) : "network error";
+        this.log("llm run http failed (block " + (i + 1) + "/" + n + ")"
+          + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
+        this.setStatus(rec, this.t("err.llmRunFailed",
+          { error: this.t("err.llmRunHttp", { i: i + 1, n, error: errStr }) }));
+        return;
+      }
+      let res = C.classifyLLMOutput(content);
+      if (!res.ok) {
+        this.log("llm run empty response (block " + (i + 1) + "/" + n + ")");
+        this.setStatus(rec, this.t("err.llmRunFailed",
+          { error: this.t("err.llmRunEmpty", { i: i + 1, n }) }));
+        return;
+      }
+      outputs.push(res.output);
+    }
+
     // Every block succeeded → apply all replacements + write once.
-    let updated = result.md;
+    let updated = C.applyLLMOutputs(existing, prepared.blocks, outputs);
     try { await this.safeWrite(rec.path, updated); }
     catch (e) {
       this.setStatus(rec, this.t("err.llmRunWrite") + C.sanitizeError(e));
@@ -2860,7 +2792,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     rec.diskMtime = await this.noteMtime(rec.path);
     this.hideConflict(rec);
     this.mountEditor(rec, win, updated);
-    this.setStatus(rec, this.t("status.llmRunDone", { count: result.blocks.length }));
+    this.setStatus(rec, this.t("status.llmRunDone", { count: prepared.blocks.length }));
     } finally {
       rec.llmRunning = false;
     }
@@ -2937,32 +2869,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let folder = this.resolveAttachmentFolder(curMd, win);
       if (item) { try { await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win); } catch (e) { this.log("image export failed: " + e); } }
       text = win.ZONCore.makeBlock(cfg, anns, this.syncOpts(win, item, { bibliography, attachmentFolder: folder }));
-    }
-    // Auto-run LLM blocks in document templates only (format templates don't carry blocks).
-    if (item && t.kind === "document") {
-      let C = win.ZONCore;
-      if (C.decideLLMAction && C.executeLLMBlocks) {
-        let decision = C.decideLLMAction(text, this.getLLMSettings());
-        if (decision.action === "run") {
-          let citekey = this.getCitekey(item);
-          let bibliography = await this.getBibliography(item);
-          let data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
-          let result = await C.executeLLMBlocks(text, data, this.getLLMSettings(), this.llmFetchFn());
-          if (result.ok) {
-            text = result.md;
-            this.setStatus(rec, this.t("status.llmRunDone", { count: decision.count }));
-          } else if (result.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
-            // no-op
-          } else {
-            // HARD-ABORT: do NOT insert. Surface error and return.
-            this.log("auto-run (insert) failed: " + this.describeLLMFailure(result) + " — template NOT inserted");
-            this.setStatus(rec, this.t("err.llmRunFailed", { error: this.describeLLMFailure(result) }));
-            return;
-          }
-        } else if (decision.action === "preserve") {
-          this.setStatus(rec, this.t("status.llmBlocksPreserved", { count: decision.count }));
-        }
-      }
     }
     rec.lib.insertAtCursor(rec.view, "\n" + String(text).trim() + "\n");
     // The edit fires the debounced save automatically (onEdit).

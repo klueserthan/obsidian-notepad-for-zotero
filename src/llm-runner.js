@@ -3,6 +3,14 @@
 
 import { parseLLMBlocks } from "./llm-blocks.js";
 import { render } from "./render.js";
+import {
+  canAutoRun,
+  sanitizeLLMSettings,
+  buildChatCompletionsURL,
+  buildLLMHeaders,
+  buildChatCompletionsPayload,
+  parseChatCompletionsResponse,
+} from "./llm.js";
 
 export const GROUNDING_SYSTEM_PROMPT =
   "You are a research assistant embedded in a Zotero literature note. " +
@@ -128,4 +136,46 @@ export function applyLLMOutputs(text, blocks, outputs) {
     lines.splice(blk.lineFrom, blk.lineTo - blk.lineFrom + 1, ...outLines);
   }
   return lines.join("\n");
+}
+
+export function decideLLMAction(md, settings) {
+  const { blocks } = parseLLMBlocks(String(md || ""));
+  if (blocks.length === 0) return { action: "none", count: 0 };
+  if (canAutoRun(settings)) return { action: "run", count: blocks.length };
+  return { action: "preserve", count: blocks.length };
+}
+
+export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProgress) {
+  const prepared = prepareLLMRun(text, itemData);
+  if (!prepared.ok) {
+    return { ok: false, code: prepared.code, errors: prepared.errors, blocks: prepared.blocks };
+  }
+
+  const s = sanitizeLLMSettings(settings);
+  const url = buildChatCompletionsURL(s.baseURL);
+  const headers = buildLLMHeaders(s);
+  const outputs = [];
+  const { tasks, blocks } = prepared;
+  const n = tasks.length;
+
+  for (let i = 0; i < n; i++) {
+    if (typeof onProgress === "function") {
+      try { onProgress(i + 1, n); } catch { /* ignore callback errors */ }
+    }
+    const payload = buildChatCompletionsPayload(s, tasks[i].messages);
+    let content;
+    try {
+      content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
+    } catch (e) {
+      return { ok: false, code: LLM_RUN_ERRORS.HTTP_FAILED, error: e, blockIndex: i, n };
+    }
+    const res = classifyLLMOutput(content);
+    if (!res.ok) {
+      return { ok: false, code: LLM_RUN_ERRORS.EMPTY_RESPONSE, blockIndex: i, n };
+    }
+    outputs.push(res.output);
+  }
+
+  const md = applyLLMOutputs(text, blocks, outputs);
+  return { ok: true, md, blocks };
 }
