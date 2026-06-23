@@ -18,6 +18,9 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+    env:
+      AGENT_NAME: orchestrator
+      MODEL_NAME: opencode-go/glm-5.2
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -33,13 +36,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Log start working in comment
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body "Start working on #${{ github.event.issue.number }}
+          - Agent: ${{ env.AGENT_NAME }}
+          - Model: ${{ env.MODEL_NAME }}"
+
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/glm-5.2
-          agent: orchestrator
+          model: ${{ env.MODEL_NAME }}
+          agent: ${{ env.AGENT_NAME }}
           prompt: |
             You are a senior software engineer.
             Create a comment on the issue that states that you are starting to work on the issue. Use the following command to create the comment and replace <ISSUE NUMBER> with the actual issue number, <AGENT> with the agent name, and <MODEL> with the model name:
