@@ -387,6 +387,140 @@ describe("parseLLMBlocks — line offsets", () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseLLMBlocks — body content with fence/live-block markers
+// ---------------------------------------------------------------------------
+describe("parseLLMBlocks — body content with fence/live-block markers", () => {
+  it("treats ``` inside a multi-line body as body text, not a fence", () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "Line 1.",
+      "```",
+      "Line 3.",
+      "```",
+      "{% endllm %}",
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].body).toBe("Line 1.\n```\nLine 3.\n```");
+  });
+
+  it("treats %% zon ``` / ```%% /zon %% inside a body as body text, not live-block markers", () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "Line 1.",
+      '%% zon kind=annotations %%',
+      "Line 3.",
+      '%% /zon %%',
+      "Line 5.",
+      "{% endllm %}",
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].body).toBe("Line 1.\n%% zon kind=annotations %%\nLine 3.\n%% /zon %%\nLine 5.");
+  });
+
+  it("treats a literal {% llm %} tag inside a body as body text, not a nested open", () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "The body mentions {% llm %} as a tag.",
+      "{% endllm %}",
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].body).toBe("The body mentions {% llm %} as a tag.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseLLMBlocks — single-line block
+// ---------------------------------------------------------------------------
+describe("parseLLMBlocks — single-line block", () => {
+  it("parses a valid single-line block (open + body + close on one line)", () => {
+    const text = '{% llm context="abstract" %}Summarise this.{% endllm %}';
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].contexts).toEqual(["abstract"]);
+    expect(blocks[0].body).toBe("Summarise this.");
+    expect(blocks[0].lineFrom).toBe(0);
+    expect(blocks[0].lineTo).toBe(0);
+  });
+
+  it("parses a single-line block with multi-context", () => {
+    const text = '{% llm context="abstract,annotations" %}prompt{% endllm %}';
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].contexts).toEqual(["abstract", "annotations"]);
+  });
+
+  it("parses multiple single-line blocks across separate lines", () => {
+    const text = [
+      '{% llm context="abstract" %}A{% endllm %}',
+      "prose in between",
+      '{% llm context="annotations" %}B{% endllm %}',
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].body).toBe("A");
+    expect(blocks[1].body).toBe("B");
+  });
+
+  it("reports empty body for a single-line block with no body text", () => {
+    const text = '{% llm context="abstract" %}{% endllm %}';
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(blocks).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe("llm.emptyBody");
+    expect(errors[0].line).toBe(0);
+  });
+
+  it("reports unknown context for a single-line block", () => {
+    const text = '{% llm context="summary" %}prompt{% endllm %}';
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(blocks).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe("llm.unknownContext");
+    expect(errors[0].message).toContain("summary");
+  });
+
+  it("reports missing context for a single-line block with no context attr", () => {
+    const text = '{% llm model="x" %}prompt{% endllm %}';
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(blocks).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].code).toBe("llm.missingContext");
+  });
+
+  it("ignores a single-line LLM-like text inside a fenced code block", () => {
+    const text = [
+      "```",
+      '{% llm context="abstract" %}prompt{% endllm %}',
+      "```",
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(blocks).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it("does NOT detect a single-line block as a nested block when inside an outer block", () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      'The body mentions {% llm context="annotations" %}prompt{% endllm %} as a tag.',
+      "{% endllm %}",
+    ].join("\n");
+    const { blocks, errors } = parseLLMBlocks(text);
+    expect(errors).toEqual([]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].body).toBe('The body mentions {% llm context="annotations" %}prompt{% endllm %} as a tag.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateLLMBlocks
 // ---------------------------------------------------------------------------
 describe("validateLLMBlocks", () => {

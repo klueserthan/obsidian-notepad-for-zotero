@@ -31,7 +31,7 @@ describe("renderer", () => {
 });
 
 describe("LLM block preservation", () => {
-  it("preserves an {% llm %} block verbatim around the rendered body", () => {
+  it("preserves an {% llm %} block around the rendered body", () => {
     const out = render(
       '{% llm context="abstract" %}Summarise {{title}}.{% endllm %}',
       { title: "My Paper" }

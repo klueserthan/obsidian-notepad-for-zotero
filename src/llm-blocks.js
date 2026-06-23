@@ -16,6 +16,12 @@ export const SUPPORTED_CONTEXTS = ["abstract", "annotations", "fulltext"];
 const LLM_OPEN_RE  = /^\s*\{%\s*llm\s+([^%]*?)\s*%\}\s*$/;
 // LLM close tag:  {% endllm %}
 const LLM_CLOSE_RE = /^\s*\{%\s*endllm\s*%\}\s*$/;
+// Single-line LLM block: {% llm context="..." %}body{% endllm %} (entire line).
+// [^%]*? for the argString mirrors LLM_OPEN_RE so a literal %} inside the
+// arg doesn't confuse the parser. (.*?) for the body is non-greedy, so the
+// FIRST {% endllm %} is treated as the close (matches how authors typically
+// write single-line blocks: no nested tags, no embedded %} in the body).
+const LLM_SINGLE_RE = /^\s*\{%\s*llm\s+([^%]*?)\s*%\}\s*(.*?)\s*\{%\s*endllm\s*%\}\s*$/;
 // Managed live block markers (mirrors blocks.js patterns)
 const ZON_OPEN_RE  = /^\s*%%\s*zon\s+([^%]*?)\s*%%\s*$/;
 const ZON_CLOSE_RE = /^\s*%%\s*\/zon\s*%%\s*$/;
@@ -111,6 +117,69 @@ export function parseLLMBlocks(text) {
     // If we're inside an open LLM block, treat everything as body text except a closing tag.
     if (openLLM && !LLM_CLOSE_RE.test(line)) {
       openLLM.bodyLines.push(line);
+      continue;
+    }
+
+    // Single-line LLM block: {% llm context="..." %}body{% endllm %} on one line.
+    // NOTE: this runs only when we are NOT inside an outer open LLM block (the early
+    // return above already handles body accumulation) and not inside a fenced code
+    // block (checked via inFence, set by the fence detection below).
+    const singleM = !inFence && line.match(LLM_SINGLE_RE);
+    if (singleM) {
+      const argString = singleM[1];
+      const body = singleM[2];
+      const parsed = parseLLMContext(argString);
+      const blockErrors = [];
+
+      // Validate context
+      if (!parsed) {
+        blockErrors.push({
+          code: "llm.missingContext",
+          message: "{% llm %} block is missing the required context=\"...\" attribute",
+          line: i,
+        });
+      } else if (parsed.contexts.length === 0) {
+        blockErrors.push({
+          code: "llm.emptyContext",
+          message: "{% llm %} block has an empty context=\"\" attribute",
+          line: i,
+        });
+      } else {
+        for (const ctx of parsed.contexts) {
+          if (!SUPPORTED_CONTEXTS.includes(ctx)) {
+            blockErrors.push({
+              code: "llm.unknownContext",
+              message: `Unknown LLM context: "${ctx}" — must be one of: ${SUPPORTED_CONTEXTS.join(", ")}`,
+              line: i,
+            });
+          }
+        }
+      }
+
+      // Validate body
+      if (body.trim() === "") {
+        blockErrors.push({
+          code: "llm.emptyBody",
+          message: "{% llm %} block has an empty body",
+          line: i,
+        });
+      }
+
+      errors.push(...blockErrors);
+
+      // Only add to blocks if NO errors for this block
+      if (blockErrors.length === 0) {
+        blocks.push({
+          openRaw: `{% llm ${argString} %}`,
+          closeRaw: "{% endllm %}",
+          contextArg: argString,
+          contexts: parsed ? parsed.contexts : null,
+          body,
+          lineFrom: i,
+          lineTo: i,
+        });
+      }
+
       continue;
     }
 
