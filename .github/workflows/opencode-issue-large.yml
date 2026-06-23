@@ -12,6 +12,7 @@ jobs:
       contains(github.event.comment.body, ' /opencode-orchestrator') ||
       startsWith(github.event.comment.body, '/opencode-orchestrator')
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       id-token: write
       contents: read
