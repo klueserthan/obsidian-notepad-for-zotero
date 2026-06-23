@@ -2715,11 +2715,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       return;
     }
 
+    // Gather PDF annotations so context="annotations" blocks can resolve.
+    // (Same flow Refresh uses; cheap on an explicit user action.)
+    let annotations = [];
+    try { annotations = this.gatherAnnotations(item, win); }
+    catch (e) { this.log("gatherAnnotations (llm) failed: " + e); }
+
     // Build item data with parity to renderDocument so prompts can use any field.
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = {};
-    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() }); }
+    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
     // Plan the run (pure): parse + validate + resolve context + render prompts +

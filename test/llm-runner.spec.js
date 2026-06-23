@@ -36,8 +36,8 @@ describe("GROUNDING_SYSTEM_PROMPT", () => {
 // RUNNABLE_CONTEXTS
 // ---------------------------------------------------------------------------
 describe("RUNNABLE_CONTEXTS", () => {
-  it('equals ["abstract"] for this slice', () => {
-    expect(RUNNABLE_CONTEXTS).toEqual(["abstract"]);
+  it('equals ["abstract", "annotations"]', () => {
+    expect(RUNNABLE_CONTEXTS).toEqual(["abstract", "annotations"]);
   });
 });
 
@@ -355,13 +355,6 @@ describe("prepareLLMRun — missing abstract failure", () => {
 // prepareLLMRun — context unsupported
 // ---------------------------------------------------------------------------
 describe("prepareLLMRun — context unsupported", () => {
-  it("returns {ok:false, code: CONTEXT_UNSUPPORTED} for context='annotations'", () => {
-    const text = '{% llm context="annotations" %}prompt{% endllm %}';
-    const result = prepareLLMRun(text, item);
-    expect(result.ok).toBe(false);
-    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED);
-  });
-
   it("returns {ok:false, code: CONTEXT_UNSUPPORTED} for context='fulltext'", () => {
     const text = '{% llm context="fulltext" %}prompt{% endllm %}';
     const result = prepareLLMRun(text, item);
@@ -378,9 +371,9 @@ describe("prepareLLMRun — context unsupported", () => {
   });
 
   it("error.message names the unsupported context but not the prompt body", () => {
-    const text = '{% llm context="annotations" %}secret prompt{% endllm %}';
+    const text = '{% llm context="fulltext" %}secret prompt{% endllm %}';
     const result = prepareLLMRun(text, item);
-    expect(result.errors[0].message).toContain("annotations");
+    expect(result.errors[0].message).toContain("fulltext");
     expect(result.errors[0].message).not.toContain("secret prompt");
   });
 
@@ -475,7 +468,7 @@ describe("prepareLLMRun — all-or-nothing pre-flight", () => {
       "first",
       "{% endllm %}",
       "prose",
-      '{% llm context="annotations" %}',
+      '{% llm context="fulltext" %}',
       "second",
       "{% endllm %}",
     ].join("\n");
@@ -509,12 +502,132 @@ describe("prepareLLMRun — all-or-nothing pre-flight", () => {
       "valid",
       "{% endllm %}",
       "prose",
-      '{% llm context="annotations" %}',
+      '{% llm context="fulltext" %}',
       "invalid",
       "{% endllm %}",
     ].join("\n");
     const result = prepareLLMRun(text, item);
     expect(result.ok).toBe(false);
+    expect(result.tasks).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareLLMRun — annotations context
+// ---------------------------------------------------------------------------
+describe("prepareLLMRun — annotations context", () => {
+  it("returns {ok:true} with one task for a single annotations block", () => {
+    const text = ['{% llm context="annotations" %}', "Summarize highlights", "{% endllm %}"].join("\n");
+    const result = prepareLLMRun(text, item);
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe("ok");
+    expect(result.tasks).toHaveLength(1);
+    expect(result.blocks).toHaveLength(1);
+    expect(result.tasks[0].contextLabel).toBe("annotations");
+    const userContent = result.tasks[0].messages[1].content;
+    expect(userContent).toContain("Context:");
+    expect(userContent).toContain('> "networks shape cognition"');
+    expect(userContent).toContain("Comment: central claim");
+  });
+
+  it("orders annotations by key when sortIndex is missing", () => {
+    const text = ['{% llm context="annotations" %}', "Summarize", "{% endllm %}"].join("\n");
+    const result = prepareLLMRun(text, item);
+    expect(result.ok).toBe(true);
+    const userContent = result.tasks[0].messages[1].content;
+    const idx1 = userContent.indexOf("networks shape cognition");
+    const idx2 = userContent.indexOf("degree distribution matters");
+    const idx3 = userContent.indexOf("follow up on this method");
+    expect(idx1).toBeGreaterThanOrEqual(0);
+    expect(idx2).toBeGreaterThan(idx1);
+    expect(idx3).toBeGreaterThan(idx2);
+  });
+
+  it("returns CONTEXT_MISSING when annotations is an empty array", () => {
+    const text = ['{% llm context="annotations" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = { ...item, annotations: [] };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+    expect(result.tasks).toEqual([]);
+  });
+
+  it("returns CONTEXT_MISSING when all annotations are image-only (no text, no comment)", () => {
+    const text = ['{% llm context="annotations" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = {
+      ...item,
+      annotations: [
+        { key: "IMG1", type: "image", annotatedText: "", comment: "", pageLabel: "1" },
+        { key: "IMG2", type: "image", annotatedText: "", comment: "", pageLabel: "2" },
+      ],
+    };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+    expect(result.tasks).toEqual([]);
+  });
+
+  it("includes an image annotation with a comment (header + Comment, no blockquote)", () => {
+    const text = ['{% llm context="annotations" %}', "Describe", "{% endllm %}"].join("\n");
+    const data = {
+      ...item,
+      annotations: [
+        { key: "IMG1", type: "image", annotatedText: "", comment: "this figure shows the topology", pageLabel: "9" },
+      ],
+    };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(true);
+    const userContent = result.tasks[0].messages[1].content;
+    expect(userContent).toContain("### p.9 — image");
+    expect(userContent).toContain("Comment: this figure shows the topology");
+    // No blockquote line for an image with only a comment
+    const ctxSection = userContent.split("\n\nContext:\n")[1];
+    const lines = ctxSection.split("\n");
+    const blockquoteLines = lines.filter((l) => l.startsWith(">"));
+    expect(blockquoteLines).toHaveLength(0);
+  });
+
+  it("omits image-only annotations but still succeeds when usable annotations remain", () => {
+    const text = ['{% llm context="annotations" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = {
+      ...item,
+      annotations: [
+        { key: "HL1", type: "highlight", annotatedText: "important finding", comment: "", pageLabel: "1" },
+        { key: "IMG1", type: "image", annotatedText: "", comment: "", pageLabel: "9" },
+      ],
+    };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(true);
+    const userContent = result.tasks[0].messages[1].content;
+    expect(userContent).toContain("important finding");
+    expect(userContent).toContain("### p.1 — highlight");
+    // The image-only annotation's page label must NOT appear
+    expect(userContent).not.toContain("p.9");
+    expect(userContent).not.toContain("IMG1");
+  });
+
+  it("error.message is static and does not include the prompt body (no leakage)", () => {
+    const text = ['{% llm context="annotations" %}', "secret prompt body", "{% endllm %}"].join("\n");
+    const data = { ...item, annotations: [] };
+    const result = prepareLLMRun(text, data);
+    expect(result.errors[0].message).not.toContain("secret prompt body");
+    expect(result.errors[0].message).toContain("no usable annotations");
+  });
+
+  it("aborts the whole run when the 2nd of 2 annotations blocks has no usable annotations", () => {
+    const text = [
+      '{% llm context="annotations" %}',
+      "first",
+      "{% endllm %}",
+      "prose",
+      '{% llm context="annotations" %}',
+      "second",
+      "{% endllm %}",
+    ].join("\n");
+    const data = { ...item, annotations: [] };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
     expect(result.tasks).toEqual([]);
   });
 });

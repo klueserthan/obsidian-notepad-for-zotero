@@ -2,6 +2,7 @@
 // normalizes output, applies replacements. No DOM, no Zotero, no fetch.
 
 import { parseLLMBlocks } from "./llm-blocks.js";
+import { renderAnnotationsContext } from "./annotations.js";
 import { render } from "./render.js";
 
 export const GROUNDING_SYSTEM_PROMPT =
@@ -14,7 +15,7 @@ export const GROUNDING_SYSTEM_PROMPT =
   "sufficient to complete the task, respond with a brief Markdown note stating " +
   "what is missing.";
 
-export const RUNNABLE_CONTEXTS = ["abstract"];
+export const RUNNABLE_CONTEXTS = ["abstract", "annotations"];
 
 export const LLM_RUN_ERRORS = {
   NO_BLOCKS: "llm.run.noBlocks",
@@ -60,7 +61,7 @@ export function prepareLLMRun(text, itemData) {
   const tasks = [];
 
   for (const block of blocks) {
-    // Context resolution — abstract only this slice
+    // Guard: only single-context blocks are runnable
     if (block.contexts.length !== 1 || !RUNNABLE_CONTEXTS.includes(block.contexts[0])) {
       return {
         ok: false,
@@ -75,15 +76,50 @@ export function prepareLLMRun(text, itemData) {
       };
     }
 
-    // Abstract resolution
-    const abstract = String(itemData?.abstractNote ?? "").trim();
-    if (abstract === "") {
+    // Context resolution — abstract or annotations
+    const ctxKind = block.contexts[0];
+    let contextText = "";
+    let contextLabel = ctxKind;
+
+    if (ctxKind === "abstract") {
+      const abstract = String(itemData?.abstractNote ?? "").trim();
+      if (abstract === "") {
+        return {
+          ok: false,
+          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+          errors: [{
+            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+            message: "abstract is empty for this item — cannot run with context='abstract'",
+            line: block.lineFrom,
+          }],
+          blocks,
+          tasks: [],
+        };
+      }
+      contextText = abstract;
+    } else if (ctxKind === "annotations") {
+      contextText = renderAnnotationsContext(itemData?.annotations || []);
+      if (contextText === "") {
+        return {
+          ok: false,
+          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+          errors: [{
+            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+            message: "no usable annotations for this item — cannot run with context='annotations'",
+            line: block.lineFrom,
+          }],
+          blocks,
+          tasks: [],
+        };
+      }
+    } else {
+      // Unreachable (RUNNABLE_CONTEXTS gate above), but keep defensive.
       return {
         ok: false,
-        code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+        code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
         errors: [{
-          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-          message: "abstract is empty for this item — cannot run with context='abstract'",
+          code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
+          message: "context '" + block.contexts.join(", ") + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
           line: block.lineFrom,
         }],
         blocks,
@@ -111,8 +147,8 @@ export function prepareLLMRun(text, itemData) {
     }
 
     // Message assembly
-    const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, abstract);
-    tasks.push({ block, messages, contextLabel: "abstract" });
+    const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, contextText);
+    tasks.push({ block, messages, contextLabel });
   }
 
   return { ok: true, code: "ok", errors: [], blocks, tasks };
