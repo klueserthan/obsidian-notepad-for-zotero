@@ -2734,13 +2734,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         let first = prepared.errors[0];
         this.setStatus(rec, this.t("err.llmBlocksInvalid", { count: prepared.errors.length })
           + " " + (first ? this.t("err.llmBlockInvalid",
-            { line: first.line != null ? first.line : "?", message: first.message }) : ""));
+            { line: first.line != null ? (first.line + 1) : "?", message: first.message }) : ""));
         return;
       }
       // Per-block pre-flight: CONTEXT_UNSUPPORTED / CONTEXT_MISSING / RENDER_FAILED.
       let first = prepared.errors[0];
       this.setStatus(rec, this.t("err.llmRunBlock",
-        { line: first.line != null ? first.line : "?", message: first.message }));
+        { line: first.line != null ? (first.line + 1) : "?", message: first.message }));
       if (first.detail) this.log("llm run pre-flight: " + first.detail);
       return;
     }
