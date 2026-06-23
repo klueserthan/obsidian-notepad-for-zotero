@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.13] — 2026-06-23
+
 ### Added
 - **Route highlights by colour in a note template.** A new `highlights(...)`
   helper lets a whole-note template place annotation blocks where you want them —
