@@ -42,4 +42,4 @@ jobs:
           agent: orchestrator
           prompt: |
             You are a senior software engineer.
-            Implement the feature described in the issue. If this is a subissue, also read the parent issue for context.
+            Orchestrate this issue to completion according to your definition. If this is a subissue, also read the parent issue for context.
