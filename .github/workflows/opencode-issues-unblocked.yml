@@ -60,7 +60,11 @@ jobs:
             fi
           done
 
-          issue_numbers_json=$(printf '%s\n' "${ready_issues[@]}" | jq -R . | jq -s .)
+          if [ "${#ready_issues[@]}" -eq 0 ]; then
+            issue_numbers_json="[]"
+          else
+            issue_numbers_json=$(printf '%s\n' "${ready_issues[@]}" | jq -R . | jq -c -s .)
+          fi
 
           echo "Ready issues: $issue_numbers_json"
           echo "issue_numbers=$issue_numbers_json" >> "$GITHUB_OUTPUT"
