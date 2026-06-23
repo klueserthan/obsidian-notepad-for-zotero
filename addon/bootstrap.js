@@ -774,10 +774,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       this.log("LLM test connection: success");
       return { ok: true, message: this.t("status.llmTestOk") };
     } catch (e) {
-      let errStr = "";
-      if (e && e.status) errStr = "HTTP " + e.status;
-      else errStr = C.sanitizeError(e);
-      this.log("LLM test connection: failed (" + errStr + ")");
+      let status = (e && typeof e.status === "number") ? e.status : null;
+      let errStr = status ? ("HTTP " + status) : C.sanitizeError(e);
+      this.log("LLM test connection: failed" + (status ? (" (HTTP " + status + ")") : ""));
       return { ok: false, message: this.t("status.llmTestFail", { error: errStr }) };
     }
   },

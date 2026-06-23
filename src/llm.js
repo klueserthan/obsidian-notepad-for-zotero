@@ -7,11 +7,13 @@
 // ---------------------------------------------------------------------------
 
 function clamp(val, min, max, fallback) {
+  if (typeof val === "string" && val.trim() !== "") val = Number(val);
   if (typeof val !== "number" || Number.isNaN(val)) return fallback;
   return Math.min(Math.max(val, min), max);
 }
 
 function clampInt(val, min, max, fallback) {
+  if (typeof val === "string" && val.trim() !== "") val = Number(val);
   if (typeof val !== "number" || Number.isNaN(val)) return fallback;
   return Math.round(clamp(val, min, max, val));
 }
