@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.12] — 2026-06-23
+
 ### Changed
 - **Templates refresh without a restart.** When you edit or add a template in
   another app and switch back to Zotero, the plugin re-reads the templates
