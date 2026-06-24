@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LLM `context="fulltext"` support.** `{% llm context="fulltext" %}…{% endllm %}`
   blocks now resolve using the primary PDF's extracted full text (when available).
   Contexts `abstract`, `annotations`, and `fulltext` are all first-class runnable
-  contexts; multiple contexts per block are still unsupported.
+   contexts; multiple comma-separated contexts per block are now supported (labeled sections, combined `maxContextChars` limit, all-or-nothing missing-context semantics).
 - **New built-in `research-questions` template.** Pre-fills a paper's research
   questions via a `{% llm context="fulltext" %}` block. See
   [docs/TEMPLATES.md](docs/TEMPLATES.md).

@@ -50,8 +50,9 @@ file on disk stays a clean, plain-markdown Obsidian note.
 - **LLM-assisted templates (BYOK).** Add a `{% llm context="fulltext" %}` block
   to a template and the plugin asks your own OpenAI-compatible model (local
   Ollama, OpenAI, LM Studio, …) to fill it in from the paper's abstract,
-  annotations, or full text. Bring your own key/endpoint; runs are
-  all-or-nothing with no silent fallback. See
+  annotations, or full text. Combine contexts with a comma (e.g.
+  `context="abstract,annotations"`) to feed multiple sources at once. Bring your
+  own key/endpoint; runs are all-or-nothing with no silent fallback. See
   [docs/TEMPLATES.md](docs/TEMPLATES.md).
 
 ## Requirements

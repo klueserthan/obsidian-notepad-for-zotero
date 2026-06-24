@@ -195,7 +195,8 @@ block**:
     {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
 
 \`context="…"\` selects what the model sees: \`abstract\`, \`annotations\`, or
-\`fulltext\` (the primary PDF's extracted text). The block is replaced by the
+\`fulltext\` (the primary PDF's extracted text). Combine multiple contexts
+with a comma (\`context="abstract,annotations"\`). The block is replaced by the
 model's Markdown output when you run it. A template with any \`{% llm %}\` block
 is automatically a once-per-item (whole-note) template. The LLM is
 OpenAI-compatible and bring-your-own-key — configure it in *Settings → Obsidian

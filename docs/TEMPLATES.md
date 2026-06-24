@@ -160,14 +160,31 @@ Summarise the following in three bullet points:
 | `fulltext`      | Primary PDF's extracted text (from Zotero's FT cache) |
 
 Each context injects its data into the prompt as part of the request payload.
-Only one context executes per block at run time (see below).
-
 ### Comma-separated contexts
 
-The parser accepts a comma-separated list, e.g. `context="abstract,annotations"`.
-The block is preserved through rendering and is valid syntax. However, when
-executed, `prepareLLMRun()` rejects multi-context blocks with a
-`CONTEXT_UNSUPPORTED` error. Use single-context blocks for now.
+You may list more than one context, comma-separated:
+
+```
+{% llm context="abstract,annotations" %}Summarise how the abstract and annotations relate.{% endllm %}
+```
+
+Each requested context is resolved in template order and labeled in the
+assembled prompt:
+
+```
+## Context: abstract
+<abstract text>
+
+## Context: annotations
+<annotations text>
+```
+
+The combined context text (excluding the task prompt) must fit within the
+configured `maxContextChars` limit; if it exceeds the limit the run fails with
+a `CONTEXT_TOO_LARGE` error. If **any** requested context is missing for an
+item (e.g. no extracted full text), the **entire block** fails with
+`CONTEXT_MISSING` — there is no partial assembly or silent fallback to the
+available contexts.
 
 ### Unresolved placeholders
 
