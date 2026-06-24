@@ -81,7 +81,11 @@ function resolveContext(kind, itemData) {
     return { text, missingReason: null };
   }
   // Unknown kind — fail closed (validation pass should catch this first)
-  return { text: "", missingReason: "context '" + kind + "' is not yet supported by Run LLM (only 'abstract', 'annotations', 'fulltext')" };
+  return {
+    text: "",
+    missingReason:
+      "context '" + kind + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
+  };
 }
 
 export function prepareLLMRun(text, itemData, opts = {}) {
@@ -103,7 +107,13 @@ export function prepareLLMRun(text, itemData, opts = {}) {
   for (const block of blocks) {
     // Dedupe contexts while preserving order
     const seen = new Set();
-    const kinds = block.contexts.filter((k) => (seen.has(k) ? false : (seen.add(k), true)));
+    const kinds = [];
+    for (const k of block.contexts) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        kinds.push(k);
+      }
+    }
 
     // Validation pass: all context kinds must be runnable
     const unsupported = kinds.filter(k => !RUNNABLE_CONTEXTS.includes(k));
