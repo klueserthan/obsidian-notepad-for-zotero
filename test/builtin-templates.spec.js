@@ -50,12 +50,11 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
   });
 
   it("research-questions ships the exact heading, context, and prompt", () => {
-    const t = builtins["research-questions"];
-    expect(t).toContain("## Research Questions");
-    expect(t).toContain('{% llm context="fulltext" %}');
-    expect(t).toContain("{% endllm %}");
-    expect(t).toContain(
-      "What is/are the research question(s) the paper answers? Render as concrete bullet points."
+    expect(builtins["research-questions"]).toBe(
+      `## Research Questions
+
+{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
+`
     );
   });
 
