@@ -82,6 +82,7 @@ export function buildItemData(item, opts = {}) {
     // Their template's annotation block; empty on first creation (annotations
     // are brought in by the sync path). lastImportDate null => render all.
     annotations: opts.annotations || [],
+    fulltext: opts.fulltext ?? null,
     lastImportDate: opts.lastImportDate ?? null,
     importDate: opts.importDate || "",
   };

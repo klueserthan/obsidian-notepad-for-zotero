@@ -36,8 +36,8 @@ describe("GROUNDING_SYSTEM_PROMPT", () => {
 // RUNNABLE_CONTEXTS
 // ---------------------------------------------------------------------------
 describe("RUNNABLE_CONTEXTS", () => {
-  it('equals ["abstract", "annotations"]', () => {
-    expect(RUNNABLE_CONTEXTS).toEqual(["abstract", "annotations"]);
+  it('equals ["abstract", "annotations", "fulltext"]', () => {
+    expect(RUNNABLE_CONTEXTS).toEqual(["abstract", "annotations", "fulltext"]);
   });
 });
 
@@ -355,26 +355,12 @@ describe("prepareLLMRun — missing abstract failure", () => {
 // prepareLLMRun — context unsupported
 // ---------------------------------------------------------------------------
 describe("prepareLLMRun — context unsupported", () => {
-  it("returns {ok:false, code: CONTEXT_UNSUPPORTED} for context='fulltext'", () => {
-    const text = '{% llm context="fulltext" %}prompt{% endllm %}';
-    const result = prepareLLMRun(text, item);
-    expect(result.ok).toBe(false);
-    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED);
-  });
-
   it("returns {ok:false, code: CONTEXT_UNSUPPORTED} for multi-context", () => {
     // "abstract,annotations" parses without error but has contexts.length !== 1
     const text = '{% llm context="abstract,annotations" %}prompt{% endllm %}';
     const result = prepareLLMRun(text, item);
     expect(result.ok).toBe(false);
     expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED);
-  });
-
-  it("error.message names the unsupported context but not the prompt body", () => {
-    const text = '{% llm context="fulltext" %}secret prompt{% endllm %}';
-    const result = prepareLLMRun(text, item);
-    expect(result.errors[0].message).toContain("fulltext");
-    expect(result.errors[0].message).not.toContain("secret prompt");
   });
 
   it("error.message names the actual contexts in a multi-context block, not the raw arg", () => {
@@ -468,7 +454,7 @@ describe("prepareLLMRun — all-or-nothing pre-flight", () => {
       "first",
       "{% endllm %}",
       "prose",
-      '{% llm context="fulltext" %}',
+      '{% llm context="abstract,annotations" %}',
       "second",
       "{% endllm %}",
     ].join("\n");
@@ -502,7 +488,7 @@ describe("prepareLLMRun — all-or-nothing pre-flight", () => {
       "valid",
       "{% endllm %}",
       "prose",
-      '{% llm context="fulltext" %}',
+      '{% llm context="abstract,annotations" %}',
       "invalid",
       "{% endllm %}",
     ].join("\n");
@@ -649,5 +635,142 @@ describe("provider message assembly", () => {
     expect(result.ok).toBe(true);
     const expected = "Task:\nSummarize this.\n\nContext:\n" + item.abstractNote;
     expect(result.tasks[0].messages[1].content).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareLLMRun — fulltext context
+// ---------------------------------------------------------------------------
+describe("prepareLLMRun — fulltext context", () => {
+  it("N1: returns {ok:true} with one task for a single fulltext block", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize this.", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "Full Text.pdf", text: "body text" } };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(true);
+    expect(result.code).toBe("ok");
+    expect(result.tasks).toHaveLength(1);
+    expect(result.blocks).toHaveLength(1);
+    expect(result.tasks[0].contextLabel).toBe("fulltext");
+  });
+
+  it("N2: user message Context section contains metadata header + extracted text", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize this.", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "Full Text.pdf", text: "body text" } };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(true);
+    const userContent = result.tasks[0].messages[1].content;
+    expect(userContent).toContain("Context:");
+    expect(userContent).toContain("Title: Thinking in Networks");
+    expect(userContent).toContain("Citekey: Doe2023");
+    expect(userContent).toContain("Attachment: Full Text.pdf");
+    expect(userContent).toContain("body text");
+  });
+
+  it("N3: fulltext:null -> CONTEXT_MISSING with tasks:[]", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: null };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+    expect(result.tasks).toEqual([]);
+  });
+
+  it("N4: fulltext text empty -> CONTEXT_MISSING", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: "" } };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+  });
+
+  it("N5: NO FALLBACK — fulltext:null with abstract+annotations is CONTEXT_MISSING, not ok", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize", "{% endllm %}"].join("\n");
+    // item HAS abstractNote and annotations but fulltext is null — must fail
+    const data = { ...item, fulltext: null };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+  });
+
+  it("N6: error.message is static and does not include the extracted text body", () => {
+    const text = ['{% llm context="fulltext" %}', "Summarize", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: false, reason: "noExtractedText", text: "SECRET BODY CONTENT" } };
+    const result = prepareLLMRun(text, data);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_MISSING);
+    // The error message must NOT contain the extracted text body
+    expect(result.errors[0].message).not.toContain("SECRET BODY");
+    expect(result.errors[0].message).toContain("no extracted full text");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prepareLLMRun — maxContextChars enforcement
+// ---------------------------------------------------------------------------
+describe("prepareLLMRun — maxContextChars enforcement", () => {
+  it("N7: fulltext length 200, maxContextChars 100 -> CONTEXT_TOO_LARGE", () => {
+    const text = ['{% llm context="fulltext" %}', "task", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: "x".repeat(200) } };
+    const result = prepareLLMRun(text, data, { maxContextChars: 100 });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
+    expect(result.tasks).toEqual([]);
+  });
+
+  it("N8: fulltext length 30 (header+text <= 100), maxContextChars 100 -> {ok:true}", () => {
+    const text = ['{% llm context="fulltext" %}', "task", "{% endllm %}"].join("\n");
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: "x".repeat(30) } };
+    const result = prepareLLMRun(text, data, { maxContextChars: 100 });
+    expect(result.ok).toBe(true);
+  });
+
+  it("N9: defaults to 100000 when opts omitted", () => {
+    const text = ['{% llm context="fulltext" %}', "task", "{% endllm %}"].join("\n");
+    const dataSmall = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: "x".repeat(5000) } };
+    const dataLarge = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: "x".repeat(100001) } };
+    // 2-arg call — opts omitted
+    expect(prepareLLMRun(text, dataSmall).ok).toBe(true);
+    const largeResult = prepareLLMRun(text, dataLarge);
+    expect(largeResult.ok).toBe(false);
+    expect(largeResult.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
+  });
+
+  it("N10: applies to abstract too — abstractNote length 200, maxContextChars 100", () => {
+    const text = ['{% llm context="abstract" %}', "task", "{% endllm %}"].join("\n");
+    const data = { ...item, abstractNote: "x".repeat(200) };
+    const result = prepareLLMRun(text, data, { maxContextChars: 100 });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
+  });
+
+  it("N11: error.message includes char counts but NOT the context body", () => {
+    const text = ['{% llm context="fulltext" %}', "task", "{% endllm %}"].join("\n");
+    const body = "ZOGBLOPSECRET-MARKER-" + "x".repeat(100);
+    const data = { ...item, fulltext: { ok: true, attachmentTitle: "X.pdf", text: body } };
+    const result = prepareLLMRun(text, data, { maxContextChars: 10 });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
+    // Message must include a character count (number) but NOT the body
+    expect(result.errors[0].message).toMatch(/\d+/);
+    expect(result.errors[0].message).not.toContain("ZOGBLOPSECRET-MARKER");
+  });
+
+  it("N12: aborts whole run on CONTEXT_TOO_LARGE for 2nd block", () => {
+    const text = [
+      '{% llm context="abstract" %}',
+      "first",
+      "{% endllm %}",
+      "prose",
+      '{% llm context="fulltext" %}',
+      "second",
+      "{% endllm %}",
+    ].join("\n");
+    const data = {
+      ...item,
+      fulltext: { ok: true, attachmentTitle: "X.pdf", text: "x".repeat(500) },
+    };
+    const result = prepareLLMRun(text, data, { maxContextChars: 100 });
+    expect(result.ok).toBe(false);
+    expect(result.tasks).toEqual([]);
   });
 });
