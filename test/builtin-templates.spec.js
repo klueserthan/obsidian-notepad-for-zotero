@@ -36,16 +36,26 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
 
   it("ships exactly the expected set", () => {
     expect(Object.keys(builtins).sort()).toEqual(
-      ["abstract", "critique", "highlight", "key-quote", "note", "note-minimal", "snapshot"]
+      ["abstract", "critique", "highlight", "key-quote", "note", "note-minimal", "research-questions", "snapshot"]
     );
   });
 
   it("classifies note scaffolds as documents and the rest as formats", () => {
     expect(templateKind(builtins["note"])).toBe("document");
     expect(templateKind(builtins["note-minimal"])).toBe("document");
+    expect(templateKind(builtins["research-questions"])).toBe("document");
     for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot"]) {
       expect(templateKind(builtins[n])).toBe("format");
     }
+  });
+
+  it("research-questions ships the exact heading, context, and prompt", () => {
+    expect(builtins["research-questions"]).toBe(
+      `## Research Questions
+
+{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
+`
+    );
   });
 
   it("every template renders through the engine without throwing", () => {

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blocks now resolve using the primary PDF's extracted full text (when available).
   Contexts `abstract`, `annotations`, and `fulltext` are all first-class runnable
   contexts; multiple contexts per block are still unsupported.
+- **New built-in `research-questions` template.** Pre-fills a paper's research
+  questions via a `{% llm context="fulltext" %}` block. See
+  [docs/TEMPLATES.md](docs/TEMPLATES.md).
 
 ### Changed
 - **Max Context Characters is now enforced.** The `llmMaxContextChars` preference
