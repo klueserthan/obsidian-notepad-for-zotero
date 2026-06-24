@@ -58,6 +58,36 @@ export function classifyLLMOutput(content) {
   return { ok: true, output: normalizeLLMOutput(c) };
 }
 
+function resolveContext(kind, itemData) {
+  if (kind === "abstract") {
+    const text = String(itemData?.abstractNote ?? "").trim();
+    if (text === "") {
+      return { text: "", missingReason: "abstract is empty for this item" };
+    }
+    return { text, missingReason: null };
+  }
+  if (kind === "annotations") {
+    const text = renderAnnotationsContext(itemData?.annotations || []);
+    if (text === "") {
+      return { text: "", missingReason: "no usable annotations for this item" };
+    }
+    return { text, missingReason: null };
+  }
+  if (kind === "fulltext") {
+    const text = renderFulltextContext(itemData);
+    if (text === "") {
+      return { text: "", missingReason: "no extracted full text available for the primary PDF" };
+    }
+    return { text, missingReason: null };
+  }
+  // Unknown kind — fail closed (validation pass should catch this first)
+  return {
+    text: "",
+    missingReason:
+      "context '" + kind + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
+  };
+}
+
 export function prepareLLMRun(text, itemData, opts = {}) {
   const { blocks, errors } = parseLLMBlocks(text);
 
@@ -75,14 +105,25 @@ export function prepareLLMRun(text, itemData, opts = {}) {
   const tasks = [];
 
   for (const block of blocks) {
-    // Guard: only single-context blocks are runnable
-    if (block.contexts.length !== 1 || !RUNNABLE_CONTEXTS.includes(block.contexts[0])) {
+    // Dedupe contexts while preserving order
+    const seen = new Set();
+    const kinds = [];
+    for (const k of block.contexts) {
+      if (!seen.has(k)) {
+        seen.add(k);
+        kinds.push(k);
+      }
+    }
+
+    // Validation pass: all context kinds must be runnable
+    const unsupported = kinds.filter(k => !RUNNABLE_CONTEXTS.includes(k));
+    if (unsupported.length > 0) {
       return {
         ok: false,
         code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
         errors: [{
           code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
-          message: "context '" + block.contexts.join(", ") + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
+          message: "context '" + kinds.join(", ") + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
           line: block.lineFrom,
         }],
         blocks,
@@ -90,73 +131,31 @@ export function prepareLLMRun(text, itemData, opts = {}) {
       };
     }
 
-    // Context resolution — abstract, annotations, or fulltext
-    const ctxKind = block.contexts[0];
-    let contextText = "";
-    let contextLabel = ctxKind;
-
-    if (ctxKind === "abstract") {
-      const abstract = String(itemData?.abstractNote ?? "").trim();
-      if (abstract === "") {
+    // Resolution loop: iterate contexts in template order
+    const sections = [];
+    for (const kind of kinds) {
+      const { text, missingReason } = resolveContext(kind, itemData);
+      if (missingReason !== null) {
         return {
           ok: false,
           code: LLM_RUN_ERRORS.CONTEXT_MISSING,
           errors: [{
             code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-            message: "abstract is empty for this item — cannot run with context='abstract'",
+            message: missingReason + " — cannot run with context='" + kinds.join(", ") + "'",
             line: block.lineFrom,
           }],
           blocks,
           tasks: [],
         };
       }
-      contextText = abstract;
-    } else if (ctxKind === "annotations") {
-      contextText = renderAnnotationsContext(itemData?.annotations || []);
-      if (contextText === "") {
-        return {
-          ok: false,
-          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-          errors: [{
-            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-            message: "no usable annotations for this item — cannot run with context='annotations'",
-            line: block.lineFrom,
-          }],
-          blocks,
-          tasks: [],
-        };
-      }
-    } else if (ctxKind === "fulltext") {
-      contextText = renderFulltextContext(itemData);
-      if (contextText === "") {
-        return {
-          ok: false,
-          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-          errors: [{
-            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-            message: "no extracted full text available for the primary PDF — cannot run with context='fulltext'",
-            line: block.lineFrom,
-          }],
-          blocks,
-          tasks: [],
-        };
-      }
-    } else {
-      // Unreachable (RUNNABLE_CONTEXTS gate above), but keep defensive.
-      return {
-        ok: false,
-        code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
-        errors: [{
-          code: LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED,
-          message: "context '" + block.contexts.join(", ") + "' is not yet supported by Run LLM (only '" + RUNNABLE_CONTEXTS.join("', '") + "')",
-          line: block.lineFrom,
-        }],
-        blocks,
-        tasks: [],
-      };
+      sections.push("## Context: " + kind + "\n" + text);
     }
 
-    // maxContextChars enforcement — applies to all context kinds
+    // Build labeled context text and label
+    const contextText = sections.join("\n\n");
+    const contextLabel = kinds.join(", ");
+
+    // Size enforcement on combined context text
     if (contextText.length > maxContextChars) {
       return {
         ok: false,
