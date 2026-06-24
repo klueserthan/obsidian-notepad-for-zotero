@@ -160,6 +160,10 @@ KeyIdea:
     "snapshot": `%%! sync=off %%
 - [p.{{page}}]({{link}}) "{{text}}"{% if comment %} — *{{comment}}*{% endif %}
 `,
+    "research-questions": `## Research Questions
+
+{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
+`,
   },
 
   // A short guide written alongside the starter templates (named TEMPLATES.md so
@@ -182,6 +186,23 @@ Two kinds of file, distinguished only by name:
 
 Templates are written in **Nunjucks**. Add a file → it shows up in the dropdown;
 delete one → it disappears (the plugin's built-in copy still works as a fallback).
+
+A template can also ask a language model to fill in a section with an **LLM
+block**:
+
+    ## Research Questions
+
+    {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
+
+\`context="…"\` selects what the model sees: \`abstract\`, \`annotations\`, or
+\`fulltext\` (the primary PDF's extracted text). The block is replaced by the
+model's Markdown output when you run it. A template with any \`{% llm %}\` block
+is automatically a once-per-item (whole-note) template. The LLM is
+OpenAI-compatible and bring-your-own-key — configure it in *Settings → Obsidian
+Notes → LLM*. Runs are all-or-nothing: if a block fails (missing context, HTTP
+error, empty response) nothing is written and the error is shown — there is no
+silent fallback.
+
 Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/main/docs/TEMPLATES.md
 `,
 
