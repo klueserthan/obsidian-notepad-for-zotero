@@ -1063,15 +1063,28 @@ describe("prepareLLMRun — multi-context", () => {
 
   it("c. combined character limit enforcement across contexts", () => {
     const text = ['{% llm context="abstract,annotations" %}', "task", "{% endllm %}"].join("\n");
-    // Combined labeled context is ~281 chars; single abstract is ~64.
-    // maxContextChars=100 is above single but below combined -> fails.
-    const resultSmall = prepareLLMRun(text, item, { maxContextChars: 100 });
+
+    // First, get the exact combined context length for the current fixture.
+    const ok = prepareLLMRun(text, item, { maxContextChars: 10_000 });
+    expect(ok.ok).toBe(true);
+    const userContent = ok.tasks[0].messages[1].content;
+    const combinedContext = userContent.split("\n\nContext:\n")[1];
+    const ctxLen = combinedContext.length;
+
+    // One char under the combined length should fail; at the length should pass.
+    const resultSmall = prepareLLMRun(text, item, { maxContextChars: ctxLen - 1 });
     expect(resultSmall.ok).toBe(false);
     expect(resultSmall.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
-    expect(resultSmall.errors[0].message).toMatch(/\d+/); // contains a character count
-    // Same block with generous limit succeeds (proves limit is combined, not per-section)
-    const resultLarge = prepareLLMRun(text, item, { maxContextChars: 300 });
-    expect(resultLarge.ok).toBe(true);
+    expect(resultSmall.errors[0].message).toMatch(/\d+/);
+
+    const resultExact = prepareLLMRun(text, item, { maxContextChars: ctxLen });
+    expect(resultExact.ok).toBe(true);
+
+    // Prompt length must NOT affect maxContextChars enforcement.
+    const longPrompt = ['{% llm context="abstract" %}', "x".repeat(2000), "{% endllm %}"].join("\n");
+    const shortCtxData = { ...item, abstractNote: "a" };
+    const resultLongPrompt = prepareLLMRun(longPrompt, shortCtxData, { maxContextChars: 30 });
+    expect(resultLongPrompt.ok).toBe(true);
   });
 
   it("d. labeled multi-context prompt assembly", () => {
