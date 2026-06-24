@@ -5,7 +5,7 @@
 export { render } from "../src/render.js";
 export { buildItemData, zoteroSelectURI, ensureZoteroLink } from "../src/item-data.js";
 export { mergeNote, updateNoteAnnotations } from "../src/merge.js";
-export { renderAnnotationsSection, mapZoteroAnnotation } from "../src/annotations.js";
+export { renderAnnotationsSection, renderAnnotationsContext, mapZoteroAnnotation } from "../src/annotations.js";
 export { syncBlocks, makeBlock, parseBlocks, migrateLegacyAnnotations } from "../src/blocks.js";
 export { DEFAULT_FORMATS } from "../src/formats.js";
 export { parseTemplateFile, templateKind, templateUserOwnedKeys } from "../src/templates.js";
@@ -18,4 +18,5 @@ export { buildCrossrefURL, pickBestMatch, normalizeTitle, titleSimilarity, norma
 export { splitPath, vaultName, vaultRelative, buildObsidianUri, obsidianConfigPath, parseObsidianVaults, sanitizeFilename, isUnder } from "../src/paths.js";
 export { LLM_DEFAULTS, isLLMConfigured, canAutoRun, sanitizeLLMSettings, buildChatCompletionsURL, buildLLMHeaders, buildChatCompletionsPayload, buildTestConnectionPayload, parseChatCompletionsResponse, sanitizeError, sanitizeLogMetadata } from "../src/llm.js";
 export { SUPPORTED_CONTEXTS, parseLLMContext, hasLLMBlocks, parseLLMBlocks, validateLLMBlocks } from "../src/llm-blocks.js";
+export { resolvePrimaryPDFFulltext, renderFulltextContext } from "../src/fulltext.js";
 export { GROUNDING_SYSTEM_PROMPT, RUNNABLE_CONTEXTS, LLM_RUN_ERRORS, buildLLMMessages, normalizeLLMOutput, classifyLLMOutput, prepareLLMRun, applyLLMOutputs, decideLLMAction, executeLLMBlocks } from "../src/llm-runner.js";

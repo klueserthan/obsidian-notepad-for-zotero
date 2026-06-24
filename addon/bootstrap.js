@@ -2135,7 +2135,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (r.status === "no-citekey") { setMsg(this.t("msg.noCitekey")); return; }
     if (r.status === "outside") { setMsg(this.t("msg.outsideNotes")); return; }
     if (r.status === "error") { setMsg(this.t("msg.createFailed") + r.error); return; }
-    // Open the newly-created note in the editor.
     try { await this.renderInto(rec.wrap, item); } catch (e) {}
 
     // Surface auto-run LLM state in the *status bar* (the create banner is hidden once a note exists).
@@ -2428,6 +2427,35 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       }
     } catch (e) {}
     return false;
+  },
+
+  // Resolve the primary PDF's .zotero-ft-cache full text for LLM context="fulltext"
+  // blocks. Builds a real Zotero adapter and delegates to C.resolvePrimaryPDFFulltext.
+  // Returns {ok:true, attachmentTitle, text} or {ok:false, reason}.
+  // LOGGING CONTRACT: Never log the returned text to this.log() or Zotero.debug.
+  // Only metadata (attachment title, char count, missing reason) is loggable.
+  async getPrimaryPDFFulltext(item, C) {
+    const adapter = {
+      getBestAttachment: async (it) => it.getBestAttachment(),
+      isPDFAttachment: (att) => att.isPDFAttachment(),
+      fileExists: (att) => att.fileExists(),
+      getCacheFile: (att) => {
+        try { let f = Zotero.Fulltext.getItemCacheFile(att); return f ? f.path : null; }
+        catch (e) { return null; }
+      },
+      exists: (p) => IOUtils.exists(p),
+      readUTF8: (p) => IOUtils.readUTF8(p),
+      getAttachmentTitle: (att) => {
+        try { return att.getField("title") || ""; }
+        catch (e) { return ""; }
+      },
+    };
+    try {
+      return await C.resolvePrimaryPDFFulltext(item, adapter);
+    } catch (e) {
+      this.log("fulltext resolver threw: " + (e && e.message ? e.message : e));
+      return { ok: false, reason: "fetchError" };
+    }
   },
 
   // ------------------------------------------------------------ auto-sync
@@ -2770,7 +2798,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let C = win.ZONCore;
 
     // Guard: runner exports present (graceful if an old bundle is cached).
-    if (!C.prepareLLMRun || !C.applyLLMOutputs || !C.executeLLMBlocks) {
+    if (!C.prepareLLMRun || !C.applyLLMOutputs) {
       this.setStatus(rec, this.t("err.llmCoreMissing"));
       return;
     }
@@ -2797,67 +2825,104 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       return;
     }
 
+    // Gather PDF annotations so context="annotations" blocks can resolve.
+    // (Same flow Refresh uses; cheap on an explicit user action.)
+    let annotations = [];
+    try { annotations = this.gatherAnnotations(item, win); }
+    catch (e) { this.log("gatherAnnotations (llm) failed: " + e); }
+
+    // Detect whether any block requests context="fulltext" (avoids unnecessary I/O).
+    let needFulltext = false;
+    try {
+      let parsed = C.parseLLMBlocks(existing);
+      if (!parsed.errors.length) {
+        needFulltext = parsed.blocks.some(b => b.contexts && b.contexts.includes("fulltext"));
+      }
+    } catch (e) { this.log("parseLLMBlocks (fulltext detect) failed: " + e); }
+
+    // Fetch full text if needed, then thread into itemData for context resolution.
+    // LOGGING CONTRACT: Never pass fulltext.text or data.fulltext.text to this.log()
+    // or Zotero.debug. Only metadata (attachment title, char count, missing reason)
+    // is loggable.
+    let fulltext = null;
+    if (needFulltext) {
+      fulltext = await this.getPrimaryPDFFulltext(item, C);
+      if (fulltext && fulltext.ok) {
+        this.log("fulltext context: " + (fulltext.attachmentTitle || "(untitled)") + " (" + fulltext.text.length + " chars)");
+      } else if (fulltext) {
+        this.log("fulltext context missing: " + fulltext.reason);
+      }
+    }
+
     // Build item data with parity to renderDocument so prompts can use any field.
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = {};
-    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() }); }
+    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
-    // Execute all blocks via the pure orchestration function.
-    // Handles pre-flight (prepareLLMRun → parse/validate/context/render) and
-    // the HTTP loop (one request per block), all-or-nothing.
-    let result = await C.executeLLMBlocks(
-      existing, data, settings, this.llmFetchFn(),
-      (i, n) => this.setStatus(rec, this.t("status.llmRunning", { i, n }))
-    );
-
-    if (!result.ok) {
-      if (result.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
+    // Plan the run (pure): parse + validate + resolve context + render prompts +
+    // assemble messages. Any pre-flight failure aborts here — no HTTP yet.
+    // maxContextChars enforces the user's configured context-size limit.
+    let prepared = C.prepareLLMRun(existing, data, { maxContextChars: settings.maxContextChars });
+    if (!prepared.ok) {
+      if (prepared.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
         this.setStatus(rec, this.t("status.llmRunNoBlocks"));
         return;
       }
-      if (result.code === C.LLM_RUN_ERRORS.PARSE_ERRORS) {
-        let first = result.errors[0];
-        this.setStatus(rec, this.t("err.llmBlocksInvalid", { count: result.errors.length })
+      if (prepared.code === C.LLM_RUN_ERRORS.PARSE_ERRORS) {
+        let first = prepared.errors[0];
+        this.setStatus(rec, this.t("err.llmBlocksInvalid", { count: prepared.errors.length })
           + " " + (first ? this.t("err.llmBlockInvalid",
             { line: first.line != null ? (first.line + 1) : "?", message: first.message }) : ""));
         return;
       }
-      // Pre-flight: CONTEXT_UNSUPPORTED / CONTEXT_MISSING / RENDER_FAILED.
-      if (result.code === C.LLM_RUN_ERRORS.CONTEXT_UNSUPPORTED
-          || result.code === C.LLM_RUN_ERRORS.CONTEXT_MISSING
-          || result.code === C.LLM_RUN_ERRORS.RENDER_FAILED) {
-        let first = result.errors[0];
-        this.setStatus(rec, this.t("err.llmRunBlock",
-          { line: first.line != null ? (first.line + 1) : "?", message: first.message }));
-        if (first.detail) this.log("llm run pre-flight: " + first.detail);
-        return;
-      }
-      if (result.code === C.LLM_RUN_ERRORS.HTTP_FAILED) {
-        let e = result.error;
-        let status = (e && typeof e.status === "number") ? e.status : null;
-        let errStr = status ? ("HTTP " + status) : "network error";
-        this.log("llm run http failed (block " + (result.blockIndex + 1) + "/" + result.n + ")"
-          + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
-        this.setStatus(rec, this.t("err.llmRunFailed",
-          { error: this.t("err.llmRunHttp", { i: result.blockIndex + 1, n: result.n, error: errStr }) }));
-        return;
-      }
-      if (result.code === C.LLM_RUN_ERRORS.EMPTY_RESPONSE) {
-        this.log("llm run empty response (block " + (result.blockIndex + 1) + "/" + result.n + ")");
-        this.setStatus(rec, this.t("err.llmRunFailed",
-          { error: this.t("err.llmRunEmpty", { i: result.blockIndex + 1, n: result.n }) }));
-        return;
-      }
-      // Unknown code — safe fallback.
-      this.log("llm run unknown code: " + (result.code || "(none)"));
-      this.setStatus(rec, this.t("err.llmRunFailed", { error: result.code || "error" }));
+      // Per-block pre-flight: CONTEXT_UNSUPPORTED / CONTEXT_MISSING / RENDER_FAILED.
+      let first = prepared.errors[0];
+      this.setStatus(rec, this.t("err.llmRunBlock",
+        { line: first.line != null ? (first.line + 1) : "?", message: first.message }));
+      if (first.detail) this.log("llm run pre-flight: " + first.detail);
       return;
     }
 
+    // Execute HTTP per block, in document order, collecting outputs.
+    // All-or-nothing: break on the first failure and DO NOT write.
+    let url = C.buildChatCompletionsURL(settings.baseURL);
+    let headers = C.buildLLMHeaders(settings);
+    let outputs = [];
+    let n = prepared.tasks.length;
+    for (let i = 0; i < n; i++) {
+      let task = prepared.tasks[i];
+      this.setStatus(rec, this.t("status.llmRunning", { i: i + 1, n }));
+      let payload = C.buildChatCompletionsPayload(settings, task.messages);
+      let content = "";
+      try {
+        let resp = await Zotero.HTTP.request("POST", url, {
+          headers, body: JSON.stringify(payload), responseType: "text",
+          timeout: settings.timeoutSeconds * 1000,
+        });
+        content = C.parseChatCompletionsResponse(resp.responseText);
+      } catch (e) {
+        let status = (e && typeof e.status === "number") ? e.status : null;
+        let errStr = status ? ("HTTP " + status) : "network error";
+        this.log("llm run http failed (block " + (i + 1) + "/" + n + ")"
+          + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
+        this.setStatus(rec, this.t("err.llmRunFailed",
+          { error: this.t("err.llmRunHttp", { i: i + 1, n, error: errStr }) }));
+        return;
+      }
+      let res = C.classifyLLMOutput(content);
+      if (!res.ok) {
+        this.log("llm run empty response (block " + (i + 1) + "/" + n + ")");
+        this.setStatus(rec, this.t("err.llmRunFailed",
+          { error: this.t("err.llmRunEmpty", { i: i + 1, n }) }));
+        return;
+      }
+      outputs.push(res.output);
+    }
+
     // Every block succeeded → apply all replacements + write once.
-    let updated = result.md;
+    let updated = C.applyLLMOutputs(existing, prepared.blocks, outputs);
     try { await this.safeWrite(rec.path, updated); }
     catch (e) {
       this.setStatus(rec, this.t("err.llmRunWrite") + C.sanitizeError(e));
@@ -2867,7 +2932,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     rec.diskMtime = await this.noteMtime(rec.path);
     this.hideConflict(rec);
     this.mountEditor(rec, win, updated);
-    this.setStatus(rec, this.t("status.llmRunDone", { count: result.blocks.length }));
+    this.setStatus(rec, this.t("status.llmRunDone", { count: prepared.blocks.length }));
     } finally {
       rec.llmRunning = false;
     }
