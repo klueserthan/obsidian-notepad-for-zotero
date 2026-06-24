@@ -696,7 +696,7 @@ describe("executeLLMBlocks", () => {
   });
 
   it("returns CONTEXT_UNSUPPORTED for an unsupported context (pre-flight)", async () => {
-    const text = '{% llm context="annotations" %}prompt{% endllm %}';
+    const text = '{% llm context="fulltext" %}prompt{% endllm %}';
     const fetch = makeFetch([]);
     const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
     expect(result.ok).toBe(false);
