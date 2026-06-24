@@ -87,6 +87,20 @@ describe("renderBlockBody filtering + format", () => {
   it("returns empty for an unknown non-annotation template", () => {
     expect(renderBlockBody({ kind: "section", format: "nope" }, [], { formats: {} })).toBe("");
   });
+
+  it("excludes ink annotations by default (they'd render as empty items)", () => {
+    const anns = [
+      ...ANNS,
+      { key: "INK", type: "ink", attachmentKey: "PDF", pageLabel: "9", pageIndex: 8, sortIndex: "4", annotatedText: "", comment: "scribble", colourName: "yellow" },
+    ];
+    const body = renderBlockBody({ colour: "all", format: "list" }, anns, {});
+    expect(body).not.toContain("ann:INK");   // ink dropped
+    expect(body).not.toContain('""');         // no empty-quote item
+    expect(body).toContain("ann:A");          // text highlights still there
+    // ...unless a block explicitly asks for type=ink.
+    const inkOnly = renderBlockBody({ colour: "all", type: "ink", format: "list" }, anns, {});
+    expect(inkOnly).toContain("ann:INK");
+  });
 });
 
 describe("syncBlocks", () => {
@@ -185,6 +199,19 @@ ${block}
     const resynced = syncBlocks(edited, ANNS, {});
     expect(resynced).toContain("Synthesis: these three points connect.");
     expect(resynced.match(/%% zon /g).length).toBe(1);
+  });
+
+  it("DROPS prose typed BETWEEN annotations (only the tail survives)", () => {
+    // The documented, data-losing contract: a sync=on block is regenerated from
+    // Zotero, so notes between two annotations are replaced — only post-last-anchor
+    // prose is kept. (Guards against a refactor accidentally re-preserving it.)
+    const first = syncBlocks(noteWith(""), ANNS, {});
+    const edited = first
+      .replace(/(%% ann:A %%)/, "$1\n\nMy note on A — should NOT survive.")
+      .replace(/(%% ann:C %%)/, "$1\n\nTail after C — should survive.");
+    const resynced = syncBlocks(edited, ANNS, {});
+    expect(resynced).not.toContain("My note on A — should NOT survive."); // between-anchor prose dropped
+    expect(resynced).toContain("Tail after C — should survive.");          // tail kept
   });
 
   it("is idempotent", () => {

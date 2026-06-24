@@ -67,10 +67,18 @@ export function buildItemData(item, opts = {}) {
   const f = (k) => {
     try { return (item.getField && item.getField(k)) || ""; } catch (e) { return ""; }
   };
+  // Zotero stores dateAdded/dateModified as UTC SQL datetimes
+  // ("2023-01-15 14:30:00"); expose just the YYYY-MM-DD for clean templates.
+  const dateOnly = (v) => {
+    const m = String(v || "").match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : String(v || "");
+  };
   return {
     citekey: opts.citekey || "",
     title: f("title"),
     date: f("date"),
+    dateAdded: dateOnly(f("dateAdded")),
+    dateModified: dateOnly(f("dateModified")),
     itemType: item.itemType || "",
     publicationTitle: journalFor(item, f) || "",
     desktopURI: zoteroSelectURI(item),
@@ -86,4 +94,15 @@ export function buildItemData(item, opts = {}) {
     lastImportDate: opts.lastImportDate ?? null,
     importDate: opts.importDate || "",
   };
+}
+
+// Convenience single-value scalars derived from buildItemData's output, handy for
+// filename patterns (where `creators` (an array) and `date` (a full string) are
+// awkward): `year` = the first 4-digit run of the date; `author` = the first
+// author's surname; `journal` = the per-type publication title. Pure.
+export function filenameFields(data) {
+  const year = (String((data && data.date) || "").match(/\d{4}/) || [""])[0];
+  const c = (data && data.creators && data.creators[0]) || null;
+  const author = c ? (c.lastName || c.firstName || "") : "";
+  return { year, author, journal: (data && data.publicationTitle) || "" };
 }

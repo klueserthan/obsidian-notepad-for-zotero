@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.13] — 2026-06-23
+
+### Added
+- **Route highlights by colour in a note template.** A new `highlights(...)`
+  helper lets a whole-note template place annotation blocks where you want them —
+  e.g. yellow highlights in one section, blue in another — each filled and kept
+  in sync automatically: `{{ highlights(colour="blue", format="quote") }}`.
+  Accepts `colour`, `type`, `format` and `sync`. A ready-made **`note-by-colour`**
+  starter template demonstrates it. See docs/TEMPLATES.md.
+
+## [1.0.0-beta.12] — 2026-06-23
+
+### Changed
+- **Templates refresh without a restart.** When you edit or add a template in
+  another app and switch back to Zotero, the plugin re-reads the templates
+  folder: edited template content is used by the next Insert, and added/renamed/
+  removed templates update the Insert dropdown automatically. (Previously the
+  template list was read only at startup.)
+
+## [1.0.0-beta.11] — 2026-06-23
+
+### Added
+- **`{{dateAdded}}` and `{{dateModified}}` template variables** — the Zotero
+  "Date Added" / "Date Modified" timestamps (as `YYYY-MM-DD`), usable in
+  whole-note and `kind=field` templates.
+- **Settings-pane icon** — the Obsidian Notepad crystal logo now appears next to
+  the plugin in Zotero → Settings.
+
+## [1.0.0-beta.10] — 2026-06-22
+
+### Changed
+- **Consistent naming.** The item-pane section, Settings pane and docs now all read
+  **"Obsidian Notepad"** (was a mix of "Obsidian Notes"/"Obsidian Notepad").
+- **"Refresh" → "Update" everywhere.** The button was renamed in an earlier beta;
+  its tooltips, statuses, errors and docs now match (e.g. the status reads
+  "Updated metadata + N annotation(s)").
+
+### Fixed
+- **Ink (freehand) annotations no longer create empty `""` items** in annotation
+  blocks. They're excluded by default (Zotero caches only the strokes, with no
+  text or page content), unless a block explicitly sets `type=ink`.
+- **CRLF notes work.** Frontmatter detection accepted only `\n`; notes saved with
+  Windows-style `\r\n` line endings silently failed tag-push ("no tag field"),
+  manifest refresh, and reading-view frontmatter hiding. Detection now accepts
+  `\r?\n`.
+
+### Docs
+- README Features list updated (image annotations + inline display, configurable
+  filename patterns + Rescan, tag push). Clarified that Push tags and the ⋯ More
+  menu live behind *Enable experimental features*.
+
+### Internal
+- Extracted the filename-pattern resolution into a pure, unit-tested
+  `src/filename.js` (`resolveNoteFilename`); removed dead code
+  (`loadCustomFormats`, the unused `auto-update` label); exported
+  `findImageEmbedRanges` / `resolveNoteFilename` from the core bundle. Tests: 189.
+
+## [1.0.0-beta.9] — 2026-06-22
+
+### Changed
+- **A custom filename pattern now outranks the bare-citekey filename guess** when
+  linking a note. If you keep, say, `@<citekey>.md` for one purpose and
+  `@<citekey> (litnote).md` for another, set the pattern to the suffixed form and
+  it links the right file (a plain `@<citekey>.md` sibling no longer wins). Order
+  is now: `ZoteroLink:` → `citekey:` frontmatter → your filename pattern →
+  legacy `@?<citekey>.md`.
+
+### Docs
+- **`%% zon … %%` block reference** added to TEMPLATES.md (and linked from the
+  README): every block attribute (`kind`/`colour`/`type`/`sync`/`format`), the
+  `ann:` anchors, how Update regenerates `sync=on` vs frozen `sync=off` blocks,
+  and the `zon:` frontmatter map — for migrating templates from other tools.
+- Corrected the prose-preservation note: a `sync=on` block is regenerated from
+  Zotero, so only prose **after the last annotation** survives; per-highlight
+  notes belong in the annotation's Zotero comment.
+
+## [1.0.0-beta.8] — 2026-06-22
+
+### Changed
+- **Filename pattern accepts more fields.** New-note filenames can now use
+  `{{author}}` (first author's surname), `{{year}}`, `{{title}}`, `{{journal}}`,
+  `{{date}}`, and `{{itemType}}` in addition to `{{citekey}}` — so you can match
+  how your vault already names notes (e.g. `{{author}} {{year}} - {{title}}.md`).
+  Previously only `{{citekey}}` was substituted. Illegal filename characters are
+  still stripped automatically, and `.md` is appended if omitted.
+- **Existing notes link by your filename pattern too.** Note↔item matching now has
+  a third step: after a `citekey:` / `ZoteroLink:` frontmatter field (preferred and
+  most reliable), the plugin also matches an existing note whose filename equals the
+  pattern rendered for that item. So a vault named `{{author}} {{year}} - {{title}}`
+  links without per-note frontmatter. The empty-state and Settings now explain that
+  `citekey:`/`ZoteroLink:` is matched first.
+- **Re-links without a restart.** The note index rebuilds and re-links open panes
+  automatically when you change the **notes folder** or **filename pattern** in
+  Settings, and there's a new **Rescan** button (in the "no note found" state) to
+  pick up notes you added or renamed outside Zotero. Rescanning only reads files —
+  it never writes or disturbs unsaved edits.
+
+### Fixed
+- **Release builds reliably.** A release-flow bug could upload a stale build; the
+  build step now runs as a single command so the published `.xpi` always matches
+  the tag. (beta.7 was re-published with the correct artifacts.)
+
+## [1.0.0-beta.7] — 2026-06-22
+
 ### Added
 - **Image (area) annotations are imported.** On sync, each image/area annotation's
   cached PNG is copied into a per-note folder in your vault (default

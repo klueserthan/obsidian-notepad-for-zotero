@@ -1,7 +1,7 @@
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
   <groupbox>
-    <label><html:h2>Obsidian Notes</html:h2></label>
+    <label><html:h2>Obsidian Notepad</html:h2></label>
     <html:div style="display:flex;flex-direction:column;gap:12px;padding:6px 4px;max-width:780px;">
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Obsidian vault path</html:span>
@@ -45,14 +45,14 @@
         <html:span>Filename pattern</html:span>
         <html:input type="text" style="width:100%;box-sizing:border-box;"
           preference="extensions.zotero-obsidian-notes.filenamePattern"/>
-        <html:span style="color:#888;font-size:11px;">New-note filename. Use {{citekey}} — e.g. @{{citekey}}.md</html:span>
+        <html:span style="color:#888;font-size:11px;">New-note filename, so it can match how your vault already names notes. Any of these placeholders work: <html:b>{{citekey}}</html:b>, <html:b>{{author}}</html:b> (first author's surname), <html:b>{{year}}</html:b>, <html:b>{{title}}</html:b>, <html:b>{{journal}}</html:b>, <html:b>{{date}}</html:b>, <html:b>{{itemType}}</html:b>. Examples: <html:b>@{{citekey}}.md</html:b> · <html:b>{{author}} {{year}} - {{title}}.md</html:b> · <html:b>{{year}} {{title}}.md</html:b>. The <html:b>.md</html:b> is added if you omit it, and characters illegal in filenames are removed automatically. <html:br/>Notes are linked to items by a <html:b>citekey:</html:b> or <html:b>ZoteroLink:</html:b> field in their frontmatter first (most reliable — add one to link a note regardless of its name); this pattern is the fallback, matching existing notes by filename. Changing it (or the notes folder) re-links automatically; the <html:b>Rescan</html:b> button picks up notes you add or rename outside Zotero.</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Tag sync field</html:span>
         <html:input type="text" style="width:100%;box-sizing:border-box;"
           preference="extensions.zotero-obsidian-notes.tagSyncField"/>
-        <html:span style="color:#888;font-size:11px;">Default frontmatter field mirrored to Zotero tags by <html:b>⋯ More → Push tags → Zotero</html:b> (e.g. <html:b>Topics</html:b>). A note can override this — once you push, the chosen field is recorded in the note's <html:b>zon:</html:b> map, so it's per-note. <html:b>[beta]</html:b> reverse sync; you confirm every change before it's written to Zotero.</html:span>
+        <html:span style="color:#888;font-size:11px;">Default frontmatter field mirrored to Zotero tags by <html:b>⋯ More → Push tags → Zotero</html:b> (the ⋯ More menu appears when <html:b>Enable experimental features</html:b> is on, below) — e.g. <html:b>Topics</html:b>. A note can override this — once you push, the chosen field is recorded in the note's <html:b>zon:</html:b> map, so it's per-note. <html:b>[beta]</html:b> reverse sync; you confirm every change before it's written to Zotero.</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
@@ -66,7 +66,7 @@
         <html:input type="checkbox" preference="extensions.zotero-obsidian-notes.autoSync"/>
         <html:span style="display:flex;flex-direction:column;gap:3px;">
           <html:span>Auto-sync annotations while reading</html:span>
-          <html:span style="color:#888;font-size:11px;">When on, an open note's live annotation blocks refresh automatically as you highlight in the PDF — no need to click Refresh. Only notes you have open are touched, and your prose is never changed. Also toggleable from the note pane toolbar.</html:span>
+          <html:span style="color:#888;font-size:11px;">When on, an open note's live annotation blocks update automatically as you highlight in the PDF — no need to click Update. Only notes you have open are touched, and your prose is never changed. Also toggleable from the note pane toolbar.</html:span>
         </html:span>
       </html:label>
 

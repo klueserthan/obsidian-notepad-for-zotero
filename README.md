@@ -9,10 +9,10 @@ Zotero item pane** — and sync your PDF highlights into it as you read.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/acatechnic)
 
-> Status: **public beta** (v1.0.0-beta.7). Cross-platform
+> Status: **public beta** (v1.0.0-beta.13). Cross-platform
 > (Windows / macOS / Linux), Zotero 7+, [AGPL-3.0](LICENSE).
 >
-> **Install:** download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.7/obsidian-notepad-for-zotero.xpi)**
+> **Install:** download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.13/obsidian-notepad-for-zotero.xpi)**
 > (or browse [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases)),
 > then in Zotero: Tools → Plugins → gear icon → *Install Plugin From File…*
 > It auto-updates after that.
@@ -23,7 +23,7 @@ Zotero item pane** — and sync your PDF highlights into it as you read.
 
 | The note, in Zotero | Synced highlights | Settings |
 | --- | --- | --- |
-| ![The Obsidian note rendered in the Zotero item pane](docs/images/01-editor-pane.png) | ![PDF highlights synced into the note](docs/images/02-annotation-sync.png) | ![Obsidian Notes settings](docs/images/03-setup.png) |
+| ![The Obsidian note rendered in the Zotero item pane](docs/images/01-editor-pane.png) | ![PDF highlights synced into the note](docs/images/02-annotation-sync.png) | ![Obsidian Notepad settings](docs/images/03-setup.png) |
 
 ## Why
 
@@ -39,11 +39,21 @@ file on disk stays a clean, plain-markdown Obsidian note.
   markdown highlighting. Saves straight to the file in your vault.
 - **Sync PDF annotations into the note** as customisable **live blocks**. Re-syncs
   are *idempotent*: your prose and any frozen blocks are never touched.
+- **Group highlights by colour.** A note template can route each annotation colour
+  into its own section — yellow key passages here, blue follow-ups there — with the
+  `highlights(colour="…")` helper (try the built-in `note-by-colour` template).
+- **Image annotations too.** Area/image annotations are exported into your vault
+  and embedded in the note (`![[…]]`) — and shown inline in the pane's reading view.
 - **Auto-sync (optional).** Turn it on and highlights flow into the open note as
-  you annotate — no clicking Refresh.
+  you annotate — no clicking Update.
+- **Links to your existing notes** by a `citekey:`/`ZoteroLink:` frontmatter field
+  or a **configurable filename pattern** (`{{author}} {{year}} - {{title}}`, …),
+  with a **Rescan** button to pick up notes added outside Zotero.
 - **Create a note from a template** for items that don't have one yet, populated
   with the item's metadata and a formatted bibliography.
 - **Open in Obsidian** — jump to the note in the Obsidian app.
+- **Push tags back to Zotero** *(opt-in, experimental)* — mirror a note's tag
+  field to the Zotero item, previewing every change first.
 - **Safe by design.** Writes are atomic, and if a note changed on disk (e.g. you
   edited it in Obsidian) the plugin never silently overwrites it — it offers to
   reload or overwrite.
@@ -65,7 +75,7 @@ file on disk stays a clean, plain-markdown Obsidian note.
 
 ## Install
 
-1. Download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.7/obsidian-notepad-for-zotero.xpi)**
+1. Download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.13/obsidian-notepad-for-zotero.xpi)**
    (latest beta) — or pick a build from [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases).
 2. In Zotero: **Tools → Plugins → gear menu → Install Plugin From File…** and choose the `.xpi`.
 3. That's it — the plugin **auto-updates** from GitHub Releases from then on.
@@ -76,26 +86,35 @@ If it saves you time, you can [**buy me a coffee ☕**](https://buymeacoffee.com
 
 ## First-run setup
 
-Open any item and look at the **Obsidian Note** section in the item pane. If
+Open any item and look at the **Obsidian Notepad** section in the item pane. If
 nothing's configured yet you'll see a **Set up…** button — it detects your
 installed Obsidian vaults, lets you pick one, and then pick the folder your
 literature notes live in. You can change these later in **Settings → Obsidian
-Notes** (with **Browse…** folder pickers).
+Notepad** (with **Browse…** folder pickers).
 
 ## Templates
 
 Notes and annotation blocks are authored in **Nunjucks** (the same templating
 language as the popular Zotero-to-Obsidian export templates). A templates folder
 holds your whole-note scaffold (`note.md`) and any insertable annotation-block
-templates. See **[docs/TEMPLATES.md](docs/TEMPLATES.md)** for the variables,
-the optional `%%! … %%` directive, and examples. Built-in block formats
-(`list`, `quote`, `callout`, `compact`) are always available even with no folder.
+templates. Built-in block formats (`list`, `quote`, `callout`, `compact`) are
+always available even with no folder. A note template can also drop annotation
+blocks into specific sections — including one per colour — with
+`{{ highlights(colour="…") }}`. Edit or add a template in Obsidian and the change
+is picked up when you switch back to Zotero (no restart needed).
+
+See **[docs/TEMPLATES.md](docs/TEMPLATES.md)** for the full guide: the available
+variables, the optional `%%! … %%` template directive, a reference for the
+**`%% zon … %%` blocks** the plugin writes into your notes (every attribute, the
+`ann:` anchors, how Update regenerates them) and the **`zon:` frontmatter** that
+keeps managed fields synced — useful if you're translating templates from another
+tool.
 
 ## How it works / safety
 
 The note is a normal markdown file in your vault — nothing is stored in a
 hidden database. Annotation blocks are delimited by invisible Obsidian comments
-(`%% zon … %%`), so Refresh can regenerate just those blocks and leave your
+(`%% zon … %%`), so Update can regenerate just those blocks and leave your
 writing alone. Every write goes to a temporary file and is then renamed over the
 target (atomic), and the plugin tracks each open note's modified-time so it can
 detect and reconcile changes made outside Zotero.
@@ -108,8 +127,9 @@ This is an early public beta — please report anything odd, and:
   — especially before trying **Push tags → Zotero**, which is the one feature that
   writes to your library.
 - **Sync is one-way by default** (Zotero → note). Reverse sync (note → Zotero) is
-  currently **tags only**, opt-in, and previews every change before writing.
-  Pushing other fields (title, authors, …) back to Zotero isn't supported yet.
+  currently **tags only**, opt-in (behind *Settings → Enable experimental features*),
+  and previews every change before writing. Pushing other fields (title, authors, …)
+  back to Zotero isn't supported yet.
 - **Not yet in the Zotero plugins directory** — install the `.xpi` from Releases
   (it auto-updates from there).
 - Templates are written in **Nunjucks**; there's a small learning curve if you

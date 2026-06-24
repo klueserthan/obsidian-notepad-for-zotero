@@ -6,7 +6,7 @@
 // caller can preview + apply the change. All string-in / value-out → unit-tested
 // in Node. The actual write (addTag/removeTag/saveTx) lives in bootstrap.
 
-const FM_RE = /^---\n([\s\S]*?)\n---/;
+const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 const TOP_KEY_RE = /^[A-Za-z0-9_-]+:/;
 const LIST_ITEM_RE = /^\s*-\s+(.*)$/;
 

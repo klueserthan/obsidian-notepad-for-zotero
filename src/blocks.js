@@ -89,9 +89,14 @@ function annotationContext(a, opts) {
 }
 
 function matchesFilter(a, cfg) {
+  const wantType = cfg.type;
+  // Ink (freehand) annotations aren't supported yet — Zotero caches only the
+  // strokes (no text, no page content), so they'd render as empty `""` items.
+  // Exclude them unless a block explicitly asks for `type=ink`.
+  if (a.type === "ink" && (!wantType || wantType === "all")) return false;
   const wantColour = cfg.colour || cfg.color;
   if (wantColour && wantColour !== "all" && (a.colourName || "") !== wantColour) return false;
-  if (cfg.type && cfg.type !== "all" && a.type !== cfg.type) return false;
+  if (wantType && wantType !== "all" && a.type !== wantType) return false;
   return true;
 }
 
@@ -140,12 +145,14 @@ export function renderBlockBody(config, annotations, opts = {}) {
   return items.map((i) => i.text).join(fmt.sep || "\n");
 }
 
-// Split an existing block body into keyed annotation items by their
-// `%% ann:KEY %%` anchors, plus any trailing user text after the last anchor.
-// A block runs up to and INCLUDING its anchor line, so user text typed between
-// two anchors rides along with the following annotation, and is preserved with
-// it on merge. If the body has no anchors at all (a pre-A2 block, or hand-typed
-// prose), `hadAnchors` is false and the caller discards it for a clean re-render.
+// Split an existing block body by its `%% ann:KEY %%` anchors. Returns the keyed
+// item chunks (`blocks`) AND any trailing user text after the LAST anchor
+// (`tail`). NOTE: the current sync=on merge (mergeAnnotationItems) is a full
+// re-render from Zotero and only re-uses `tail` — `blocks` is computed but not
+// merged back, so prose typed BETWEEN annotations is replaced on Update (a
+// sync=on block is owned by Zotero; per-annotation notes belong in the Zotero
+// comment, and free prose goes after the last anchor or outside the block).
+// `hadAnchors` is false for a body with no anchors at all.
 function parseAnchoredItems(body) {
   const lines = String(body).split("\n");
   const blocks = [];

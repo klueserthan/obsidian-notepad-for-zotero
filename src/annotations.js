@@ -58,7 +58,8 @@ export function renderAnnotationLine(a, opts = {}) {
     if (!text) return null;
     return `- [${page}](${link}) "${text}"${commentSuffix(a)} ${anchor(a)}`;
   }
-  if (a.type === "image" || a.type === "ink") {
+  if (a.type === "image") {
+    if (!a.imageBaseName) return null; // nothing exported to embed
     const embed = `![[${attachFolder}/${citekey}/${esc(a.imageBaseName)}]]`;
     return `- [${page}](${link}) ${embed}${commentSuffix(a)} ${anchor(a)}`;
   }

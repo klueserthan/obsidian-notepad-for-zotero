@@ -36,13 +36,24 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
 
   it("ships exactly the expected set", () => {
     expect(Object.keys(builtins).sort()).toEqual(
-      ["abstract", "critique", "highlight", "key-quote", "note", "note-minimal", "research-questions", "snapshot"]
+      [
+        "abstract",
+        "critique",
+        "highlight",
+        "key-quote",
+        "note",
+        "note-by-colour",
+        "note-minimal",
+        "research-questions",
+        "snapshot",
+      ]
     );
   });
 
   it("classifies note scaffolds as documents and the rest as formats", () => {
     expect(templateKind(builtins["note"])).toBe("document");
     expect(templateKind(builtins["note-minimal"])).toBe("document");
+    expect(templateKind(builtins["note-by-colour"])).toBe("document");
     expect(templateKind(builtins["research-questions"])).toBe("document");
     for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot"]) {
       expect(templateKind(builtins[n])).toBe("format");

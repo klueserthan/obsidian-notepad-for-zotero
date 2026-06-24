@@ -14,6 +14,12 @@ describe("findFrontmatterRange", () => {
   it("does not match a --- that is not at the very top", () => {
     expect(findFrontmatterRange("Body\n---\nx\n---")).toBeNull();
   });
+  it("handles CRLF line endings (Windows / some Obsidian setups)", () => {
+    const t = '---\r\ntitle: "X"\r\n---\r\n\r\nBody';
+    const r = findFrontmatterRange(t);
+    expect(r).not.toBeNull();
+    expect(t.slice(r.from, r.to)).toBe('---\r\ntitle: "X"\r\n---');
+  });
 });
 
 describe("findHeadingRanges", () => {
