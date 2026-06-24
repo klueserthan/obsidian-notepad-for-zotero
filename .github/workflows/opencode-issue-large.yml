@@ -19,7 +19,7 @@ jobs:
       pull-requests: write
       issues: write
     env:
-      AGENT_NAME: orchestrator
+      AGENT_NAME: orchestrator-gh
       MODEL_NAME: opencode-go/glm-5.2
       GH_TOKEN: ${{ github.token }}
     steps:

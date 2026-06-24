@@ -86,7 +86,7 @@ jobs:
       cancel-in-progress: false
 
     env:
-      AGENT_NAME: orchestrator
+      AGENT_NAME: orchestrator-gh
       MODEL_NAME: opencode-go/glm-5.2
       GH_TOKEN: ${{ github.token }}
 
