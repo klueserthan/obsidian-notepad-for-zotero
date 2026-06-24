@@ -2753,7 +2753,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     // Fallback: show the raw code (still metadata-only).
     return this.t("err.llmRunFailed", { error: code || "error" });
-  }
+  },
 
   // Run LLM: find every unresolved {% llm %} block, render each prompt against
   // current item data, send one OpenAI-compatible Chat Completions request per
