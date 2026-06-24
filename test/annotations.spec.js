@@ -214,10 +214,6 @@ describe("renderAnnotationsContext (LLM context formatter)", () => {
       annotatedText: "first", comment: "",
     };
     const result = renderAnnotationsContext([a1, a2]);
-    // a2 (key="AA") sorts before a1 (key="BB") since no sortIndex → tiebreak by key
-    // a2 has no pageLabel and no pageIndex → p.?
-    // a1 has pageIndex=2 → p.3
-    // Neither has colourName → no parenthetical
     expect(result.indexOf("p.?")).toBeLessThan(result.indexOf("p.3"));
     expect(result).toContain("### p.? — highlight");
     expect(result).toContain("### p.3 — underline");

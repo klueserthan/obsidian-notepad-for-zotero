@@ -111,7 +111,6 @@ export function renderAnnotationsContext(annotations) {
   });
   return blocks.join("\n\n");
 }
-
 // Map a Zotero annotation item to the shape renderAnnotationLine consumes.
 // Pure: pass an annotation-like object (the fields Zotero exposes) plus its
 // parent PDF attachment key. annotationPosition is JSON holding the pageIndex.
