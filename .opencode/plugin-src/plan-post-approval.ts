@@ -482,8 +482,9 @@ const PlanPostApprovalPlugin: Plugin = async (
         }
         /** Orchestrator Phase B continues in-session; queued idle prompt would duplicate automation. */
         if (
-          routingAgent === "orchestrator" &&
-          globalHandoff === "orchestrator"
+          (routingAgent === "orchestrator" &&
+            globalHandoff === "orchestrator") ||
+          routingAgent === "orchestrator-gh"
         ) {
           try {
             await client.app.log({
@@ -492,7 +493,7 @@ const PlanPostApprovalPlugin: Plugin = async (
                 service: "plan-post-approval",
                 level: "info",
                 message:
-                  "Routing orchestrator + orchestrator handoff target: skipping queued session.prompt (duplicate).",
+                  "Routing orchestrator-owned flow: skipping queued session.prompt (duplicate).",
                 extra: { sessionID, requestID, routingAgent, globalHandoff },
               },
             });
