@@ -25,3 +25,5 @@ custom-formats/
 # OS / editor cruft
 .DS_Store
 *.log
+.opencode/INCIDENTS.md
+.opencode/IMPROVEMENTS.md
