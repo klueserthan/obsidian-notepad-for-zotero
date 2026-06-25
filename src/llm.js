@@ -46,7 +46,9 @@ export function canAutoRun(settings) {
 
 export function sanitizeLLMSettings(settings) {
   const merged = { ...LLM_DEFAULTS, ...settings };
-  merged.baseURL = String(merged.baseURL ?? "").trim() || LLM_DEFAULTS.baseURL;
+  merged.baseURL = "baseURL" in settings && settings.baseURL != null
+    ? String(settings.baseURL).trim()
+    : LLM_DEFAULTS.baseURL;
   merged.model = String(merged.model || "").trim();
   merged.apiKey = String(merged.apiKey || ""); // keep as-is, may be empty
   merged.temperature = clamp(merged.temperature, 0, 2, LLM_DEFAULTS.temperature);
