@@ -78,24 +78,35 @@ export function parseBlocks(md) {
 
 function annotationContext(a, opts) {
   const pageIndex = a.pageIndex ?? 0;
+  const attachmentFolder = opts.attachmentFolder || "References/Attachments";
+  const citekey = opts.citekey || "";
+  const attachmentKey = a.attachmentKey || "";
   return {
     text: a.annotatedText || "",
+    annotatedText: a.annotatedText || "", // alias (mgmeyers name)
     comment: a.comment || "",
     page: a.pageLabel || "",
     pageLabel: a.pageLabel || "",
     pageIndex,
     key: a.key,
+    id: a.key, // alias (mgmeyers name)
     colour: a.colourName || "",
     color: a.colourName || "",
+    colorCategory: a.colourName || "", // alias (mgmeyers name)
     type: a.type || "",
     link: pdfLink(a),
-    citekey: opts.citekey || "",
+    citekey,
+    attachmentKey,
+    attachment: { itemKey: attachmentKey }, // mgmeyers `annotation.attachment.itemKey`
     imageBaseName: a.imageBaseName || "",
+    // The assembled vault-relative path to an image annotation's PNG (mgmeyers
+    // `annotation.imageRelativePath`); "" for text highlights.
+    imageRelativePath: a.imageBaseName ? `${attachmentFolder}/${citekey}/${a.imageBaseName}` : "",
     // The highlight's OWN tags (role markers like method/finding/quote), as a
     // list to loop/filter, plus a comma-joined string for the simple case.
     tags: a.tags || [],
     tagList: (a.tags || []).join(", "),
-    attachmentFolder: opts.attachmentFolder || "References/Attachments",
+    attachmentFolder,
   };
 }
 

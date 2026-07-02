@@ -44,7 +44,9 @@ export const DEFAULT_FORMAT_NAME = "list";
 // annotations. Always available (merged into the format map regardless of the
 // user's Templates folder), but a same-named file in that folder overrides them.
 // Variables: title, date, dateAdded, dateModified, itemType, publicationTitle,
-// abstractNote, bibliography, citekey, desktopURI, openPdf, allTags, creators[].
+// abstractNote, bibliography, citekey, desktopURI, openPdf/pdfZoteroLink, allTags,
+// tags[] ({tag}), authors (string), creators[] ({firstName,lastName}),
+// relations[] ({citekey,title,key}).
 // Compose a per-annotation format from a base STYLE + optional PARTS — the engine
 // behind the block configurator's "advanced" mode. A block can carry
 // `style=quote parts=page,comment,tags` instead of a named `format=…`, and the
@@ -87,4 +89,5 @@ export const FIELD_FORMATS = {
   abstract: { item: `> [!abstract] Abstract\n> {% if abstractNote %}{{abstractNote}}{% else %}(no abstract){% endif %}`, sep: "\n" },
   title: { item: `# {{title}}`, sep: "\n" },
   authors: { item: `**Authors:** {% for c in creators %}[[{{c.lastName}}, {{c.firstName}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },
+  related: { item: `**Related:** {% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },
 };

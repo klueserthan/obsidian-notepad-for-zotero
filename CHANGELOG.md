@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.19] — 2026-07-02
+
+### Added
+- **Feature parity with "Zotero Integration" templates.** Three things those
+  templates could express that ZON couldn't now work:
+  - **Item tags as a list.** `{{tags}}` is an iterable (`[{tag}]`) alongside the
+    `{{allTags}}` string, so you can build a sanitised inline hashtag list —
+    `Tags: [{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]`.
+    A new **`hashify`** filter does the lowercase/underscore/strip-punctuation
+    cleanup in one step.
+  - **Related items by citekey.** `{{relations}}` (`[{citekey,title,key}]`) exposes
+    a note's Zotero **Related** items — `{% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% endfor %}` —
+    and a new **`related`** updatable field format renders them, refreshing on Update.
+  - **An `{{authors}}` string** ("First Last, First Last"), next to the structured
+    `{{creators}}`. Plus drop-in aliases so unmodified Zotero-Integration templates
+    run: `{{pdfZoteroLink}}`, `{{isFirstImport}}`, and per-annotation
+    `{{annotatedText}}` / `{{colorCategory}}` / `{{id}}` / `{{attachment.itemKey}}` /
+    `{{imageRelativePath}}`.
+- **The Template Builder surfaces all of the above** — "Related items (links)" in
+  the updatable-field picker, an `{{authors}}` variable, and "Tags (#hashtags)" /
+  "Related (links)" in the frontmatter field builder — with live preview.
+
 ## [1.0.0-beta.18] — 2026-07-02
 
 ### Fixed

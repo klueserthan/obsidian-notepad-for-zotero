@@ -128,6 +128,7 @@ export const UPDATABLE_FIELDS = [
   { id: "abstract", label: "Abstract (callout)", format: "abstract" },
   { id: "title", label: "Title (heading)", format: "title" },
   { id: "authors", label: "Authors (links)", format: "authors" },
+  { id: "related", label: "Related items (links)", format: "related" },
   { id: "allTags", label: "All tags", var: "allTags" },
   { id: "publicationTitle", label: "Journal / publication", var: "publicationTitle" },
   { id: "itemType", label: "Item type", var: "itemType" },
@@ -189,7 +190,10 @@ export const FRONTMATTER_VALUES = [
   { id: "desktopURI", label: "Zotero link", expr: '"{{desktopURI}}"' },
   { id: "openPdf", label: "Open-PDF link", expr: '"{{openPdf}}"' },
   { id: "tagsList", label: "Tags (list)", list: "{% for t in allTags.split(', ') %}\n  - \"{{t}}\"\n{% endfor %}" },
+  { id: "tagsHash", label: "Tags (#hashtags)", expr: "[{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]" },
   { id: "authorsList", label: "Authors (list)", list: '{% for c in creators %}\n  - "{{c.lastName}}, {{c.firstName}}"\n{% endfor %}' },
+  { id: "authors", label: "Authors (one line)", expr: '"{{authors}}"' },
+  { id: "related", label: "Related (links)", list: '{% for r in relations | selectattr("citekey") %}\n  - "[[{{r.citekey}}]]"\n{% endfor %}' },
   { id: "empty", label: "Empty (my own field)", empty: true },
   { id: "custom", label: "Custom expression…", custom: true },
 ];
@@ -280,6 +284,7 @@ export const ITEM_VARIABLES = [
   { token: "{{desktopURI}}", label: "select link (highlights item in Library)" },
   { token: "{{openPdf}}", label: "open-pdf link (opens the PDF in the reader)" },
   { token: "{{allTags}}", label: "Item-level tags, comma-joined" },
+  { token: "{{authors}}", label: "Authors as one string (First Last, First Last)" },
 ];
 
 // Frontmatter-field lines to insert — you rename the KEY to your own convention
@@ -292,6 +297,8 @@ export const FRONTMATTER_FIELDS = [
   { label: "Item type", text: 'Type: "{{itemType}}"' },
   { label: "Date added", text: 'Added: "{{dateAdded}}"' },
   { label: "Tags", text: 'Tags:\n{% for t in allTags.split(\', \') %}\n  - "{{t}}"\n{% endfor %}' },
+  { label: "Tags (#hashtags)", text: 'Tags: [{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]' },
+  { label: "Related (links)", text: 'Related:\n{% for r in relations | selectattr("citekey") %}\n  - "[[{{r.citekey}}]]"\n{% endfor %}' },
   { label: "Citekey", text: 'citekey: "{{citekey}}"' },
   { label: "Zotero link", text: 'ZoteroLink: "{{desktopURI}}"' },
 ];
@@ -303,6 +310,7 @@ export const FIELD_BLOCKS = [
   { label: "Abstract (updatable)", text: "%% zon kind=field sync=on format=abstract %%\n%% /zon %%" },
   { label: "Title (updatable)", text: "%% zon kind=field sync=on format=title %%\n%% /zon %%" },
   { label: "Authors (updatable)", text: "%% zon kind=field sync=on format=authors %%\n%% /zon %%" },
+  { label: "Related (updatable)", text: "%% zon kind=field sync=on format=related %%\n%% /zon %%" },
 ];
 
 // Annotation-block presets to drop into the body. The markers stay editable in
@@ -410,8 +418,15 @@ export const SAMPLE_ITEM = {
   bibliography: "Doe J and Smith A (2023) A Worked Example of Coproduction in Practice. Journal of Sample Studies.",
   desktopURI: "zotero://select/library/items/SAMPLE01",
   openPdf: "zotero://open-pdf/library/items/SAMPLEPDF",
+  pdfZoteroLink: "zotero://open-pdf/library/items/SAMPLEPDF",
   allTags: "coproduction, methods, sample",
+  tags: [{ tag: "coproduction" }, { tag: "methods" }, { tag: "sample" }],
   creators: [{ firstName: "Jane", lastName: "Doe" }, { firstName: "Alex", lastName: "Smith" }],
+  authors: "Jane Doe, Alex Smith",
+  relations: [
+    { citekey: "smith2019related", title: "A Closely Related Study", key: "REL00001" },
+    { citekey: "jones2021followup", title: "A Follow-up Paper", key: "REL00002" },
+  ],
   annotations: [],
 };
 

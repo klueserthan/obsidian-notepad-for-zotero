@@ -69,10 +69,21 @@ function authors(item) {
     .filter((c) => c.firstName || c.lastName);
 }
 
-function tagString(item, opts) {
-  if (opts.allTags != null) return opts.allTags;
+function tagNames(item, opts) {
+  if (opts.allTags != null) return String(opts.allTags).split(",").map((s) => s.trim()).filter(Boolean);
   const tags = item.getTags ? item.getTags() : [];
-  return tags.map((t) => (typeof t === "string" ? t : t.tag)).filter(Boolean).join(", ");
+  return tags.map((t) => (typeof t === "string" ? t : t.tag)).filter(Boolean);
+}
+
+function tagString(item, opts) {
+  return tagNames(item, opts).join(", ");
+}
+
+// Item tags as an iterable list of `{ tag }` objects — the shape the mgmeyers
+// "Zotero Integration" templates loop over (`{% for t in tags %}#{{t.tag}}`), so
+// those run unchanged. `allTags` stays the comma-joined string for simple cases.
+function tagObjects(item, opts) {
+  return tagNames(item, opts).map((tag) => ({ tag }));
 }
 
 export function buildItemData(item, opts = {}) {
@@ -85,6 +96,8 @@ export function buildItemData(item, opts = {}) {
     const m = String(v || "").match(/^(\d{4}-\d{2}-\d{2})/);
     return m ? m[1] : String(v || "");
   };
+  const creators = authors(item);
+  const openPdf = zoteroOpenPdfURI(item, opts.pdfAttachmentKey);
   return {
     citekey: opts.citekey || "",
     title: f("title"),
@@ -94,17 +107,27 @@ export function buildItemData(item, opts = {}) {
     itemType: item.itemType || "",
     publicationTitle: journalFor(item, f) || "",
     desktopURI: zoteroSelectURI(item),
-    openPdf: zoteroOpenPdfURI(item, opts.pdfAttachmentKey),
+    openPdf,
+    pdfZoteroLink: openPdf, // alias — the mgmeyers "Zotero Integration" name for it
     bibliography: opts.bibliography || "",
     abstractNote: f("abstractNote"),
     allTags: tagString(item, opts),
+    tags: tagObjects(item, opts), // [{tag}] — iterable, mgmeyers-compatible
     markdownNotes: opts.markdownNotes || "",
-    creators: authors(item),
+    creators,
+    // A ready-made "First Last, First Last" author string (mgmeyers `authors`);
+    // `creators` stays the structured [{firstName,lastName}] for custom formats.
+    authors: creators.map((c) => `${c.firstName} ${c.lastName}`.trim()).filter(Boolean).join(", "),
+    // Related items with their citekeys — resolved by the plugin layer (async, via
+    // Better BibTeX) and passed through. [{citekey,title,key}]. Enables
+    // `{% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]`.
+    relations: opts.relations || [],
     // Their template's annotation block; empty on first creation (annotations
     // are brought in by the sync path). lastImportDate null => render all.
     annotations: opts.annotations || [],
     lastImportDate: opts.lastImportDate ?? null,
     importDate: opts.importDate || "",
+    isFirstImport: opts.isFirstImport === true, // true only at note creation
   };
 }
 

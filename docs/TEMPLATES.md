@@ -58,7 +58,22 @@ it to carry per-highlight role markers into the note — e.g. tag highlights
 `{{citekey}}`, `{{title}}`, `{{date}}`, `{{dateAdded}}`, `{{dateModified}}`,
 `{{itemType}}`, `{{publicationTitle}}`, `{{abstractNote}}`, `{{bibliography}}`,
 `{{desktopURI}}`, `{{openPdf}}`, `{{creators}}` (each has `.firstName` /
-`.lastName`), `{{allTags}}`.
+`.lastName`), `{{authors}}` (those creators as one "First Last, First Last"
+string), `{{allTags}}`, `{{tags}}` (item tags as a list of `{tag}`), and
+`{{relations}}` (the item's Zotero **Related** items, each with `.citekey`,
+`.title`, `.key`).
+
+Two patterns those last two enable:
+
+```nunjucks
+Tags: [{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]
+Related: {% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% if not loop.last %}, {% endif %}{% endfor %}
+```
+
+The **`hashify`** filter lowercases a tag, turns spaces into underscores and strips
+the punctuation Obsidian rejects in a `#tag` (`()[]:,`). There's also a ready-made
+`related` field format — `%% zon kind=field format=related %%` — that renders the
+related-items links and refreshes on Update.
 
 `{{dateAdded}}` and `{{dateModified}}` are the Zotero "Date Added" / "Date
 Modified" timestamps as `YYYY-MM-DD`. (These are whole-item variables — they

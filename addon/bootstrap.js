@@ -1979,6 +1979,23 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     } catch (e) { return "ref" + item.id; }
   },
 
+  // The item's Zotero "Related" items, each with its Better BibTeX citekey, for
+  // template use (`{% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]`).
+  // `item.relatedItems` is an array of item KEYS in the same library; resolve each
+  // and read its citekey. Sync (getCitekey is sync). Returns [{citekey,title,key}].
+  relationsFor(item) {
+    try {
+      let keys = (item && item.relatedItems) || [];
+      let out = [];
+      for (let key of keys) {
+        let rel = Zotero.Items.getByLibraryAndKey(item.libraryID, key);
+        if (!rel) continue;
+        out.push({ citekey: this.getCitekey(rel), title: rel.getField("title") || "", key: rel.key });
+      }
+      return out;
+    } catch (e) { this.log("relationsFor failed: " + e); return []; }
+  },
+
   // Render a DOCUMENT template (whole-note) for this item: fill the item-level
   // Nunjucks vars, then fill any `%% zon %%` annotation blocks with the item's
   // highlights. Returns the finished markdown.
@@ -2012,6 +2029,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
           bibliography: extra.bibliography || "",
           importDate: new Date().toISOString(),
           pdfAttachmentKey: this.primaryPdfKey(item),
+          relations: this.relationsFor(item),
         });
       } catch (e) { this.log("buildItemData failed: " + e); }
     }
@@ -2026,7 +2044,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   async renderDocument(win, item, templateText) {
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
-    let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item) });
+    let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item), isFirstImport: true });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
     let attachmentFolder = this.resolveAttachmentFolder(md, win);
@@ -2165,7 +2183,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try {
       let citekey = this.getCitekey(item);
       let bibliography = await this.getBibliography(item);
-      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item) });
+      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) });
       let anns = this.gatherAnnotations(item, win);
       let attachmentFolder = this.resolveAttachmentFolder(md, win);
       try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) {}
@@ -2736,7 +2754,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = {};
-    try { data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item) }); }
+    try { data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
     if (win.ZONCore.hasManifest(existing)) {
@@ -2802,7 +2820,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try {
       let citekey = this.getCitekey(item);
       let bibliography = await this.getBibliography(item);
-      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item) });
+      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) });
       updated = win.ZONCore.applyManifest(withManifest, data);
     } catch (e) { this.log("manage-fields apply failed: " + e); }
     if (updated !== existing) {
@@ -2948,6 +2966,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         citekey, bibliography,
         importDate: new Date().toISOString(),
         pdfAttachmentKey: this.primaryPdfKey(item),
+        relations: this.relationsFor(item),
       });
       let annotations = this.gatherAnnotations(item, win);
       // Pass the full format map so the preview can render the user's custom
