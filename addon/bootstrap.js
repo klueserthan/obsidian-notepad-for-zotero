@@ -2172,6 +2172,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder });
       try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
     } catch (e) { this.log("builderSaveNote sync failed: " + e); }
+    if (md && !md.endsWith("\n")) md += "\n"; // POSIX-clean: end the note with one newline
     await this.safeWrite(rec.path, md);
     try { rec.diskMtime = await this.noteMtime(rec.path); } catch (e) {}
     try { if (rec.wrap) await this.renderInto(rec.wrap, item); } catch (e) {}
