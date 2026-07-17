@@ -21,7 +21,6 @@ var ZON = {
   PREF_TEMPLATES_DIR: "extensions.zotero-obsidian-notes.templatesDir",
   PREF_DEFAULT_NOTE: "extensions.zotero-obsidian-notes.defaultNoteTemplate",
   PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
-  PREF_ATTACHFOLDER: "extensions.zotero-obsidian-notes.attachmentFolder",
   PREF_LLM_BASE_URL: "extensions.zotero-obsidian-notes.llmBaseURL",
   PREF_LLM_MODEL: "extensions.zotero-obsidian-notes.llmModel",
   PREF_LLM_API_KEY: "extensions.zotero-obsidian-notes.llmApiKey",
@@ -44,7 +43,6 @@ var ZON = {
   // (already-has-one checks, stale indicator). Body edits never affect it.
   MARKER_TAG: "zps:summary-note",
   DEFAULT_COLLAPSED: false, // section starts expanded; the header chevron folds it (persisted)
-  DEFAULT_ATTACHFOLDER: "References/Attachments", // relative folder path used for exported image-annotation embeds (per-note override via `zon: attachments:`)
   DEFAULT_LLM_BASE_URL: "http://localhost:11434/v1",
   DEFAULT_LLM_MODEL: "",
   DEFAULT_LLM_API_KEY: "",
@@ -610,7 +608,6 @@ var ZON = {
     seed(this.PREF_TEMPLATES_DIR, this.DEFAULT_TEMPLATES_DIR);
     seed(this.PREF_DEFAULT_NOTE, this.DEFAULT_DEFAULT_NOTE);
     seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);
-    seed(this.PREF_ATTACHFOLDER, this.DEFAULT_ATTACHFOLDER);
     seed(this.PREF_LLM_BASE_URL, this.DEFAULT_LLM_BASE_URL);
     seed(this.PREF_LLM_MODEL, this.DEFAULT_LLM_MODEL);
     seed(this.PREF_LLM_API_KEY, this.DEFAULT_LLM_API_KEY);
@@ -625,11 +622,6 @@ var ZON = {
   sectionCollapsed() {
     try { let v = Zotero.Prefs.get(this.PREF_COLLAPSED, true); return v === undefined ? this.DEFAULT_COLLAPSED : !!v; }
     catch (e) { return this.DEFAULT_COLLAPSED; }
-  },
-  // Global default vault-relative folder for exported image annotations.
-  attachmentFolder() {
-    try { let v = Zotero.Prefs.get(this.PREF_ATTACHFOLDER, true); return (v == null || v === "") ? this.DEFAULT_ATTACHFOLDER : String(v); }
-    catch (e) { return this.DEFAULT_ATTACHFOLDER; }
   },
   // ---- LLM prefs
   llmBaseURL() {
@@ -722,15 +714,17 @@ var ZON = {
       return { ok: false, message: this.t("status.llmTestFail", { error: errStr }) };
     }
   },
-  // Resolve the folder for THIS note: its own `zon: attachments:` wins, else the
-  // global default — same per-note-over-global pattern as the tag sync field.
+  // Resolve the image-embed folder for THIS render: a template's own
+  // `zon: attachments:` override wins; otherwise "" and the pure render layer
+  // falls back to its built-in default. (The global preference was removed —
+  // image embeds are vestigial text in a Zotero note anyway.)
   resolveAttachmentFolder(md, win) {
     try {
       let C = win && win.ZONCore;
       let perNote = C && C.getAttachmentFolder ? C.getAttachmentFolder(md || "") : null;
       if (perNote) return perNote.replace(/^\/+|\/+$/g, "");
     } catch (e) {}
-    return this.attachmentFolder().replace(/^\/+|\/+$/g, "");
+    return "";
   },
 
   // ---------------------------------------------------------------- editor lib
@@ -1772,7 +1766,7 @@ var ZON = {
       citekey,
       formats: this.formatMap(win),
       itemData,
-      attachmentFolder: extra.attachmentFolder || this.attachmentFolder(),
+      attachmentFolder: extra.attachmentFolder || "",
     };
   },
 
@@ -2471,7 +2465,7 @@ var ZON = {
       let annotations = this.gatherAnnotations(item, win);
       // Pass the full format map so the preview can render the user's custom
       // formats (and field formats), not just the built-ins.
-      return { itemData, annotations, citekey, attachmentFolder: this.attachmentFolder(), formats: this.formatMap(win) };
+      return { itemData, annotations, citekey, formats: this.formatMap(win) };
     } catch (e) { this.log("gatherPreviewContext failed: " + e); return null; }
   },
 

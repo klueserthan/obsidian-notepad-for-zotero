@@ -155,6 +155,12 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   file-era fallbacks for a missing Templates folder; the addon-owned, seeded
   templates folder makes them redundant (builtins already back any missing
   file). Old stored values are simply ignored.
+- **Image-annotation folder preference.** The *Image-annotation folder*
+  (`attachmentFolder`) preference is gone too — it only shaped the folder text
+  inside `![[…]]` wiki-embeds for image annotations, which render as literal
+  text in a Zotero note (nothing exports image files anymore). A template can
+  still set the folder text explicitly via `zon: attachments:` in its
+  frontmatter; otherwise the render layer's built-in default applies.
 - **Teardown: the entire vault/file/sync machinery is deleted (ADR-0002, #30).**
   Now that the Composer, Generate, LLM gating, Stale Indicator, and Template
   Builder are the whole pipeline, nothing depends on the old file world, so it is
@@ -183,10 +189,11 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `autoSync`, `tagSyncField`, `experimental`, plus the never-pane-exposed
   `showMarkers`/`readMode`/`showFrontmatter` presentation prefs from the old
   editor toolbar) — all confirmed unread by anything but their own
-  declaration/seed. The templates-folder, default-template, legacy
-  template/formats-folder fallbacks, image-annotation-folder, and every LLM
-  pref are still read and stay. `package.json`'s description now matches the
-  new plugin, and the project restarts its version at `0.1.0`.
+  declaration/seed. The templates-folder, default-template, and every LLM
+  pref are still read and stay (the legacy template/formats-folder fallbacks
+  and the image-annotation-folder pref survived this sweep but were removed in
+  a later cleanup — see the entry above). `package.json`'s description now
+  matches the new plugin, and the project restarts its version at `0.1.0`.
 
 ## [1.0.0-beta.19] — 2026-07-02
 

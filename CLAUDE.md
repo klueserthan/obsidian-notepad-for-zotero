@@ -126,9 +126,10 @@ the item's annotations) — it never triggers a write.
   `addon/content/preferences.xhtml`. Only prefs something actually reads belong
   here — the vault/notes-folder/filename-pattern/auto-sync/tag-sync/experimental
   prefs from the file-sync era were removed in the #31 sweep, and the legacy
-  templatePath/formatsDir fallbacks in a later cleanup (the addon-owned, seeded
-  templates folder made them redundant); the templates-folder, default-template,
-  image-annotation-folder, and all LLM prefs remain live.
+  templatePath/formatsDir fallbacks plus the image-annotation-folder pref in a
+  later cleanup (the addon-owned, seeded templates folder made the fallbacks
+  redundant, and image embeds are vestigial text in a Zotero note); the
+  templates-folder, default-template, and all LLM prefs remain live.
 - **Templates are Nunjucks.** Starter templates ship inline as
   `ZON.BUILTIN_TEMPLATES` in `bootstrap.js` (they double as a zero-config
   fallback). User docs: `docs/TEMPLATES.md`.
