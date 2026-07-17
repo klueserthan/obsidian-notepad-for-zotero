@@ -8,8 +8,15 @@ export default defineConfig({
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
 
-  // Finalised in Phase 6 once the GitHub repo exists ({{owner}}/{{repo}} are
-  // resolved from the git remote at release time).
+  // Identity break (issue #24 / ADR-0003): {{owner}}/{{repo}} resolve from
+  // package.json's repository.url, which now points at the FORK
+  // (klueserthan/obsidian-notepad-for-zotero) — so update checks can never
+  // reach an upstream (Acatechnic) release. Zotero requires
+  // applications.zotero.update_url to be present AND a valid URL (absent or
+  // empty both fail install with "Extension is invalid"), so the key cannot
+  // simply be dropped. Today the fork publishes no release asset at this
+  // URL, so update checks 404 harmlessly; it can serve real fork releases
+  // later. Do not repoint this at upstream's repo.
   updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
     pkg.version.includes("-") ? "update-beta.json" : "update.json"
   }`,
