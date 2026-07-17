@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
+- **Template Builder is now a pure template-authoring surface (#29).** The Builder
+  no longer opens on, edits, or writes an item's vault/note file. It opens on a
+  *template* — the one selected in the Composer's picker (or the default template) —
+  authors/previews/saves templates only (Save-as-default still works, via the atomic
+  templates-folder path), and the old whole-note "Create note"/"Save to note"
+  (edit-in-place) actions are removed. Finishing hands off to the Composer: on save
+  the Composer's picker selects the just-saved template and its preview refreshes, so
+  closing the Builder lands on the new template ready to Generate. The live preview
+  now runs its rendered output through the same `stripFrontmatter` + `stripMarkers`
+  step the Composer uses (new pure `stripForPreview` in `src/builder.js`), so the two
+  surfaces show content-consistent, marker-free output; `{% llm %}` blocks are never
+  executed in the Builder preview (they survive as literal text). The builder-specific
+  note-write bridges (`writeNoteFromText`, `builderCreateNote`, `builderSaveNote`) are
+  gone; no Builder code path performs vault/note I/O.
 - **Item pane no longer edits a file-backed note.** The Composer replaces the
   CodeMirror editor and its file-note controls (Insert, Update, Open in Obsidian,
   Reload, Sync Metadata, …) in the item pane; the Template Builder still opens

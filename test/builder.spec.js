@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  previewTemplate, cleanPreview, paletteContextAt,
+  previewTemplate, cleanPreview, stripForPreview, paletteContextAt,
   BLOCK_VARIABLES, ITEM_VARIABLES, FRONTMATTER_FIELDS, FIELD_BLOCKS, ANNOTATION_BLOCKS,
   STARTER_NOTE, STARTER_FORMAT, SAMPLE_ITEM, SAMPLE_ANNOTATIONS,
   blockConfigAt, annotationMarkerOpen, annotationBlockText,
@@ -68,6 +68,53 @@ describe("cleanPreview", () => {
     expect(clean).not.toContain("%%");
     expect(clean).toContain('- "x"');
     expect(clean).not.toMatch(/\n{3,}/);
+  });
+});
+
+describe("stripForPreview — Composer-consistent Builder preview", () => {
+  it("drops leading frontmatter AND block markers/anchors", () => {
+    const raw = [
+      "---",
+      'Title: "A Paper"',
+      "citekey: doe2023",
+      "---",
+      "",
+      "## Highlights",
+      "",
+      "%% zon kind=annotations colour=all sync=on format=quote %%",
+      "> a quote %% ann:AAA1 %%",
+      "%% /zon %%",
+    ].join("\n");
+    const out = stripForPreview(raw);
+    expect(out).not.toContain("%%");        // no delimiters/anchors
+    expect(out).not.toContain("---");       // no frontmatter fence
+    expect(out).not.toContain("Title:");    // frontmatter body gone
+    expect(out).toContain("## Highlights"); // prose survives
+    expect(out).toContain("> a quote");     // rendered content survives
+    expect(out).not.toMatch(/\n{3,}/);      // gaps collapsed
+  });
+
+  it("is idempotent on already-stripped, marker-free markdown", () => {
+    const clean = "## Notes\n\n> already clean";
+    expect(stripForPreview(clean)).toBe(clean);
+    expect(stripForPreview(stripForPreview(clean))).toBe(clean);
+  });
+
+  it("leaves a {% llm %} block as literal text (never executed in preview)", () => {
+    const raw = "## Summary\n\n{% llm context=\"abstract\" %}\nSummarise this.\n{% endllm %}";
+    const out = stripForPreview(raw);
+    expect(out).toContain("{% llm context=\"abstract\" %}");
+    expect(out).toContain("Summarise this.");
+  });
+
+  it("previewTemplate.preview is the stripped view (no frontmatter, no markers)", () => {
+    const out = previewTemplate(STARTER_NOTE, ctx);
+    expect(out.error).toBeFalsy();
+    expect(out.raw).toContain("---");            // raw keeps the frontmatter
+    expect(out.preview).not.toContain("---");    // preview strips it
+    expect(out.preview).not.toContain("%%");     // and the block markers
+    expect(out.preview).toContain("## Notes");   // prose survives
+    expect(out.preview).toContain("Coproduction reshapes"); // filled block survives
   });
 });
 

@@ -434,7 +434,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "btn.more": "⋯ More",
     "btn.pushTags": "Push tags → Zotero…",
     "btn.builder": "Template Builder…",
-    "tip.builder": "Compose a template with a live preview, then insert it into this note or save it to your Templates folder",
+    "tip.builder": "Author a template with a live preview, then save it to your Templates folder — the Composer uses it to generate the note",
     "status.templateSaved": "Saved template ‘{name}’ to your Templates folder",
     "msg.builderOverwrite": "A template named ‘{name}.md’ already exists. Overwrite it?",
     "btn.createNote": "Create note",
@@ -2581,75 +2581,6 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
   },
 
-  // Like writeNoteForItem, but renders from raw template TEXT (the Template
-  // Builder's composed template) rather than a named template — so the builder can
-  // create a note for an item that doesn't have one yet. Same safety + linking.
-  async writeNoteFromText(win, item, templateText) {
-    if (!item) return { status: "no-item" };
-    try {
-      if (!win.ZONCore) await this.injectCore(win);
-      let citekey = this.getCitekey(item);
-      if (!citekey) return { status: "no-citekey" };
-      let filename = this.expectedNoteFilename(win, item);
-      let dir = this.notesDir();
-      let path = PathUtils.join(dir, filename);
-      if (!win.ZONCore.isUnder(path, dir)) return { status: "outside", path };
-      if (await IOUtils.exists(path)) return { status: "exists", path };
-      let md = await this.renderDocument(win, item, String(templateText || ""));
-      try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
-      await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
-      await this.safeWrite(path, md);
-      if (this.index) this.index.set(item.key, path);
-      this.log("created note from builder " + path);
-      return { status: "created", path };
-    } catch (e) {
-      this.log("writeNoteFromText failed: " + e);
-      return { status: "error", error: String(e) };
-    }
-  },
-
-  // Bridge OUT (3): create THIS item's note from the builder's composed template,
-  // then re-render the pane to show it. Throws (with a message) on any problem so
-  // the builder can surface it.
-  async builderCreateNote(rec, win, templateText) {
-    let item = (rec && rec.item) || this.selectedRegularItems(win)[0];
-    if (!item) throw new Error("no item selected");
-    let r = await this.writeNoteFromText(win, item, templateText);
-    if (r.status === "no-citekey") throw new Error("this item has no citekey");
-    if (r.status === "outside") throw new Error("would write outside your notes folder");
-    if (r.status === "exists") throw new Error("a note already exists for this item");
-    if (r.status === "error") throw new Error(r.error || "create failed");
-    try { if (rec && rec.wrap) await this.renderInto(rec.wrap, item); } catch (e) {}
-    return r.path;
-  },
-
-  // Bridge OUT (4): write the builder's edited text back to THIS item's existing
-  // note (the "edit the note in the builder" path). The builder loaded the note's
-  // current content; on save we sync its `%% zon %%` blocks from the item's current
-  // annotations (so blocks the user added/reconfigured fill in, exactly like
-  // Update), keep the durable ZoteroLink, write it, and re-render the pane.
-  async builderSaveNote(rec, win, text) {
-    if (!rec || !rec.path || !rec.item) throw new Error("no open note to save to");
-    if (!win.ZONCore) await this.injectCore(win);
-    let item = rec.item;
-    let md = String(text == null ? "" : text);
-    try {
-      let citekey = this.getCitekey(item);
-      let bibliography = await this.getBibliography(item);
-      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) });
-      let anns = this.gatherAnnotations(item, win);
-      let attachmentFolder = this.resolveAttachmentFolder(md, win);
-      try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) {}
-      md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder });
-      try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
-    } catch (e) { this.log("builderSaveNote sync failed: " + e); }
-    if (md && !md.endsWith("\n")) md += "\n"; // POSIX-clean: end the note with one newline
-    await this.safeWrite(rec.path, md);
-    try { rec.diskMtime = await this.noteMtime(rec.path); } catch (e) {}
-    try { if (rec.wrap) await this.renderInto(rec.wrap, item); } catch (e) {}
-    return rec.path;
-  },
-
   // Create @<citekey>.md from the chosen template (any template — a whole-note
   // scaffold or just an annotations block), link it to this item, and open it.
   async createNote(rec, templateName) {
@@ -3707,26 +3638,30 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     let self = this;
     let bridge = {
-      save: (name, text, setDefault) => self.builderSaveTemplate(win, name, text, setDefault),
-      createNote: (text) => self.builderCreateNote(rec, win, text),
-      saveNote: (text) => self.builderSaveNote(rec, win, text),
+      // Templates only — the Builder never writes an item note file. Saving hands
+      // off to the Composer (rec) so it selects the just-saved template.
+      save: (name, text, setDefault) => self.builderSaveTemplate(win, rec, name, text, setDefault),
       close: () => self.closeTemplateBuilder(win),
     };
-    // No linked note yet → the builder offers "Create note" and starts from this
-    // item's DEFAULT note template. An open note → it LOADS that note to edit in
-    // place, and offers "Save to note".
-    let canSaveNote = !!(rec && rec.view && rec.path);
-    let canCreate = !canSaveNote && !!item;
+    // The Builder is a pure template-authoring surface. Seed the editor with the
+    // TEMPLATE currently selected in the Composer's picker (falling back to the
+    // default template), never a note file — and prefill the Save-as name with it so
+    // saving updates that template.
+    let initialName = (rec && rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate() || "";
     let initialDoc = null;
-    if (canSaveNote) { try { initialDoc = rec.lib && rec.view ? rec.lib.getDoc(rec.view) : null; } catch (e) {} }
-    else if (canCreate) { try { initialDoc = await this.resolveNoteScaffoldText(); } catch (e) {} }
+    try {
+      let t = initialName ? (this.allTemplates(win) || {})[initialName] : null;
+      if (t && typeof t.text === "string") initialDoc = t.text;         // folder template
+      else if (t && typeof t.item === "string") initialDoc = t.item;    // built-in format body
+      else initialDoc = await this.resolveNoteScaffoldText(initialName || undefined); // scaffold / default
+    } catch (e) {}
     // Poll the (srcdoc-swapped) contentWindow for the app entry + both bundles,
     // then start it — same robustness trick the note editor iframe uses.
     let tries = 0;
     let waitForApp = function () {
       let fw = iframe.contentWindow;
       if (fw && fw.startBuilder && fw.ZONCore && fw.ZOSEditorLib) {
-        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, templates, formatNames, canCreate, canSaveNote, initialDoc }); }
+        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, templates, formatNames, initialDoc, initialName }); }
         catch (e) { self.log("startBuilder failed: " + e); }
         return;
       }
@@ -3828,10 +3763,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       + '</body></html>';
   },
 
-  // Bridge OUT (2): write the builder's template SOURCE to the Templates folder
-  // (idempotent — confirms before overwriting), then refresh the template list so
-  // it's immediately usable in the Insert dropdown.
-  async builderSaveTemplate(win, name, text, setDefault) {
+  // Bridge OUT: write the builder's template SOURCE to the Templates folder
+  // (idempotent — confirms before overwriting; always the templates folder via the
+  // atomic safeWrite path, NEVER an item note file), then refresh the template list
+  // and hand off to the Composer — select the just-saved template and refresh its
+  // preview — so closing the Builder lands on the new template ready to Generate.
+  async builderSaveTemplate(win, rec, name, text, setDefault) {
     let safe = String(name || "").trim().replace(/\.md$/i, "").replace(/[\/\\:*?"<>|]+/g, "-");
     if (!safe) throw new Error("empty name");
     let dir = this.templatesDir();
@@ -3843,9 +3780,24 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
     await this.safeWrite(path, String(text || ""));
     try { await this.refreshTemplates(); } catch (e) {}
-    // Optionally make this the template "Create note" / "Build a note" uses by default.
+    // Optionally make this the template the Composer selects by default.
     if (setDefault) { try { Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, safe, true); } catch (e) {} }
+    // Hand off to the Composer that opened the Builder: point its picker at the
+    // just-saved template and refresh the preview.
+    try { await this.selectComposerTemplate(rec, safe); } catch (e) { this.log("builder handoff failed: " + e); }
     return this.t("status.templateSaved", { name: safe }) + (setDefault ? " — set as default" : "");
+  },
+
+  // Point a Composer pane's template picker at `name` and refresh its preview.
+  // Used by the Builder handoff so a just-saved template is selected in the Composer.
+  async selectComposerTemplate(rec, name) {
+    if (!rec || !rec.templateSel) return;
+    try { await this.populateComposerTemplates(rec); } catch (e) {}
+    let sel = rec.templateSel;
+    if (name && Array.prototype.some.call(sel.options, (o) => o.value === name)) {
+      sel.value = name;
+      this.schedulePreview(rec, { immediate: true });
+    }
   },
 
   // Convert a legacy annotation dump in the current note into a live block,

@@ -7,13 +7,16 @@
 // one-click UPDATABLE field blocks (citation / abstract / title / authors) so
 // metadata can live in the body and stay in sync, not just annotations.
 //
-// The preview reuses the SAME engine the write paths use, so what you see is what
-// Insert/Save produces.
+// The preview reuses the SAME engine the Generate path uses, then runs the output
+// through the SAME strip step the Composer applies (stripFrontmatter + stripMarkers),
+// so the Builder preview shows the marker-free, frontmatter-free body a Summary Note
+// would carry — content-consistent with the Composer's live preview.
 
 import { makeBlock, syncBlocks, parseConfig, configToString } from "./blocks.js";
 import { render } from "./render.js";
 import { parseTemplateFile, templateKind } from "./templates.js";
 import { DEFAULT_FORMATS, FIELD_FORMATS } from "./formats.js";
+import { stripMarkers, stripFrontmatter } from "./strip-markers.js";
 
 // ----------------------------------------------- context-aware palette support
 //
@@ -354,11 +357,27 @@ export function cleanPreview(markdown) {
     .replace(/\s+$/, "");
 }
 
-// Render `templateText` the way the real write path would, for the live preview.
+// Strip a rendered note down to the marker-free, frontmatter-free body the
+// Composer's live preview shows — reusing the EXACT strip functions the Generate/
+// Composer pipeline uses (stripFrontmatter + stripMarkers). This is the Builder's
+// preview view: what the user sees here matches what the Composer would show for
+// the same template (content-consistent; presentation may differ). Any leftover
+// `{% llm %}` tags survive as literal text — they are never executed in a preview.
+export function stripForPreview(markdown) {
+  const stripped = stripMarkers(stripFrontmatter(String(markdown == null ? "" : markdown)));
+  return stripped
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/^\n+/, "")
+    .replace(/\s+$/, "");
+}
+
+// Render `templateText` the way the Generate path would, for the live preview.
 // ctx = { itemData, annotations, citekey, formats, attachmentFolder }. Returns
-// { kind, raw, preview } where `raw` is the faithful engine output (= what
-// Insert/Save writes) and `preview` is the comment-stripped view. Never throws —
-// a template error becomes the preview text so the editor can show it inline.
+// { kind, raw, preview } where `raw` is the faithful engine output (markers +
+// frontmatter intact) and `preview` is the Composer-consistent stripped view
+// (frontmatter + `%% … %%` delimiters removed). Never throws — a template error
+// becomes the preview text so the editor can show it inline.
 export function previewTemplate(templateText, ctx = {}) {
   const text = String(templateText || "");
   // A template invoking the highlights() global is a whole-note template even
@@ -399,7 +418,7 @@ export function previewTemplate(templateText, ctx = {}) {
     raw = `⚠️ Template error:\n${e && e.message ? e.message : String(e)}`;
     return { kind, raw, preview: raw, error: true };
   }
-  return { kind, raw, preview: cleanPreview(raw) };
+  return { kind, raw, preview: stripForPreview(raw) };
 }
 
 // ---------------------------------------------------------------- sample data
