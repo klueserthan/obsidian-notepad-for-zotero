@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Identity break (fork ownership, ADR-0003).** This build now ships under its
+  own name and addon ID instead of upstream's: `addonName` is
+  "Paper Summarizer for Zotero" and `addonID` is
+  `zotero-paper-summarizer@klueserthan`. `author`, `homepage`, and
+  `repository.url` in `package.json` now point at this fork
+  (`klueserthan/obsidian-notepad-for-zotero`). The built plugin's `updateURL`
+  is dropped entirely (`update_url: ""` in the manifest), so it never checks
+  upstream's — or anyone's — releases for updates and can no longer be
+  auto-updated back into the upstream plugin. The fork can now be installed
+  alongside a real upstream install in the same Zotero profile. Internal
+  identifiers kept unchanged on purpose (legacy, so saved prefs survive):
+  `addonRef`, the `ZON`/`ZONCore` globals, `zon-` fluent ids, and the
+  `extensions.zotero-obsidian-notes` prefs prefix.
+
 ## [1.0.0-beta.19] — 2026-07-02
 
 ### Added

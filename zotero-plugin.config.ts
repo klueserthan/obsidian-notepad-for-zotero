@@ -8,11 +8,13 @@ export default defineConfig({
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
 
-  // Finalised in Phase 6 once the GitHub repo exists ({{owner}}/{{repo}} are
-  // resolved from the git remote at release time).
-  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
-    pkg.version.includes("-") ? "update-beta.json" : "update.json"
-  }`,
+  // Identity break (issue #24 / ADR-0003): this is a locally built personal
+  // fork, never published to a "releases" feed anyone should auto-update
+  // from. An empty updateURL makes scaffold emit `update_url: ""` in the
+  // built manifest.json, so Zotero performs no update checks at all for this
+  // addonID — it can never be silently replaced by an upstream (or any)
+  // release. Do not repoint this at a GitHub releases URL.
+  updateURL: "",
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
