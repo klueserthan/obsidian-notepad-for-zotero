@@ -25,6 +25,15 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Paper-type LLM starter templates.** Four new whole-note starters ship and
+  auto-seed to the templates folder: `note-quantitative`, `note-qualitative`,
+  `note-theoretical`, and `note-review` (literature reviews/meta-analyses). Each
+  fills paper-type-appropriate sections from the PDF full text with
+  `{% llm context="fulltext" %}` blocks (e.g. a key-variables table for
+  quantitative work, a methods-&-data facts block for qualitative, a
+  constructs-&-definitions table for theoretical, a corpus-&-method block for
+  reviews) and keeps a `## Notes` area and an annotations block. Pick one in the
+  Composer, Run LLM, then Generate.
 - **Generic Summary Note titles.** Every generated note (and the Composer's
   live preview — the two stay identical) now opens with an automatic
   `# Summary: <item title>` heading, so Zotero titles the note recognizably and
