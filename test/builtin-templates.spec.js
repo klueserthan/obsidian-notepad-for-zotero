@@ -11,10 +11,12 @@ import { templateKind, parseTemplateFile } from "../src/templates.js";
 function extractBuiltins() {
   const src = readFileSync(fileURLToPath(new URL("../addon/bootstrap.js", import.meta.url)), "utf8");
   const start = src.indexOf("BUILTIN_TEMPLATES: {");
-  const docAt = src.indexOf("BUILTIN_TEMPLATES_DOC:");
+  // The next member after the object literal — a stable end anchor now that the
+  // old BUILTIN_TEMPLATES_DOC sibling is gone (deleted with the file pipeline).
+  const endAt = src.indexOf("async init(", start);
   expect(start).toBeGreaterThan(-1);
-  expect(docAt).toBeGreaterThan(start);
-  let chunk = src.slice(src.indexOf("{", start), docAt); // object + trailing comma + comment
+  expect(endAt).toBeGreaterThan(start);
+  let chunk = src.slice(src.indexOf("{", start), endAt); // object + trailing comma + comment
   const objText = chunk.slice(0, chunk.lastIndexOf("}") + 1); // drop the trailing comma/comment
   // eslint-disable-next-line no-eval
   return eval("(" + objText + ")");

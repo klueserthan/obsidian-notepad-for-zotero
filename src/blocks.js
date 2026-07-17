@@ -260,27 +260,3 @@ export function makeBlock(config, annotations = [], opts = {}) {
   const body = renderBlockBody(config, annotations, opts);
   return `%% zon ${configToString(config)} %%\n${body}\n%% /zon %%`;
 }
-
-// Convert a legacy mgmeyers-style annotation dump into an empty live block, so
-// a subsequent Sync repopulates it from Zotero. Targets the
-// `%% begin annotations %%` … `%% end annotations %%` region and the trailing
-// `%% Import Date: … %%` marker the old template emits. Returns
-// { markdown, changed }; `changed` is false if no legacy markers were found.
-const LEGACY_RE = /%%\s*begin annotations\s*%%[\s\S]*?%%\s*end annotations\s*%%/i;
-const IMPORT_DATE_RE = /[ \t]*%%\s*Import Date:[^%]*%%[ \t]*\n?/i;
-
-export function migrateLegacyAnnotations(md, opts = {}) {
-  const cfg = opts.config || "kind=annotations colour=all sync=on format=list";
-  const block = `%% zon ${cfg} %%\n%% /zon %%`;
-  let out = String(md);
-  let changed = false;
-  if (LEGACY_RE.test(out)) {
-    out = out.replace(LEGACY_RE, block);
-    changed = true;
-  }
-  if (IMPORT_DATE_RE.test(out)) {
-    out = out.replace(IMPORT_DATE_RE, "");
-    changed = true;
-  }
-  return { markdown: out, changed };
-}

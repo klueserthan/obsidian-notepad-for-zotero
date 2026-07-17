@@ -13,28 +13,19 @@ describe("ZONCore helpers (in Zotero runtime)", function () {
     C = win.ZONCore;
   });
 
-  it("exposes the path + safety helpers", function () {
-    ["vaultRelative", "vaultName", "buildObsidianUri", "sanitizeFilename",
-     "isUnder", "parseObsidianVaults", "obsidianConfigPath", "syncBlocks",
+  it("exposes the render + helper surface", function () {
+    ["sanitizeFilename", "syncBlocks", "makeBlock", "parseBlocks", "render",
+     "stripMarkers", "stripFrontmatter", "mdToHtml",
      "applyManifest", "setManifestEntry", "buildManifestFromScaffold"]
       .forEach((k) => assert.isFunction(C[k], k + " should be a function"));
   });
 
-  it("computes vault-relative paths and obsidian:// URLs", function () {
-    assert.equal(C.vaultRelative("/v/Vault/Refs/@x.md", "/v/Vault"), "Refs/@x");
-    assert.equal(
-      C.buildObsidianUri("My Vault", "Refs/@x"),
-      "obsidian://open?vault=My%20Vault&file=Refs%2F%40x",
-    );
-  });
-
-  it("sanitizes filenames and confines paths", function () {
+  it("sanitizes filenames (no path separators survive)", function () {
     assert.notMatch(C.sanitizeFilename("../../etc/passwd"), /[\\/]/);
-    assert.isTrue(C.isUnder("/n/Notes/@x.md", "/n/Notes"));
-    assert.isFalse(C.isUnder("/n/Other/@x.md", "/n/Notes"));
+    assert.equal(C.sanitizeFilename(""), "untitled");
   });
 
-  it("runs the merge engine idempotently through the bundle", function () {
+  it("runs the render-side block engine idempotently through the bundle", function () {
     const md = "---\ncitekey: x\n---\n\n"
       + "%% zon kind=annotations colour=all sync=on format=list %%\n%% /zon %%\n";
     const a = C.syncBlocks(md, [], { citekey: "x" });
@@ -51,7 +42,7 @@ describe("ZONCore helpers (in Zotero runtime)", function () {
     assert.equal(a, b, "applyManifest should be idempotent");
   });
 
-  it("finds marker ranges through the bundle (Phase D groundwork)", function () {
+  it("finds marker ranges through the bundle", function () {
     const md = "%% zon kind=annotations sync=on format=list %%\n"
       + "- a %% ann:ABCD %%\n%% /zon %%\n";
     const ranges = C.findMarkerRanges(md);

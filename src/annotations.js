@@ -1,6 +1,7 @@
-// Render Zotero annotations into the user's existing Obsidian note format, with
-// an invisible `%% ann:KEY %%` anchor appended so the idempotent merge layer
-// (src/merge.js) can dedupe by Zotero annotation key.
+// Render Zotero annotations into the user's note format, with an invisible
+// `%% ann:KEY %%` anchor appended after each item (a stable per-annotation
+// marker keyed by Zotero annotation key; stripped before a Summary Note is
+// created — see src/strip-markers.js).
 //
 // The user's real notes use this shape under `## Annotations`:
 //
