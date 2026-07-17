@@ -25,6 +25,20 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Generic Summary Note titles.** Every generated note (and the Composer's
+  live preview — the two stay identical) now opens with an automatic
+  `# Summary: <item title>` heading, so Zotero titles the note recognizably and
+  generated notes are easy to spot in note lists. Templates must no longer
+  start with their own `# H1`. Applied downstream of the LLM gating
+  fingerprint, so cached Run-LLM resolutions are never invalidated.
+- **Addon-owned templates folder with seeding.** The templates folder now
+  defaults to `paper-summarizer/templates` under the Zotero data directory. On
+  startup the folder is created and each starter template is written **only if
+  its file is missing** — user edits are never overwritten, and deleting a
+  seeded file restores the pristine version on the next start. A one-time
+  migration clears a vault-era *Templates folder* preference so the addon
+  folder takes effect (the old folder and its files are left untouched on
+  disk; point the preference back at it if you really want the old behavior).
 - **LLM in the Composer: placeholders, explicit Run-LLM, Generate gating
   (ADR-0001).** The Composer now hosts the ADR-0001 LLM semantics. The live
   preview still never executes a `{% llm %}` block — each renders as an inert
@@ -89,6 +103,16 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
+- **Starter templates are Obsidian-free.** The built-in templates no longer
+  carry YAML frontmatter (wikilinked authors/topics/journal, `citekey`, tag
+  lists), `[[wikilinks]]`, or `> [!abstract]`/`> [!warning]` Obsidian callouts
+  (which rendered as literal text in Zotero notes). Item links now use
+  `[Open in Zotero]({{desktopURI}})` and `[Open PDF]({{openPdf}})`; callouts
+  became bold-labelled blockquotes. Block syntax (`%% zon %%`), colour routing
+  (`highlights()`), and `{% llm %}` blocks are unchanged — and a frontmatter-free
+  `highlights()`-based template still classifies as a whole-note template.
+- The plugin's preferences pane is now labelled "Paper Summarizer" (was still
+  "Obsidian Notepad").
 - **Template Builder is now a pure template-authoring surface (#29).** The Builder
   no longer opens on, edits, or writes an item's vault/note file. It opens on a
   *template* — the one selected in the Composer's picker (or the default template) —

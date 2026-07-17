@@ -27,6 +27,7 @@ const SAMPLE = {
   creators: [{ firstName: "Jane", lastName: "Doe" }, { firstName: "John", lastName: "Smith" }],
   publicationTitle: "Journal of Things", itemType: "journalArticle",
   allTags: "alpha, beta", desktopURI: "zotero://select/library/items/ABCD1234",
+  openPdf: "zotero://open-pdf/library/items/EFGH5678",
   bibliography: "Doe, J. (2020). A Thing.", abstractNote: "An abstract.",
   // annotation-block fields
   text: "highlighted text", comment: "a note", page: "12",
@@ -78,11 +79,24 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     }
   });
 
-  it("the note scaffold renders item data into its frontmatter + body", () => {
+  it("the note scaffold renders item data into its body (frontmatter-free)", () => {
     const out = render(builtins["note"], SAMPLE);
-    expect(out).toContain('citekey: "doe2020thing"');
-    expect(out).toContain("[[Jane Doe]]");
     expect(out).toContain("**Citation:** Doe, J. (2020). A Thing.");
+    expect(out).toContain("[Open in Zotero](zotero://select/library/items/ABCD1234)");
+    expect(out).toContain("[Open PDF](zotero://open-pdf/library/items/EFGH5678)");
+    expect(out).toContain("> **Abstract:** An abstract.");
     expect(out).toContain("%% zon kind=annotations colour=all sync=on format=list %%");
+    expect(out).not.toMatch(/^---/);
+    expect(out).not.toContain("[[");
+  });
+
+  it("no builtin carries Obsidian residue (frontmatter, wikilinks, callouts, H1)", () => {
+    for (const [name, text] of Object.entries(builtins)) {
+      expect(text, `${name} starts with a frontmatter fence`).not.toMatch(/^---\r?\n/);
+      expect(text, `${name} contains a wikilink`).not.toContain("[[");
+      expect(text, `${name} contains an Obsidian callout`).not.toMatch(/>\s*\[!/);
+      // The pipeline prepends `# Summary: <title>` — templates must not add their own H1.
+      expect(text, `${name} opens with an H1`).not.toMatch(/^#\s/);
+    }
   });
 });

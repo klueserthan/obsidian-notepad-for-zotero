@@ -59,4 +59,9 @@ describe("templateKind with LLM blocks", () => {
     const t = "- {{text}}\n{% llm context=\"abstract\" %}p{% endllm %}";
     expect(templateKind(t)).toBe("document");
   });
+
+  it("classifies a frontmatter-free highlights() template as document", () => {
+    const t = '## Key passages\n{{ highlights(colour="yellow", format="quote") }}\n';
+    expect(templateKind(t)).toBe("document");
+  });
 });

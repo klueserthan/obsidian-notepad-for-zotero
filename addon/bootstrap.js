@@ -32,6 +32,9 @@ var ZON = {
   PREF_LLM_MAX_CONTEXT: "extensions.zotero-obsidian-notes.llmMaxContextChars",
   PREF_LLM_TIMEOUT: "extensions.zotero-obsidian-notes.llmTimeoutSeconds",
   PREF_LLM_AUTORUN: "extensions.zotero-obsidian-notes.llmAutoRun",
+  // One-time migration flag: set after the vault-era templatesDir pref has been
+  // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
+  PREF_TEMPLATES_MIGRATED: "extensions.zotero-obsidian-notes.templatesMigrated",
   // Defaults are intentionally empty — folders are user-specific and are set in
   // preferences. Empty = "not configured yet", handled by the pane's empty state
   // rather than guessed.
@@ -57,41 +60,27 @@ var ZON = {
   DEFAULT_LLM_MAX_CONTEXT: 100000,
   DEFAULT_LLM_TIMEOUT: 60,
   DEFAULT_LLM_AUTORUN: false,
+  DEFAULT_TEMPLATES_MIGRATED: false,
   _templates: null,
 
   // Starter templates that ship WITH the plugin. They serve two purposes:
-  //  1. onboarding (and the Settings button) writes any that are missing into the
-  //     user's chosen Templates folder, so they own + edit them in Obsidian;
-  //  2. they're a zero-config fallback — even with no Templates folder set, "Create
-  //     note" and the Insert dropdown work out of the box (see loadTemplates /
-  //     resolveNoteScaffoldText). Keyed by filename stem; written as `<stem>.md`.
+  //  1. seedTemplatesFolder() writes any that are MISSING into the addon-owned
+  //     templates folder on every startup (existing files are never overwritten),
+  //     so the user owns + edits them in the Template Builder;
+  //  2. they're a zero-config fallback — even before seeding runs, the Composer
+  //     and Builder work out of the box (see loadTemplates / resolveNoteScaffoldText).
+  // Keyed by filename stem; written as `<stem>.md`.
   // Kinds are auto-detected (templateKindOf): `note*` = whole-note scaffolds,
   // `abstract` = a field block, the rest = per-annotation block formats.
+  // Obsidian-free by design: no YAML frontmatter, no [[wikilinks]], no > [!callouts].
+  // No leading H1 either — the generate/preview pipeline prepends the
+  // `# Summary: <item title>` heading itself (withSummaryTitle).
   BUILTIN_TEMPLATES: {
-    "note": `---
-citekey: "{{citekey}}"
-Title: "{{title}}"
-Year: "{{date | format("YYYY")}}"
-Author:
-{% for c in creators %} - "[[{{c.firstName}} {{c.lastName}}]]"
-{% endfor %}
-Journal: "[[J. {{publicationTitle}} ]]"
-Tags:
-  - Reference
-  - {{itemType}}
-Topics:
-{% if allTags %}
-{% for tag in allTags.split(", ") %}
-- "[[{{tag}}]]"
-{% endfor %}
-{% endif %}
-ZoteroLink: "{{desktopURI}}"
-KeyIdea:
----
+    "note": `**Citation:** {{bibliography}}
 
-**Citation:** {{bibliography}}
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 
-**Abstract:** {%- if abstractNote %} {{abstractNote}} {% endif %}
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
 
 ## Notes
 
@@ -100,16 +89,7 @@ KeyIdea:
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
-    "note-minimal": `---
-citekey: "{{citekey}}"
-Title: "{{title}}"
-Year: "{{date | format("YYYY")}}"
-Author:
-{% for c in creators %} - "[[{{c.firstName}} {{c.lastName}}]]"
-{% endfor %}
-ZoteroLink: "{{desktopURI}}"
-KeyIdea:
----
+    "note-minimal": `[Open in Zotero]({{desktopURI}})
 
 ## Notes
 
@@ -118,14 +98,9 @@ KeyIdea:
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
-    "note-by-colour": `---
-citekey: "{{citekey}}"
-Title: "{{title}}"
-Year: "{{date | format("YYYY")}}"
-ZoteroLink: "{{desktopURI}}"
----
+    "note-by-colour": `**Citation:** {{bibliography}}
 
-**Citation:** {{bibliography}}
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 
 ## Key passages (yellow)
 {{ highlights(colour="yellow", format="quote") }}
@@ -137,12 +112,11 @@ ZoteroLink: "{{desktopURI}}"
 {{ highlights(colour="blue", format="quote") }}
 `,
     "abstract": `%%! kind=field sync=on %%
-> [!abstract] Abstract
+> **Abstract:**
 > {{abstractNote}}
 `,
     "critique": `%%! colour=red sync=on sep=blank %%
-> [!warning] p.{{page}}
-> {{text}}{% if comment %}
+> **p.{{page}}:** {{text}}{% if comment %}
 >
 > {{comment}}{% endif %}
 `,
@@ -175,7 +149,10 @@ ZoteroLink: "{{desktopURI}}"
     // down. Destroy them up front so we never end up with several CodeMirror
     // views live in the same document (which corrupts the caret while typing).
     try { for (let win of Zotero.getMainWindows()) this.removeWraps(win); } catch (e) {}
-    this.loadTemplates().catch((e) => this.log("loadTemplates failed: " + e));
+    this.migrateTemplatesDir();
+    this.seedTemplatesFolder()
+      .then(() => this.loadTemplates())
+      .catch((e) => this.log("seed/loadTemplates failed: " + e));
     for (let win of Zotero.getMainWindows()) this.addToWindow(win);
     try { this.registerSection(); } catch (e) { this.log("registerSection failed: " + e); }
     try {
@@ -183,7 +160,7 @@ ZoteroLink: "{{desktopURI}}"
         Zotero.PreferencePanes.register({
           pluginID: this.pluginID,
           src: this.rootURI + "content/preferences.xhtml",
-          label: "Obsidian Notepad",
+          label: "Paper Summarizer",
           image: this.icon,
           scripts: [this.rootURI + "content/preferences.js"],
         });
@@ -406,7 +383,46 @@ ZoteroLink: "{{desktopURI}}"
 
   templatePath() { return Zotero.Prefs.get(this.PREF_TEMPLATE, true) || this.DEFAULT_TEMPLATE; },
   formatsDir() { return Zotero.Prefs.get(this.PREF_FORMATS_DIR, true) || this.DEFAULT_FORMATS_DIR; },
-  templatesDir() { return Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true) || this.DEFAULT_TEMPLATES_DIR; },
+  templatesDir() { return Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true) || this.defaultTemplatesDir(); },
+
+  // The addon-owned templates folder: lives under the Zotero data directory so the
+  // plugin manages its own templates instead of pointing into a (vault-era) user
+  // folder. Used whenever the templatesDir pref is blank — the pref still lets a
+  // user relocate the folder deliberately via the prefs pane.
+  defaultTemplatesDir() {
+    try { return PathUtils.join(Zotero.DataDirectory.dir, "paper-summarizer", "templates"); }
+    catch (e) { return ""; }
+  },
+
+  // One-time migration (issue #41): a vault-era templatesDir pref would keep
+  // shadowing the addon-owned folder (its old Obsidian-flavoured files override
+  // builtins by name). Clear it once so defaultTemplatesDir takes effect; the old
+  // folder itself is left untouched on disk.
+  migrateTemplatesDir() {
+    try {
+      if (Zotero.Prefs.get(this.PREF_TEMPLATES_MIGRATED, true)) return;
+      let cur = Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true);
+      if (cur && cur !== this.defaultTemplatesDir()) Zotero.Prefs.set(this.PREF_TEMPLATES_DIR, "", true);
+      Zotero.Prefs.set(this.PREF_TEMPLATES_MIGRATED, true, true);
+    } catch (e) { this.log("migrateTemplatesDir failed: " + e); }
+  },
+
+  // Seed the templates folder with the builtin starters: create the folder and
+  // write each builtin as `<name>.md` ONLY if that file is missing — user edits
+  // are never overwritten (deleting a seeded file restores it on next startup).
+  // Writes go through safeWrite (atomic tmp+rename), same as Builder saves.
+  async seedTemplatesFolder() {
+    let dir = this.templatesDir();
+    if (!dir) return;
+    try { await IOUtils.makeDirectory(dir, { ignoreExisting: true, createAncestors: true }); }
+    catch (e) { this.log("seedTemplatesFolder mkdir failed: " + e); return; }
+    for (let name of Object.keys(this.BUILTIN_TEMPLATES)) {
+      try {
+        let p = PathUtils.join(dir, name + ".md");
+        if (!(await IOUtils.exists(p))) await this.safeWrite(p, this.BUILTIN_TEMPLATES[name]);
+      } catch (e) { this.log("seedTemplatesFolder write failed for " + name + ": " + e); }
+    }
+  },
   defaultNoteTemplate() { return Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) || this.DEFAULT_DEFAULT_NOTE; },
 
   // Whole-note scaffolds available in the Templates folder: every file named
@@ -484,6 +500,9 @@ ZoteroLink: "{{desktopURI}}"
     if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return "document";
     if (/%%\s*zon\b/.test(t)) return "document";
     if (/\{%\s*llm\b/.test(t)) return "document";   // mirrors hasLLMBlocks
+    // Whole-note templates built from colour-routed highlights() calls (e.g. the
+    // frontmatter-free note-by-colour builtin) render once per item too.
+    if (/\{\{\s*highlights\s*\(/.test(t)) return "document";
     return "format";
   },
 
@@ -614,6 +633,7 @@ ZoteroLink: "{{desktopURI}}"
     seed(this.PREF_LLM_MAX_CONTEXT, this.DEFAULT_LLM_MAX_CONTEXT);
     seed(this.PREF_LLM_TIMEOUT, this.DEFAULT_LLM_TIMEOUT);
     seed(this.PREF_LLM_AUTORUN, this.DEFAULT_LLM_AUTORUN);
+    seed(this.PREF_TEMPLATES_MIGRATED, this.DEFAULT_TEMPLATES_MIGRATED);
   },
 
   sectionCollapsed() {
@@ -1250,7 +1270,7 @@ ZoteroLink: "{{desktopURI}}"
     try { model = this.llmModel() || ""; } catch (e) {}
     let html = null;
     try {
-      html = this.composePreviewHtmlFromState(win, rawMd, state, model);
+      html = this.composePreviewHtmlFromState(win, rawMd, state, model, item.getField("title"));
     } catch (e) {
       err = (e && e.message) ? e.message : String(e);
     }
@@ -1298,7 +1318,7 @@ ZoteroLink: "{{desktopURI}}"
   // place so the preview shows exactly what Generate will write; otherwise blocks
   // render as inert placeholders. NEVER executes a model call — the substitution
   // uses already-cached outputs only.
-  composePreviewHtmlFromState(win, rawMd, state, model) {
+  composePreviewHtmlFromState(win, rawMd, state, model, itemTitle) {
     let C = win.ZONCore;
     let md = rawMd;
     if (state && C.composeHasLLMBlocks && C.composeHasLLMBlocks(state) && C.canGenerate(state)) {
@@ -1306,6 +1326,10 @@ ZoteroLink: "{{desktopURI}}"
     }
     md = C.stripFrontmatter(md);
     md = C.stripMarkers(md);
+    // Title is added strictly downstream of the gating fingerprint (which reads
+    // rawMd), so it can never invalidate cached LLM resolutions — and Generate
+    // applies the identical step, keeping preview == note.
+    md = C.withSummaryTitle(md, itemTitle);
     return C.composePreviewHtml(md, { model });
   },
 
@@ -1958,9 +1982,11 @@ ZoteroLink: "{{desktopURI}}"
     let md = (opts && typeof opts.md === "string")
       ? opts.md
       : await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
-    // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%.
+    // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%,
+    // then the generic title heading (Zotero titles the note from its first line).
     md = win.ZONCore.stripFrontmatter(md);
     md = win.ZONCore.stripMarkers(md);
+    md = win.ZONCore.withSummaryTitle(md, item.getField("title"));
     let html = win.ZONCore.mdToHtml(md);
     let note = new Zotero.Item("note");
     if (item.libraryID) note.libraryID = item.libraryID;
@@ -1988,6 +2014,7 @@ ZoteroLink: "{{desktopURI}}"
       : await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
     md = win.ZONCore.stripFrontmatter(md);
     md = win.ZONCore.stripMarkers(md);
+    md = win.ZONCore.withSummaryTitle(md, item.getField("title"));
     let html = win.ZONCore.mdToHtml(md);
     noteItem.setNote(html);
     // Re-stamp defensively — the note already carried the tag (that's how it was

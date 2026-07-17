@@ -54,6 +54,9 @@ export function templateKind(text) {
   if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return "document";
   if (/%%\s*zon\b/.test(t)) return "document";
   if (hasLLMBlocks(t)) return "document";   // NEW — templates with LLM blocks are once-per-item
+  // A whole-note template built from colour-routed highlights() calls (e.g. the
+  // frontmatter-free note-by-colour builtin) is rendered once per item too.
+  if (/\{\{\s*highlights\s*\(/.test(t)) return "document";
   return "format";
 }
 

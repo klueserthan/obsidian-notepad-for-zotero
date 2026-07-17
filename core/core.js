@@ -13,7 +13,7 @@ export { parseManifest, hasManifest, applyManifest, setManifestEntry, removeMani
 export { findMarkerRanges, rangeRevealed } from "../src/markers.js";
 export { findFrontmatterRange, findHeadingRanges, findLinkRanges, findEmphasisRanges, findImageEmbedRanges } from "../src/preview.js";
 export { COLOR_NAMES } from "../src/colors.js";
-export { stripMarkers, stripFrontmatter } from "../src/strip-markers.js";
+export { stripMarkers, stripFrontmatter, withSummaryTitle } from "../src/strip-markers.js";
 export { mdToHtml } from "../src/md-html.js";
 export { composePreviewHtml, llmPlaceholderHtml, PLACEHOLDER_NOTE } from "../src/compose-preview.js";
 // `hasLLMBlocks` is aliased to `composeHasLLMBlocks` — the llm-blocks.js export of

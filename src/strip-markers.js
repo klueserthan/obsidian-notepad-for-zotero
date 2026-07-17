@@ -57,3 +57,17 @@ export function stripFrontmatter(md) {
   // the note body begins cleanly.
   return text.slice(m[0].length).replace(/^(?:\r?\n)+/, "");
 }
+
+// Prepend the generic Summary Note title heading. Zotero derives a note's
+// displayed title from its first content line, so every generated note (and its
+// preview — the two must match) opens with `# Summary: <item title>`; templates
+// therefore must not supply their own leading H1. Idempotent: if the body
+// already opens with the exact heading this call would add, it is returned
+// unchanged. An empty/missing item title falls back to plain `# Summary`.
+export function withSummaryTitle(md, itemTitle) {
+  const body = String(md == null ? "" : md);
+  const title = String(itemTitle == null ? "" : itemTitle).trim();
+  const heading = title ? `# Summary: ${title}` : "# Summary";
+  if (body === heading || body.startsWith(heading + "\n")) return body;
+  return heading + "\n\n" + body;
+}

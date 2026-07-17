@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stripMarkers, stripFrontmatter } from "../src/strip-markers.js";
+import { stripMarkers, stripFrontmatter, withSummaryTitle } from "../src/strip-markers.js";
 
 describe("stripMarkers — delimiter lines", () => {
   it("removes an open/close annotations block, keeping the body", () => {
@@ -132,5 +132,34 @@ describe("stripFrontmatter", () => {
   it("leaves body content byte-identical after the closing fence", () => {
     const md = "---\na: 1\n---\n## Notes\n\ntext";
     expect(stripFrontmatter(md)).toBe("## Notes\n\ntext");
+  });
+});
+
+describe("withSummaryTitle", () => {
+  it("prepends the generic title heading with the item title", () => {
+    expect(withSummaryTitle("**Citation:** Doe.", "A Thing")).toBe(
+      "# Summary: A Thing\n\n**Citation:** Doe."
+    );
+  });
+
+  it("falls back to plain '# Summary' when the title is empty or missing", () => {
+    expect(withSummaryTitle("body", "")).toBe("# Summary\n\nbody");
+    expect(withSummaryTitle("body", null)).toBe("# Summary\n\nbody");
+    expect(withSummaryTitle("body", "   ")).toBe("# Summary\n\nbody");
+  });
+
+  it("is idempotent — re-applying the same title changes nothing", () => {
+    const once = withSummaryTitle("## Notes\nbody", "A Thing");
+    expect(withSummaryTitle(once, "A Thing")).toBe(once);
+  });
+
+  it("leaves the body byte-identical below the heading", () => {
+    const body = "line one\r\nline two\n\n> quote 100% intact\n";
+    expect(withSummaryTitle(body, "T").endsWith(body)).toBe(true);
+  });
+
+  it("does not skip prepending for a merely similar heading", () => {
+    const md = "# Summary: Other Paper\n\nbody";
+    expect(withSummaryTitle(md, "A Thing")).toBe("# Summary: A Thing\n\n" + md);
   });
 });
