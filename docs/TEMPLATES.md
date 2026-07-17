@@ -39,16 +39,51 @@ Templates are written in **Nunjucks**.You have `{{ variable }}`,
 | `{{type}}`      | `highlight`, `underline`, `image`, `note` (ink isn't rendered) |
 | `{{citekey}}`   | the item's citekey                                     |
 | `{{imageBaseName}}` | filename for an image annotation                   |
+| `{{tags}}`      | the **highlight's own** tags, as a list (loop/filter it) |
+| `{{tagList}}`   | the same tags as a comma-joined string                 |
+
+`{{tags}}` is the annotation's *own* tags (the ones you add to a highlight in the
+Zotero reader), distinct from the item-level `{{allTags}}` in a note template. Use
+it to carry per-highlight role markers into the note — e.g. tag highlights
+`method` / `finding` / `quote` and render or filter on them:
+
+```nunjucks
+%%! sync=on %%
+> {{text}}{% if tags %} {% for t in tags %}#{{t}} {% endfor %}{% endif %}
+> — [p.{{page}}]({{link}})
+```
 
 ### Variables in `note.md` and in a `kind=field` element (whole-item)
 
 `{{citekey}}`, `{{title}}`, `{{date}}`, `{{dateAdded}}`, `{{dateModified}}`,
 `{{itemType}}`, `{{publicationTitle}}`, `{{abstractNote}}`, `{{bibliography}}`,
-`{{desktopURI}}`, `{{creators}}` (each has `.firstName` / `.lastName`),
-`{{allTags}}`.
+`{{desktopURI}}`, `{{openPdf}}`, `{{creators}}` (each has `.firstName` /
+`.lastName`), `{{authors}}` (those creators as one "First Last, First Last"
+string), `{{allTags}}`, `{{tags}}` (item tags as a list of `{tag}`), and
+`{{relations}}` (the item's Zotero **Related** items, each with `.citekey`,
+`.title`, `.key`).
+
+Two patterns those last two enable:
+
+```nunjucks
+Tags: [{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]
+Related: {% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% if not loop.last %}, {% endif %}{% endfor %}
+```
+
+The **`hashify`** filter lowercases a tag, turns spaces into underscores and strips
+the punctuation Obsidian rejects in a `#tag` (`()[]:,`). There's also a ready-made
+`related` field format — `%% zon kind=field format=related %%` — that renders the
+related-items links and refreshes on Update.
 
 `{{dateAdded}}` and `{{dateModified}}` are the Zotero "Date Added" / "Date
-Modified" timestamps as `YYYY-MM-DD`.
+Modified" timestamps as `YYYY-MM-DD`. (These are whole-item variables — they
+work in `note.md` and `kind=field` elements, **not** inside a per-annotation
+block, whose context is the highlight, not the item.)
+
+`{{desktopURI}}` is a `zotero://select/…` link that highlights the item in the
+Zotero **Library**; `{{openPdf}}` is a `zotero://open-pdf/…` link that opens the
+item's PDF in the **reader** (empty when the item has no PDF, so guard it with
+`{% if openPdf %}`). For example: `[Open PDF]({{openPdf}})`.
 
 ---
 
@@ -153,8 +188,12 @@ them. The open marker carries the block's settings as `key=value` attributes:
 | `kind` | `annotations` (default), `field`, `section`, `custom` | `annotations` renders the body once **per highlight**; the others render **once over the item's data** (abstract, citation, a metadata field) — see the directive section above. |
 | `colour` | `all`, `yellow`, `red`, `green`, `blue`, `purple`, `magenta`, `orange`, `grey` | Only pull highlights of this colour (`annotations` blocks only). |
 | `type` | `all`, `highlight`, `underline`, `image`, `ink`, `note` | Only pull annotations of this type. Omitted = all types. |
+| `tag` | a tag name, or a comma list (`tag=method` / `tag=method,finding`) | Only pull highlights carrying one of these **annotation tags** (the tags you add to a highlight in the Zotero reader). Comma list = OR. Combines with `colour`/`type` (AND across filters). Omitted = any. `tags=` is an alias. |
 | `sync` | `on` (default), `off` | `on` = the block **mirrors Zotero** and is regenerated on every Update. `off` = a **frozen** one-time snapshot Update never touches — use it to hand-curate. |
 | `format` | a template name (`list`, `quote`, `callout`, `compact`, or your own file) | Which per-annotation template rendered the body, so Update can re-render it the same way. |
+| `style` | `list`, `quote`, `callout` | Compose a body from a base style + `parts` instead of a named `format` (the Template Builder's "Compose" mode). Takes precedence over `format`. |
+| `parts` | a comma list of `page`, `comment`, `tags` | Which extra pieces a composed (`style=…`) body includes; the highlight text is always shown. |
+| `order` | `comment-first` | On a composed block (`style=…` with `comment` in `parts`), put **your comment first** and the quote underneath as support. Omit for quote-first. |
 
 ### The `%% ann:KEY %%` anchors
 
@@ -175,6 +214,26 @@ add *after* it can be kept (see below).
   hand-edited it and want it frozen against further Updates.
 - Everything **outside** `%% zon %%` blocks — your own writing, headings, links —
   is never touched.
+
+### What's yours vs. what refreshes
+
+The note body is **yours**. It's free-form markdown: write whatever you like,
+with whatever headings you like — or none. Put `%% zon %%` blocks **anywhere**
+you want; you can have a freestyle note with several annotation blocks and
+nothing else. **Update only ever changes two things:**
+
+1. **The YAML frontmatter** — Zotero-owned keys (those filled by a `{{ }}`
+   expression in your template) are refreshed; keys you fill in plainly are
+   treated as yours and preserved, as are any keys you add. A note with no
+   frontmatter is left without one.
+2. **The inside of `sync=on` `%% zon %%` blocks** — regenerated from Zotero's
+   current annotations, wherever the block sits.
+
+**Everything else in the body is left byte-for-byte** — prose above, below, or
+between blocks; your headings; links; text with no heading at all. There is no
+required `## Notes` or `## Annotations` structure. If you want a value to keep
+refreshing from Zotero, drive it from a `{{ }}` expression (in the frontmatter or
+a `%% zon kind=field %%` block); anything you type as plain text stays put.
 
 ### Where to put your own notes
 

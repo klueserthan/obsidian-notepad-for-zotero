@@ -7,6 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-beta.19] — 2026-07-02
+
+### Added
+- **Feature parity with "Zotero Integration" templates.** Three things those
+  templates could express that ZON couldn't now work:
+  - **Item tags as a list.** `{{tags}}` is an iterable (`[{tag}]`) alongside the
+    `{{allTags}}` string, so you can build a sanitised inline hashtag list —
+    `Tags: [{% for t in tags %}#{{t.tag | hashify}}{% if not loop.last %}, {% endif %}{% endfor %}]`.
+    A new **`hashify`** filter does the lowercase/underscore/strip-punctuation
+    cleanup in one step.
+  - **Related items by citekey.** `{{relations}}` (`[{citekey,title,key}]`) exposes
+    a note's Zotero **Related** items — `{% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% endfor %}` —
+    and a new **`related`** updatable field format renders them, refreshing on Update.
+  - **An `{{authors}}` string** ("First Last, First Last"), next to the structured
+    `{{creators}}`. Plus drop-in aliases so unmodified Zotero-Integration templates
+    run: `{{pdfZoteroLink}}`, `{{isFirstImport}}`, and per-annotation
+    `{{annotatedText}}` / `{{colorCategory}}` / `{{id}}` / `{{attachment.itemKey}}` /
+    `{{imageRelativePath}}`.
+- **The Template Builder surfaces all of the above** — "Related items (links)" in
+  the updatable-field picker, an `{{authors}}` variable, and "Tags (#hashtags)" /
+  "Related (links)" in the frontmatter field builder — with live preview.
+
+## [1.0.0-beta.18] — 2026-07-02
+
+### Fixed
+- **Template Builder "Save to note" now ends the file with a newline.** Notes
+  saved from the builder are POSIX-clean (a single trailing newline) instead of
+  ending mid-line.
+
+## [1.0.0-beta.17] — 2026-07-02
+
+### Fixed
+- **Data loss when editing a note while auto-syncing highlights.** With Auto-sync
+  on, adding a highlight while you were editing the note could drop the prose you'd
+  just typed, falsely report the note as "changed outside Zotero", and — on Reload
+  — load the prose-less version, erasing your writing. All writes to a note are now
+  **serialized** (the debounced autosave and the annotation auto-sync can no longer
+  interleave), auto-sync **skips rather than clobbers** edits you make mid-sync,
+  each write uses a unique temp file, and the "unsaved edits" flag is tracked
+  accurately so the conflict bar no longer misfires.
+- **Auto-sync no longer scrolls the note to the top.** Pulling in a new highlight
+  now preserves your scroll position and caret instead of jumping to the top.
+
+### Changed
+- **The Template Builder opens on your note.** It now starts from the right
+  content for the selected item instead of a generic scaffold: if the item has
+  **no note yet**, the editor begins with **your default note template** (tweak
+  it, then Create note); if a **note already exists**, it **loads that note** so
+  you can edit it with the builder's tools and **Save to note** writes it back
+  (re-syncing its `%% zon %%` blocks). "Save to folder" still turns whatever's in
+  the editor into a reusable template.
+
+## [1.0.0-beta.16] — 2026-06-27
+
+### Fixed
+- **Template Builder: arrow keys now move the caret.** In the builder's editor,
+  pressing the arrow keys (and Home/End/PageUp/PageDown) did nothing — the caret
+  wouldn't move (typing and shortcuts worked). The editor now handles caret
+  navigation itself so it works reliably in the builder window.
+
+### Added
+- **The Template Builder is now available to everyone** (previously behind the
+  experimental-features toggle). Open it from the **Template Builder…** button in
+  an item's note actions, or **Build a note…** from the empty state — a dedicated
+  window to compose and edit note & highlight templates with a live preview.
+- **Template Builder: "Comment first" for composed blocks.** In the annotation
+  block's Compose mode you can now lead with **your comment** and put the quote
+  underneath as support (works for the list, blockquote and callout styles). It
+  writes `order=comment-first` on the block marker.
+- **Template Builder: split into separate blocks per tag.** Alongside "Separate
+  block per colour", inserting an annotation block can now emit one block **per
+  tag** (when the tag filter lists more than one), and the two splits combine into
+  a colour × tag grid of blocks.
+
+### Changed
+- **Template Builder: richer updatable-field picker.** The field picker now
+  groups **formatted presets** (citation/abstract/title/authors — which carry
+  their own label, e.g. "**Citation:**") apart from **any field** (a bare value
+  you label yourself), shows what the chosen field renders as, and lets you pick
+  live vs static. This clarifies the "Citation appears twice" case — the formatted
+  preset already includes its own `Citation:` label, so you don't add one.
+
+## [1.0.0-beta.15] — 2026-06-26
+
+### Added
+- **Filter an annotations block by tag.** A block can now pull only the highlights
+  carrying a given annotation tag: `%% zon kind=annotations tag=method … %%`
+  (comma list = OR, e.g. `tag=method,finding`). Combines with `colour`/`type`.
+
+### Changed
+- **Update no longer imposes the template's heading structure on your note.** A
+  note is free-form: your prose and `%% zon %%` blocks can go **anywhere**, with
+  or without headings — you might have a freestyle note with several annotation
+  blocks and nothing else. Update now refreshes **only** the YAML frontmatter
+  (Zotero-owned keys) and syncs the `%% zon %%` blocks; the rest of the body is
+  left byte-for-byte. Previously the non-manifest Update path re-merged the note
+  against the template by heading, which could overwrite anything that didn't fit
+  the template's `## Notes` / `## Annotations` shape (e.g. notes above the first
+  heading). Frontmatter that should keep refreshing belongs in a `{{ }}`
+  expression; plainly-filled keys are preserved as yours.
+
+### Fixed
+- **Settings → “Default note template” now lists your Templates-folder files
+  first time.** The dropdown could come up with only the built-in options until
+  you restarted Zotero; it now loads your folder's templates reliably when the
+  pane opens.
+
+## [1.0.0-beta.14] — 2026-06-25
+
+### Added
+- **Per-annotation tags in block templates.** A highlight's own tags (the ones
+  you add to an annotation in the Zotero reader, e.g. `method` / `finding` /
+  `quote`) are now available inside a block template as `{{tags}}` (a list to
+  loop or filter) and `{{tagList}}` (a comma-joined string) — distinct from the
+  item-level `{{allTags}}`. Lets you carry per-highlight role markers into the
+  note. See docs/TEMPLATES.md.
+- **`{{openPdf}}` template variable.** A whole-item variable (for `note.md` and
+  `kind=field` elements) holding a `zotero://open-pdf/…` link that opens the
+  item's PDF in Zotero's reader — complementing `{{desktopURI}}`, which only
+  selects the item in the Library. Empty when the item has no PDF, so guard with
+  `{% if openPdf %}`.
+
 ## [1.0.0-beta.13] — 2026-06-23
 
 ### Added

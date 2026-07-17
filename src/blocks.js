@@ -16,8 +16,15 @@
 // anywhere, any number, each with its own filter / format / sync flag.
 
 import { makeEnv } from "./render.js";
-import { DEFAULT_FORMATS, DEFAULT_FORMAT_NAME } from "./formats.js";
+import { DEFAULT_FORMATS, DEFAULT_FORMAT_NAME, composeFormat } from "./formats.js";
 import { pdfLink } from "./annotations.js";
+
+// Resolve the format a block renders with: a composed `style`+`parts` format (the
+// configurator's advanced mode) takes precedence over a named `format=…`.
+function resolveFormat(config, formats) {
+  if (config.style) return composeFormat(config.style, config.parts, config.order === "comment-first");
+  return formats[config.format] || formats[DEFAULT_FORMAT_NAME];
+}
 
 const OPEN_RE = /^\s*%%\s*zon\s+([^%]*?)\s*%%\s*$/;
 const CLOSE_RE = /^\s*%%\s*\/zon\s*%%\s*$/;
@@ -71,20 +78,35 @@ export function parseBlocks(md) {
 
 function annotationContext(a, opts) {
   const pageIndex = a.pageIndex ?? 0;
+  const attachmentFolder = opts.attachmentFolder || "References/Attachments";
+  const citekey = opts.citekey || "";
+  const attachmentKey = a.attachmentKey || "";
   return {
     text: a.annotatedText || "",
+    annotatedText: a.annotatedText || "", // alias (mgmeyers name)
     comment: a.comment || "",
     page: a.pageLabel || "",
     pageLabel: a.pageLabel || "",
     pageIndex,
     key: a.key,
+    id: a.key, // alias (mgmeyers name)
     colour: a.colourName || "",
     color: a.colourName || "",
+    colorCategory: a.colourName || "", // alias (mgmeyers name)
     type: a.type || "",
     link: pdfLink(a),
-    citekey: opts.citekey || "",
+    citekey,
+    attachmentKey,
+    attachment: { itemKey: attachmentKey }, // mgmeyers `annotation.attachment.itemKey`
     imageBaseName: a.imageBaseName || "",
-    attachmentFolder: opts.attachmentFolder || "References/Attachments",
+    // The assembled vault-relative path to an image annotation's PNG (mgmeyers
+    // `annotation.imageRelativePath`); "" for text highlights.
+    imageRelativePath: a.imageBaseName ? `${attachmentFolder}/${citekey}/${a.imageBaseName}` : "",
+    // The highlight's OWN tags (role markers like method/finding/quote), as a
+    // list to loop/filter, plus a comma-joined string for the simple case.
+    tags: a.tags || [],
+    tagList: (a.tags || []).join(", "),
+    attachmentFolder,
   };
 }
 
@@ -94,9 +116,24 @@ function matchesFilter(a, cfg) {
   // strokes (no text, no page content), so they'd render as empty `""` items.
   // Exclude them unless a block explicitly asks for `type=ink`.
   if (a.type === "ink" && (!wantType || wantType === "all")) return false;
+  // Colour filter: a single colour or a comma list (OR), e.g. `colour=yellow,blue`.
   const wantColour = cfg.colour || cfg.color;
-  if (wantColour && wantColour !== "all" && (a.colourName || "") !== wantColour) return false;
+  if (wantColour && wantColour !== "all") {
+    const want = String(wantColour).split(",").map((s) => s.trim()).filter(Boolean);
+    if (want.length && want.indexOf(a.colourName || "") === -1) return false;
+  }
   if (wantType && wantType !== "all" && a.type !== wantType) return false;
+  // Tag filter (OR-semantics): keep highlights carrying ANY of the named tags.
+  // `tag=method` or `tag=method,finding` (comma-separated). `tags=` is accepted
+  // as an alias. The annotation's own tags come from a.tags (see annotations.js).
+  const wantTags = cfg.tag || cfg.tags;
+  if (wantTags && wantTags !== "all") {
+    const want = String(wantTags).split(",").map((s) => s.trim()).filter(Boolean);
+    const have = a.tags || [];
+    if (want.length && !want.some((t) => have.indexOf(t) !== -1)) return false;
+  }
+  // `comment=yes` keeps only highlights that carry a non-empty comment.
+  if (cfg.comment === "yes" && !String(a.comment == null ? "" : a.comment).trim()) return false;
   return true;
 }
 
@@ -108,7 +145,7 @@ function matchesFilter(a, cfg) {
 function renderAnnotationItems(config, annotations, opts = {}) {
   const formats = opts.formats || DEFAULT_FORMATS;
   const env = opts.env || makeEnv();
-  const fmt = formats[config.format] || formats[DEFAULT_FORMAT_NAME];
+  const fmt = resolveFormat(config, formats);
   const anns = (annotations || [])
     .filter((a) => matchesFilter(a, config))
     .sort((x, y) => {
@@ -133,14 +170,20 @@ export function renderBlockBody(config, annotations, opts = {}) {
   const env = opts.env || makeEnv();
 
   if (kind !== "annotations") {
-    const tpl = formats[config.format] && formats[config.format].item;
-    if (tpl == null) return ""; // unknown template -> empty (don't invent content)
     const data = { citekey: opts.citekey || "", ...(opts.itemData || {}) };
     if (opts.citekey) data.citekey = opts.citekey;
+    // `var=<item field>` renders that single item variable (a custom field block
+    // for any field — `%% zon kind=field var=publisher %%`). Guarded to a plain
+    // identifier so the marker stays a safe, space-free token.
+    if (config.var && /^[A-Za-z0-9_]+$/.test(config.var)) {
+      return env.renderString("{{ " + config.var + " }}", data).replace(/\s+$/, "");
+    }
+    const tpl = formats[config.format] && formats[config.format].item;
+    if (tpl == null) return ""; // unknown template -> empty (don't invent content)
     return env.renderString(tpl, data).replace(/\s+$/, "");
   }
 
-  const fmt = formats[config.format] || formats[DEFAULT_FORMAT_NAME];
+  const fmt = resolveFormat(config, formats);
   const items = renderAnnotationItems(config, annotations, { ...opts, env, formats });
   return items.map((i) => i.text).join(fmt.sep || "\n");
 }

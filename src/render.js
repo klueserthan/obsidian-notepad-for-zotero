@@ -75,6 +75,13 @@ export function makeEnv() {
   env.addExtension("PersistExtension", new PersistExtension());
   env.addExtension("LLMExtension", new LLMExtension());
 
+  // {{ tag | hashify }} — turn a tag into a safe Obsidian #hashtag body: lowercase,
+  // spaces → underscores, drop the punctuation Obsidian won't accept in a tag
+  // (()[]:,). Convenience for `{% for t in tags %}#{{t.tag | hashify}}`, replacing
+  // the long replace()-chain the mgmeyers templates spell out by hand.
+  env.addFilter("hashify", (s) =>
+    String(s == null ? "" : s).toLowerCase().replace(/\s+/g, "_").replace(/[()[\]:,]/g, ""));
+
   // {{ value | format("YYYY-MM-DD h:mm a") }}
   env.addFilter("format", (value, fmt) => {
     if (value === undefined || value === null || value === "") return "";
