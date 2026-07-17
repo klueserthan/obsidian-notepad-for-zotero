@@ -3556,7 +3556,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let ok = Services.prompt.confirm(win, "Obsidian Notepad", this.t("msg.builderOverwrite", { name: safe }));
       if (!ok) return "Save cancelled";
     }
-    await IOUtils.writeUTF8(path, String(text || ""));
+    await this.safeWrite(path, String(text || ""));
     try { await this.refreshTemplates(); } catch (e) {}
     // Optionally make this the template "Create note" / "Build a note" uses by default.
     if (setDefault) { try { Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, safe, true); } catch (e) {} }
