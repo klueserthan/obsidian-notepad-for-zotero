@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { hasLLMBlocks as textHasLLMBlocks } from "../src/llm-blocks.js";
 import {
   composeKey,
   blocksFingerprint,
@@ -189,6 +190,35 @@ describe("placeholderInfo", () => {
   it("no blocks → empty info", () => {
     const s = createComposeState("# prose only\n", { itemKey: "A", templateName: "T" });
     expect(placeholderInfo(s)).toEqual([]);
+  });
+});
+
+// The gate-unavailable fallback in composerGenerate (stale core bundle: no
+// reconcileComposeState/canGenerate) refuses whenever the RAW rendered markdown
+// contains any {% llm %} block, using the pure llm-blocks predicate (or an
+// equivalent conservative inline regex). These assertions pin the behaviour the
+// fallback depends on: no false negatives for block-carrying templates, and a
+// clean false for zero-block templates so those may still generate.
+describe("gate-unavailable fallback predicate (hasLLMBlocks on raw md)", () => {
+  const INLINE_FALLBACK_RE = /\{%\s*llm\b/; // must match bootstrap's inline copy
+
+  it("detects multi-line and single-line blocks in raw rendered md", () => {
+    expect(textHasLLMBlocks(oneBlock)).toBe(true);
+    expect(textHasLLMBlocks(twoBlocks)).toBe(true);
+    expect(textHasLLMBlocks('{% llm context="abstract" %}x{% endllm %}')).toBe(true);
+    // Even a malformed/unclosed block must count — refusal, not a note with a hole.
+    expect(textHasLLMBlocks('{% llm context="abstract" %}\nno close')).toBe(true);
+  });
+
+  it("is false for templates with zero blocks (those may generate ungated)", () => {
+    expect(textHasLLMBlocks("# Just prose\n\nNo blocks here.\n")).toBe(false);
+    expect(textHasLLMBlocks("")).toBe(false);
+  });
+
+  it("the conservative inline regex agrees with the pure predicate", () => {
+    for (const md of [oneBlock, twoBlocks, '{% llm context="a" %}\nx', "# prose only\n", ""]) {
+      expect(INLINE_FALLBACK_RE.test(md)).toBe(textHasLLMBlocks(md));
+    }
   });
 });
 

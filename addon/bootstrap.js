@@ -534,6 +534,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "composer.generateBlocked": "unresolved {% llm %} block(s)",
     "tip.composerRunLLM": "Run the LLM interpreter on this template's {% llm %} blocks so the Summary Note can be generated (requires base URL and model)",
     "err.generateBlocked": "Cannot generate yet — {reason}",
+    "err.generateGateUnavailable": "plugin bundle out of date — cannot verify {% llm %} blocks; not generating. Try restarting Zotero.",
+    "err.llmRunUnexpected": "LLM run failed unexpectedly — {error}",
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
@@ -1401,7 +1403,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     };
 
     templateSel.addEventListener("change", () => this.schedulePreview(rec, { immediate: true }));
-    runLLMBtn.addEventListener("click", () => this.composerRunLLM(rec).catch((e) => this.log("composer run LLM failed: " + e)));
+    // Fail-loud (ADR-0001): an unexpected exception escaping composerRunLLM must
+    // reach the visible error box, never the console alone.
+    runLLMBtn.addEventListener("click", () => this.composerRunLLM(rec).catch((e) => {
+      this.log("composer run LLM failed: " + e);
+      try {
+        this.setLLMError(rec, this.t("err.llmRunUnexpected", { error: (e && e.message) ? e.message : String(e) }));
+        this.setStatus(rec, "");
+      } catch (e2) {}
+    }));
     generateBtn.addEventListener("click", () => this.composerGenerate(rec).catch((e) => this.log("composer generate failed: " + e)));
     builderBtn.addEventListener("click", () => { try { this.openTemplateBuilder(win, rec); } catch (e) { this.log("openTemplateBuilder failed: " + e); } });
 
@@ -1849,6 +1859,40 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
         this.log("composerGenerate render failed: " + e);
         return;
+      }
+    }
+
+    // Fail-loud fallback (ADR-0001): if the gating machinery is unavailable — a
+    // stale cached core bundle missing reconcileComposeState/canGenerate, or a
+    // state that could not be built — we cannot VERIFY the template's {% llm %}
+    // blocks, so only a template with ZERO blocks may generate. Detection uses
+    // the pure llm-blocks predicate when present, else a conservative inline
+    // regex (same pattern as src/llm-blocks.js hasLLMBlocks); a failed render
+    // or a thrown check counts as "has blocks" — refuse rather than degrade.
+    if (!state || !C || !C.canGenerate || !C.reconcileComposeState) {
+      let mdToCheck = rec.composeMd;
+      if (typeof mdToCheck !== "string" || !mdToCheck) {
+        try {
+          mdToCheck = await this.renderTemplateAsNote(win, item, name, { preview: true });
+          rec.composeMd = mdToCheck;
+        } catch (e) {
+          this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
+          this.log("composerGenerate render failed: " + e);
+          return;
+        }
+      }
+      let hasBlocks = true; // conservative default: unverifiable ⇒ refuse
+      try {
+        hasBlocks = (C && C.hasLLMBlocks)
+          ? !!C.hasLLMBlocks(mdToCheck)
+          : /\{%\s*llm\b/.test(String(mdToCheck || ""));
+      } catch (e) { this.log("LLM block check failed (treating as present): " + e); }
+      if (hasBlocks) {
+        let reason = this.t("err.generateGateUnavailable");
+        this.setLLMError(rec, reason);
+        this.setStatus(rec, "");
+        this.updateComposerButtons(rec);
+        throw new Error("composerGenerate refused: " + reason);
       }
     }
 
