@@ -1307,16 +1307,29 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     this.injectComposerCSS(win);
 
     // Our own styled section header (Zotero doesn't give `custom` plugin sections
-    // the native icon+title head — see paintSection). Click to collapse/expand.
+    // the native icon+title head — see paintSection). Click, Enter or Space
+    // collapses/expands; exposed to AT as a button with aria-expanded (kept in
+    // sync across every open pane by applyCollapsedAll).
     let header = h("div", "zon-header-bar");
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
     let headerIcon = h("img", "zon-header-icon"); headerIcon.src = this.icon;
+    headerIcon.setAttribute("alt", ""); // decorative — the title text carries the name
     let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = this.t("composer.title");
     let chevron = h("span", "zon-header-chevron"); chevron.textContent = "⌄";
+    chevron.setAttribute("aria-hidden", "true");
     header.append(headerIcon, headerTitle, chevron);
-    header.addEventListener("click", () => {
+    let toggleCollapsed = () => {
       let collapsed = !wrap.classList.contains("zon-collapsed");
       try { Zotero.Prefs.set(this.PREF_COLLAPSED, collapsed, true); } catch (e) {}
       this.applyCollapsedAll(collapsed);
+    };
+    header.addEventListener("click", toggleCollapsed);
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        toggleCollapsed();
+      }
     });
 
     let toolbar = h("div", "zon-toolbar");
@@ -1345,6 +1358,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     wrap.append(header, toolbar, preview);
     if (this.sectionCollapsed()) wrap.classList.add("zon-collapsed");
+    header.setAttribute("aria-expanded", String(!this.sectionCollapsed()));
 
     let rec = {
       wrap, host: preview, toolbar, templateSel, generateBtn, builderBtn,
@@ -3194,10 +3208,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   },
 
   // Collapse/expand every open section's body (everything but the header) to match
-  // the global collapsed pref. Toggled by clicking the section header.
+  // the global collapsed pref. Toggled by clicking the section header. Also keeps
+  // each header's aria-expanded in step for assistive tech.
   applyCollapsedAll(collapsed) {
     for (let rec of this.openRecs()) {
       try { if (rec.wrap) rec.wrap.classList.toggle("zon-collapsed", !!collapsed); } catch (e) {}
+      try {
+        let hb = rec.wrap && rec.wrap.querySelector(".zon-header-bar");
+        if (hb) hb.setAttribute("aria-expanded", String(!collapsed));
+      } catch (e) {}
     }
   },
 

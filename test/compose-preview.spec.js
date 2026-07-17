@@ -52,6 +52,37 @@ describe("composePreviewHtml", () => {
     expect(html).toContain("second");
   });
 
+  it("single-pass semantics: a list across an LLM block renders exactly as if the block were a paragraph", () => {
+    const md =
+      "- a\n- b\n\n" +
+      '{% llm context="abstract" %}\nprompt\n{% endllm %}\n\n' +
+      "- c\n- d\n";
+    const html = composePreviewHtml(md);
+    // Reference: the SAME document rendered in one mdToHtml pass with the LLM
+    // block replaced by a plain paragraph, then that paragraph swapped for the
+    // placeholder. Chunked per-span rendering could not reproduce this byte-for-byte.
+    const ref = mdToHtml("- a\n- b\n\nTOK\n\n- c\n- d\n").replace(
+      "<p>TOK</p>",
+      llmPlaceholderHtml({ contexts: ["abstract"], body: "prompt" }),
+    );
+    expect(html).toBe(ref);
+    // Both surrounding lists survive intact.
+    expect((html.match(/<ul>/g) || []).length).toBe(2);
+    expect((html.match(/<\/ul>/g) || []).length).toBe(2);
+  });
+
+  it("sentinel never leaks into the output, even when document text contains the base token", () => {
+    const md =
+      "ZON-LLM-PLACEHOLDER-0 is mentioned in prose.\n\n" +
+      '{% llm context="abstract" %}\np\n{% endllm %}\n';
+    const html = composePreviewHtml(md);
+    // The prose mention survives verbatim; the block became a placeholder.
+    expect(html).toContain("ZON-LLM-PLACEHOLDER-0 is mentioned in prose.");
+    expect(html).toContain('class="zon-llm-placeholder"');
+    // No unsubstituted (lengthened) sentinel remains.
+    expect(html).not.toMatch(/ZON-LLM-PLACEHOLDER(-X)+-\d/);
+  });
+
   it("shows a fallback when no model is configured", () => {
     const md = '{% llm context="abstract" %}\nx\n{% endllm %}\n';
     expect(composePreviewHtml(md)).toContain("(model not configured)");

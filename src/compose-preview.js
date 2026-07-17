@@ -70,10 +70,16 @@ export function llmPlaceholderHtml(block, opts = {}) {
 
 // Turn stripped Summary-Note markdown into preview-ready HTML.
 //
-// Non-LLM spans are converted with the exact same `mdToHtml` the Generate path
-// uses (so headings, lists, tables, blockquotes etc. look identical to the real
-// note). Each `{% llm %}` block is replaced with an inert placeholder. When the
-// markdown has no LLM blocks the output is byte-identical to `mdToHtml(md)`.
+// The whole document goes through ONE `mdToHtml` pass — the exact converter the
+// Generate path uses — so markdown semantics that span an LLM block (list
+// continuation, tight/loose list rules, blockquote lazy lines, …) are decided by
+// markdown-it over the full document, never distorted by per-chunk conversion.
+// Each `{% llm %}` block is first swapped for a unique sentinel token standing
+// alone as a paragraph (markdown-it renders it as `<p>TOKEN</p>`); after the
+// single render the sentinel paragraphs are substituted with the inert
+// placeholder markup. Net semantics: the preview renders as if each LLM block
+// were a plain paragraph. When the markdown has no LLM blocks the output is
+// byte-identical to `mdToHtml(md)`.
 //
 // @param {string} md — rendered, frontmatter/marker-stripped note markdown
 // @param {{ model?: string }} [opts]
@@ -83,25 +89,41 @@ export function composePreviewHtml(md, opts = {}) {
   const { blocks } = parseLLMBlocks(text);
   if (!blocks.length) return mdToHtml(text);
 
+  // Sentinel base: plain A-Z/digits/hyphens — markdown-it has no rule that
+  // transforms it (not linkifiable, no emphasis/code characters), so a line
+  // holding only the token renders as a plain paragraph. Lengthen until the
+  // base cannot collide with document text.
+  let base = "ZON-LLM-PLACEHOLDER";
+  while (text.includes(base)) base += "-X";
+
   const lines = text.split("\n");
   const sorted = blocks.slice().sort((a, b) => a.lineFrom - b.lineFrom);
-  const parts = [];
+  const tokens = []; // [{ token, html }]
+  const outLines = [];
   let cursor = 0; // next unconsumed line index
 
   for (const b of sorted) {
     if (b.lineFrom < cursor) continue; // defensive: skip overlapping/nested
-    if (b.lineFrom > cursor) {
-      const chunk = lines.slice(cursor, b.lineFrom).join("\n");
-      if (chunk.trim()) parts.push(mdToHtml(chunk));
-    }
-    parts.push(llmPlaceholderHtml(b, opts));
+    for (let i = cursor; i < b.lineFrom; i++) outLines.push(lines[i]);
+    const token = base + "-" + tokens.length;
+    tokens.push({ token, html: llmPlaceholderHtml(b, opts) });
+    // Blank lines around the token make it its own paragraph regardless of what
+    // adjoins the block (extra blank lines are semantically inert in markdown).
+    outLines.push("", token, "");
     cursor = b.lineTo + 1;
   }
+  for (let i = cursor; i < lines.length; i++) outLines.push(lines[i]);
 
-  if (cursor < lines.length) {
-    const chunk = lines.slice(cursor).join("\n");
-    if (chunk.trim()) parts.push(mdToHtml(chunk));
+  let html = mdToHtml(outLines.join("\n"));
+  for (const { token, html: placeholder } of tokens) {
+    const asParagraph = "<p>" + token + "</p>";
+    if (html.includes(asParagraph)) {
+      html = html.replace(asParagraph, placeholder);
+    } else {
+      // Fallback: the token ended up inside another construct (e.g. a lazy
+      // blockquote continuation) — substitute the bare token so it never leaks.
+      html = html.replace(token, placeholder);
+    }
   }
-
-  return parts.join("\n");
+  return html;
 }
