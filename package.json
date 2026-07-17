@@ -1,7 +1,7 @@
 {
   "name": "obsidian-notepad-for-zotero",
-  "version": "1.0.0-beta.19",
-  "description": "Open and edit each item's Obsidian vault markdown note directly in the Zotero item pane, and sync your PDF highlights into it.",
+  "version": "0.1.0",
+  "description": "Generate LLM-assisted Summary Notes for your Zotero items — native Zotero child notes rendered from a template, read and adapted with Better Notes.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "author": "klueserthan",

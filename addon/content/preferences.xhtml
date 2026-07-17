@@ -1,28 +1,8 @@
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
   <groupbox>
-    <label><html:h2>Obsidian Notepad</html:h2></label>
+    <label><html:h2>Paper Summarizer</html:h2></label>
     <html:div style="display:flex;flex-direction:column;gap:12px;padding:6px 4px;max-width:780px;">
-      <html:label style="display:flex;flex-direction:column;gap:3px;">
-        <html:span>Obsidian vault path</html:span>
-        <html:div style="display:flex;gap:6px;">
-          <html:input id="zon-vault" type="text" style="flex:1;box-sizing:border-box;"
-            preference="extensions.zotero-obsidian-notes.vaultPath"/>
-          <html:button id="zon-vault-browse" type="button">Browse…</html:button>
-        </html:div>
-        <html:span style="color:#888;font-size:11px;">Absolute path to your vault. Used for the “Open in Obsidian” link.</html:span>
-      </html:label>
-
-      <html:label style="display:flex;flex-direction:column;gap:3px;">
-        <html:span>Notes folder</html:span>
-        <html:div style="display:flex;gap:6px;">
-          <html:input id="zon-notes" type="text" style="flex:1;box-sizing:border-box;"
-            preference="extensions.zotero-obsidian-notes.notesDir"/>
-          <html:button id="zon-notes-browse" type="button">Browse…</html:button>
-        </html:div>
-        <html:span style="color:#888;font-size:11px;">Folder (inside the vault) where literature notes live and are created.</html:span>
-      </html:label>
-
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Templates folder</html:span>
         <html:div style="display:flex;gap:6px;">
@@ -38,44 +18,14 @@
         <html:span>Default note template</html:span>
         <html:select id="zon-default-note" style="width:100%;box-sizing:border-box;"
           preference="extensions.zotero-obsidian-notes.defaultNoteTemplate"></html:select>
-        <html:span style="color:#888;font-size:11px;">Used by “Create note from template”. Can be <html:b>any</html:b> template — a whole-note scaffold or a per-annotation/field template (then a created note is just that block).</html:span>
-      </html:label>
-
-      <html:label style="display:flex;flex-direction:column;gap:3px;">
-        <html:span>Filename pattern</html:span>
-        <html:input type="text" style="width:100%;box-sizing:border-box;"
-          preference="extensions.zotero-obsidian-notes.filenamePattern"/>
-        <html:span style="color:#888;font-size:11px;">New-note filename, so it can match how your vault already names notes. Any of these placeholders work: <html:b>{{citekey}}</html:b>, <html:b>{{author}}</html:b> (first author's surname), <html:b>{{year}}</html:b>, <html:b>{{title}}</html:b>, <html:b>{{journal}}</html:b>, <html:b>{{date}}</html:b>, <html:b>{{itemType}}</html:b>. Examples: <html:b>@{{citekey}}.md</html:b> · <html:b>{{author}} {{year}} - {{title}}.md</html:b> · <html:b>{{year}} {{title}}.md</html:b>. The <html:b>.md</html:b> is added if you omit it, and characters illegal in filenames are removed automatically. <html:br/>Notes are linked to items by a <html:b>citekey:</html:b> or <html:b>ZoteroLink:</html:b> field in their frontmatter first (most reliable — add one to link a note regardless of its name); this pattern is the fallback, matching existing notes by filename. Changing it (or the notes folder) re-links automatically; the <html:b>Rescan</html:b> button picks up notes you add or rename outside Zotero.</html:span>
-      </html:label>
-
-      <html:label style="display:flex;flex-direction:column;gap:3px;">
-        <html:span>Tag sync field</html:span>
-        <html:input type="text" style="width:100%;box-sizing:border-box;"
-          preference="extensions.zotero-obsidian-notes.tagSyncField"/>
-        <html:span style="color:#888;font-size:11px;">Default frontmatter field mirrored to Zotero tags by <html:b>⋯ More → Push tags → Zotero</html:b> (the ⋯ More menu appears when <html:b>Enable experimental features</html:b> is on, below) — e.g. <html:b>Topics</html:b>. A note can override this — once you push, the chosen field is recorded in the note's <html:b>zon:</html:b> map, so it's per-note. <html:b>[beta]</html:b> reverse sync; you confirm every change before it's written to Zotero.</html:span>
+        <html:span style="color:#888;font-size:11px;">The Composer's template picker defaults to this. Can be <html:b>any</html:b> template — a whole-note scaffold or a per-annotation/field template (then a generated Summary Note is just that block).</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Image-annotation folder</html:span>
         <html:input type="text" style="width:100%;box-sizing:border-box;"
           preference="extensions.zotero-obsidian-notes.attachmentFolder"/>
-        <html:span style="color:#888;font-size:11px;">Vault-relative folder where <html:b>image (area) annotations</html:b> are exported on sync. Each item gets its own subfolder by citekey (e.g. <html:b>References/Attachments/&#123;&#123;citekey&#125;&#125;/</html:b>), and the note links them with <html:b>![[…]]</html:b> embeds — which render in Obsidian. This is the default; a note can override it with <html:b>zon: attachments:</html:b> in its frontmatter. (Ink/drawing annotations aren't exported yet.)</html:span>
-      </html:label>
-
-      <html:label style="display:flex;align-items:flex-start;gap:8px;">
-        <html:input type="checkbox" preference="extensions.zotero-obsidian-notes.autoSync"/>
-        <html:span style="display:flex;flex-direction:column;gap:3px;">
-          <html:span>Auto-sync annotations while reading</html:span>
-          <html:span style="color:#888;font-size:11px;">When on, an open note's live annotation blocks update automatically as you highlight in the PDF — no need to click Update. Only notes you have open are touched, and your prose is never changed. Also toggleable from the note pane toolbar.</html:span>
-        </html:span>
-      </html:label>
-
-      <html:label style="display:flex;align-items:flex-start;gap:8px;">
-        <html:input type="checkbox" preference="extensions.zotero-obsidian-notes.experimental"/>
-        <html:span style="display:flex;flex-direction:column;gap:3px;">
-          <html:span>Enable experimental features</html:span>
-          <html:span style="color:#888;font-size:11px;">Adds a <html:b>⋯ More</html:b> menu to the note pane with early/advanced actions: <html:b>Sync Metadata</html:b>, <html:b>Migrate</html:b>, and <html:b>Push tags → Zotero</html:b> (reverse sync). Off by default to keep the toolbar tidy. Reopen the item (or restart Zotero) for the change to take effect.</html:span>
-        </html:span>
+        <html:span style="color:#888;font-size:11px;">Relative folder path used when rendering an <html:b>image (area) annotation</html:b> into a template — e.g. <html:b>References/Attachments/&#123;&#123;citekey&#125;&#125;/&#123;&#123;imageBaseName&#125;&#125;</html:b>. A note can override it with <html:b>zon: attachments:</html:b> in a template's frontmatter. Note: this only affects the embed <html:b>path text</html:b> a template renders — the plugin doesn't export image files, and a generated Summary Note doesn't understand <html:b>![[…]]</html:b> wiki-embed syntax, so it shows as literal text rather than an image.</html:span>
       </html:label>
 
       <html:hr style="border:none;border-top:1px solid #ddd;margin:4px 0;"/>

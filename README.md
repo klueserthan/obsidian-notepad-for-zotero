@@ -1,173 +1,150 @@
-# Obsidian Notepad for Zotero
+# Paper Summarizer for Zotero
 
-Open, edit, and keep an item's **Obsidian vault markdown note right inside the
-Zotero item pane** — and sync your PDF highlights into it as you read.
+A Zotero 7 plugin that generates **LLM-assisted Summary Notes** for your items —
+native Zotero child notes, built from a template, read and adapted with
+[Better Notes](https://github.com/windingwind/zotero-better-notes). There is no
+Obsidian vault, no markdown file on disk, and nothing syncs after a note is
+created.
 
-<p align="center">
-  <img src="docs/images/00-demo.gif" alt="Toggling reading view: the note renders like Obsidian, or shows raw markdown" width="380">
-</p>
-
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/acatechnic)
-
-> Status: **public beta** (v1.0.0-beta.19). Cross-platform
-> (Windows / macOS / Linux), Zotero 7+, [AGPL-3.0](LICENSE).
->
-> **Install:** download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.19/obsidian-notepad-for-zotero.xpi)**
-> (or browse [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases)),
-> then in Zotero: Tools → Plugins → gear icon → *Install Plugin From File…*
-> It auto-updates after that.
->
-> Like it? [**Buy me a coffee ☕**](https://buymeacoffee.com/acatechnic)
-
-## Screenshots
-
-| The note, in Zotero | Synced highlights | Settings |
-| --- | --- | --- |
-| ![The Obsidian note rendered in the Zotero item pane](docs/images/01-editor-pane.png) | ![PDF highlights synced into the note](docs/images/02-annotation-sync.png) | ![Obsidian Notepad settings](docs/images/03-setup.png) |
+> Status: **personal fork, unreleased**. Zotero 7+, [AGPL-3.0](LICENSE). Not
+> published to any plugin directory or release feed — build it yourself (see
+> [Install](#install)).
 
 ## Why
 
-If you read in Zotero but write in Obsidian, your literature notes live in two
-places. This plugin puts the Obsidian note *in* Zotero: you read the PDF, take
-notes, and pull highlights into the note without leaving the reader — and the
-file on disk stays a clean, plain-markdown Obsidian note.
+[Acatechnic/obsidian-notepad-for-zotero](https://github.com/Acatechnic/obsidian-notepad-for-zotero)
+(this plugin's upstream) puts an Obsidian vault note in the Zotero item pane and
+syncs PDF highlights into it. This fork throws that model out: **if you don't use
+Obsidian**, but you do want an LLM to turn a paper's abstract, annotations, or
+full text into a structured note you keep in Zotero, this is that instead.
 
-## Features
+**If you use Obsidian, use the upstream plugin** — this fork has no vault
+support, no file editor, and no annotation sync; none of that is coming back.
 
-- **Edit the Obsidian note in Zotero.** Each item's linked `.md` note opens in a
-  real markdown editor (CodeMirror) in the item pane, with live wiki-link and
-  markdown highlighting. Saves straight to the file in your vault.
-- **Sync PDF annotations into the note** as customisable **live blocks**. Re-syncs
-  are *idempotent*: your prose and any frozen blocks are never touched.
-- **Group highlights by colour.** A note template can route each annotation colour
-  into its own section — yellow key passages here, blue follow-ups there — with the
-  `highlights(colour="…")` helper (try the built-in `note-by-colour` template).
-- **Image annotations too.** Area/image annotations are exported into your vault
-  and embedded in the note (`![[…]]`) — and shown inline in the pane's reading view.
-- **Auto-sync (optional).** Turn it on and highlights flow into the open note as
-  you annotate — no clicking Update.
-- **Links to your existing notes** by a `citekey:`/`ZoteroLink:` frontmatter field
-  or a **configurable filename pattern** (`{{author}} {{year}} - {{title}}`, …),
-  with a **Rescan** button to pick up notes added outside Zotero.
-- **Create a note from a template** for items that don't have one yet, populated
-  with the item's metadata and a formatted bibliography.
-- **Open in Obsidian** — jump to the note in the Obsidian app.
-- **Push tags back to Zotero** *(opt-in, experimental)* — mirror a note's tag
-  field to the Zotero item, previewing every change first.
-- **Safe by design.** Writes are atomic, and if a note changed on disk (e.g. you
-  edited it in Obsidian) the plugin never silently overwrites it — it offers to
-  reload or overwrite.
-- **LLM-assisted templates (BYOK).** Add a `{% llm context="fulltext" %}` block
-  to a template and the plugin asks your own OpenAI-compatible model (local
-  Ollama, OpenAI, LM Studio, …) to fill it in from the paper's abstract,
-  annotations, or full text. Combine contexts with a comma (e.g.
-  `context="abstract,annotations"`) to feed multiple sources at once. Bring your
-  own key/endpoint; runs are all-or-nothing with no silent fallback. See
-  [docs/TEMPLATES.md](docs/TEMPLATES.md).
+## What it does
+
+- **Composer** — an item-pane section replacing the old note editor. Pick a
+  **template**, see a live preview of the Summary Note it would generate for the
+  selected item, then **Generate**.
+- **Summary Notes** are native Zotero child notes (HTML), created **once** per
+  Generate. The plugin never edits a Summary Note after creating it — hand edits
+  you make in Better Notes are always safe. Regenerating creates an additional
+  note, or (with explicit confirmation) overwrites the newest one.
+- **Marker Tag** — every Summary Note is stamped with a Zotero tag
+  (`zps:summary-note`) so the plugin can recognize its own notes. That's the only
+  thing that identifies one; title and body content are never inspected.
+- **Stale Indicator** — a read-only badge in the Composer showing whether an
+  item's newest Summary Note is `fresh`, `stale` (an annotation changed after it
+  was created), or missing. It never writes anything; it's a hint to regenerate.
+- **LLM-assisted templates (BYOK).** A template can include `{% llm
+  context="..." %}` blocks. The Composer preview never calls a model — each
+  block shows as an inert placeholder — until you click **Run LLM**, which
+  resolves every block once via your own OpenAI-compatible endpoint (local
+  Ollama, OpenAI, LM Studio, …) and substitutes static markdown. **Generate
+  refuses while any block is unresolved**, so a Summary Note can never be
+  created with a hole. See [docs/adr/0001-explicit-static-llm-interpreter.md](docs/adr/0001-explicit-static-llm-interpreter.md).
+- **Template Builder** — a visual template editor with a live preview against a
+  real (or sample) item. It authors and saves templates only; it no longer
+  reads or writes an item's note.
+- **Find DOI (Crossref)** — a small item-menu action to look up a missing DOI
+  for one or more selected items.
+
+## How a Summary Note is made
+
+1. The selected **template** (Nunjucks, with the same block syntax the upstream
+   plugin uses for colour/type/tag-filtered annotation blocks) is rendered
+   against the item's metadata, tags, related items, and PDF annotations.
+2. Any `{% llm %}` blocks are resolved (if you ran them) or shown as
+   placeholders (if you didn't — Generate will refuse).
+3. YAML frontmatter and all `%% zon … %%` / `%% ann:KEY %%` block delimiters are
+   stripped — they're an authoring artifact of the template, not something a
+   Zotero note should show.
+4. The stripped markdown is converted to Zotero-note-safe HTML and saved as a
+   new child note carrying the Marker Tag.
+
+This is strictly **one-way**: nothing is ever synced back, and no existing note
+is read or modified except through the explicit overwrite confirmation. See
+[docs/adr/0002-zotero-child-notes-one-way-create-once.md](docs/adr/0002-zotero-child-notes-one-way-create-once.md).
 
 ## Requirements
 
 - Zotero 7 or later.
-- An Obsidian vault (the plugin reads/writes plain `.md` files; Obsidian itself
-  doesn't need to be running).
-- Optional: [Better BibTeX](https://retorque.re/zotero-better-bibtex/) for stable
-  citekeys (otherwise a citekey is derived from author + year).
+- An OpenAI-compatible LLM endpoint if you want to use `{% llm %}` blocks
+  (optional — templates without them work with no LLM configured). Bring your
+  own key/endpoint; the plugin doesn't ship a model.
+- [Better Notes](https://github.com/windingwind/zotero-better-notes) is
+  recommended for reading and hand-editing Summary Notes afterward (not a hard
+  dependency — they're plain Zotero notes).
 
 ## Install
 
-1. Download **[`obsidian-notepad-for-zotero.xpi`](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases/download/v1.0.0-beta.19/obsidian-notepad-for-zotero.xpi)**
-   (latest beta) — or pick a build from [all releases](https://github.com/Acatechnic/obsidian-notepad-for-zotero/releases).
-2. In Zotero: **Tools → Plugins → gear menu → Install Plugin From File…** and choose the `.xpi`.
-3. That's it — the plugin **auto-updates** from GitHub Releases from then on.
+There's no packaged release yet. Build the `.xpi` yourself:
 
-_A listing in the Zotero plugins directory is coming later._
+```bash
+git clone https://github.com/klueserthan/obsidian-notepad-for-zotero.git
+cd obsidian-notepad-for-zotero
+npm install
+npm run build
+```
 
-If it saves you time, you can [**buy me a coffee ☕**](https://buymeacoffee.com/acatechnic) — much appreciated, never required.
+The built `.xpi` lands in `.scaffold/build/`. In Zotero: **Tools → Plugins →
+gear icon → Install Plugin From File…** and choose it.
 
-## First-run setup
+## Using it
 
-Open any item and look at the **Obsidian Notepad** section in the item pane. If
-nothing's configured yet you'll see a **Set up…** button — it detects your
-installed Obsidian vaults, lets you pick one, and then pick the folder your
-literature notes live in. You can change these later in **Settings → Obsidian
-Notepad** (with **Browse…** folder pickers).
+1. Select an item in Zotero. Open the **Composer** section in the item pane.
+2. Pick a **template** from the dropdown (defaults to your configured default
+   note template).
+3. Read the live preview. If the template has `{% llm %}` blocks, click **Run
+   LLM** to resolve them (requires a configured base URL + model in
+   Preferences).
+4. Click **Generate**. If the item already has a Summary Note, you'll be asked
+   whether to overwrite the newest one or create an additional one.
+5. Open the created note in **Better Notes** to read or hand-edit it — the
+   plugin will never touch it again.
 
 ## Templates
 
-Notes and annotation blocks are authored in **Nunjucks** (the same templating
-language as the popular Zotero-to-Obsidian export templates). A templates folder
-holds your whole-note scaffold (`note.md`) and any insertable annotation-block
-templates. Built-in block formats (`list`, `quote`, `callout`, `compact`) are
-always available even with no folder. A note template can also drop annotation
-blocks into specific sections — including one per colour — with
-`{{ highlights(colour="…") }}`. Edit or add a template in Obsidian and the change
-is picked up when you switch back to Zotero (no restart needed).
-
-See **[docs/TEMPLATES.md](docs/TEMPLATES.md)** for the full guide: the available
-variables, the optional `%%! … %%` template directive, a reference for the
-**`%% zon … %%` blocks** the plugin writes into your notes (every attribute, the
-`ann:` anchors, how Update regenerates them) and the **`zon:` frontmatter** that
-keeps managed fields synced — useful if you're translating templates from another
-tool.
-
-## How it works / safety
-
-The note is a normal markdown file in your vault — nothing is stored in a
-hidden database. Annotation blocks are delimited by invisible Obsidian comments
-(`%% zon … %%`), so Update can regenerate just those blocks and leave your
-writing alone. Every write goes to a temporary file and is then renamed over the
-target (atomic), and the plugin tracks each open note's modified-time so it can
-detect and reconcile changes made outside Zotero.
-
-## Known limitations (beta)
-
-This is an early public beta — please report anything odd, and:
-
-- **Back up your notes, and consider pointing it at a *test* Zotero library first**
-  — especially before trying **Push tags → Zotero**, which is the one feature that
-  writes to your library.
-- **Sync is one-way by default** (Zotero → note). Reverse sync (note → Zotero) is
-  currently **tags only**, opt-in (behind *Settings → Enable experimental features*),
-  and previews every change before writing. Pushing other fields (title, authors, …)
-  back to Zotero isn't supported yet.
-- **Not yet in the Zotero plugins directory** — install the `.xpi` from Releases
-  (it auto-updates from there).
-- Templates are written in **Nunjucks**; there's a small learning curve if you
-  want to customise them (built-in templates work out of the box).
-- A note must live **inside your configured notes folder** for the plugin to link
-  and sync it.
+Templates are authored in **Nunjucks** and use the same block syntax the
+upstream plugin uses for organizing annotations — colour routing
+(`highlights(colour="yellow")`), per-block formats (`list`/`quote`/`callout`/
+`compact`/custom), and tag filters (`tag=method`) all still work as authoring
+input. What's different: the `%% zon %%` delimiters and any YAML frontmatter are
+**stripped before the note is created** — a Summary Note never contains them.
+Author and preview templates with the **Template Builder** (opened from the
+Composer), or hand-edit files in your Templates folder. See
+[docs/TEMPLATES.md](docs/TEMPLATES.md) for the full reference, including
+`{% llm %}` block syntax and supported contexts (`abstract`, `annotations`,
+`fulltext`).
 
 ## Development
 
 ```bash
 npm install
-npm test            # unit tests (Vitest) — pure logic
+npm test            # unit tests (Vitest) — pure logic in src/
 npm run test:zotero # integration tests (Mocha inside a throwaway Zotero)
 npm run build       # build the .xpi into .scaffold/build/
 npm start           # launch Zotero with the plugin (hot reload)
 ```
 
 Built with [zotero-plugin-scaffold](https://github.com/northword/zotero-plugin-scaffold).
-Copy `.env.example` to `.env` and set your Zotero path for `start` / `test:zotero`.
+`npm start` / `npm run test:zotero` need a `.env` (copy `.env.example`) pointing
+at a Zotero binary and a dedicated dev profile. See [CLAUDE.md](CLAUDE.md) for
+the architecture and [CONTEXT.md](CONTEXT.md) / [docs/adr/](docs/adr/) for the
+domain vocabulary and the decisions behind this fork.
 
-## Feedback
+## About this fork
 
-Trying the beta? **First impressions, questions, and ideas** are very welcome in
-[**GitHub Discussions**](https://github.com/Acatechnic/obsidian-notepad-for-zotero/discussions);
-clear, reproducible bugs are best as [Issues](https://github.com/Acatechnic/obsidian-notepad-for-zotero/issues).
-Curious where it's heading? See the [**Roadmap**](ROADMAP.md).
-
-## Contributing
-
-Issues and PRs welcome. Please run `npm test` before submitting. Translations are
-welcome — UI strings are centralised (see `STRINGS` in `addon/bootstrap.js`).
-
-## Support
-
-This plugin is free and open source. If it's useful to you and you'd like to
-support its development, you can [**buy me a coffee ☕**](https://buymeacoffee.com/acatechnic).
-Entirely optional — bug reports and PRs are just as welcome.
+This is a personal hard fork of
+[Acatechnic/obsidian-notepad-for-zotero](https://github.com/Acatechnic/obsidian-notepad-for-zotero) —
+all credit for the original plugin, the Nunjucks template engine, and the
+Template Builder goes to them. This fork removed the entire Obsidian
+vault/file/sync layer and replaced it with Zotero-native, LLM-assisted Summary
+Notes; it no longer tracks upstream (see
+[docs/adr/0003-final-upstream-merge-hard-fork.md](docs/adr/0003-final-upstream-merge-hard-fork.md)).
+**If you want an Obsidian vault note in your Zotero item pane, use the upstream
+plugin instead** — this fork can't do that anymore.
 
 ## License
 
-[AGPL-3.0](LICENSE).
+[AGPL-3.0](LICENSE), inherited from upstream.
