@@ -1,38 +1,29 @@
 "use strict";
 
-// Obsidian Notepad for Zotero – open each item's vault markdown note in the item pane.
+// Paper Summarizer for Zotero – renders a Nunjucks template for an item into a
+// native Zotero child note (a "Summary Note", ADR-0002) via the Composer pane.
 //
 // Pane lifecycle/registration patterns are lifted from the citation-links
 // plugin (FTL insert-per-window, registerSection, the "find the CONNECTED
 // collapsible-section body" trick — the body handed to onRender is often
-// detached). The editor itself is CodeMirror 6, bundled into
-// content/editor.bundle.js and injected into the main window, exposing a global
-// ZOSEditorLib { create, getDoc, setDoc, destroy }.
+// detached). The CodeMirror 6 editor (content/editor.bundle.js, global
+// ZOSEditorLib { create, getDoc, setDoc, destroy }) now lives only inside the
+// Template Builder — the item pane itself no longer edits a note.
 //
-// Item -> note resolution: notes carry `ZoteroLink: zotero://.../items/<KEY>`
-// in their frontmatter, so we index the notes folder by that top-level item key
-// (provider-independent — no Better BibTeX dependency).
+// See CONTEXT.md for the domain vocabulary (Summary Note, Composer, Create-once,
+// Marker Tag, Stale Indicator) and docs/adr/ for the decisions behind this fork.
 
 var ZON = {
   pluginID: "__addonID__", // replaced at build time by scaffold (config.addonID)
   rootURI: null,
   _registeredPaneID: null,
 
-  PREF_VAULT: "extensions.zotero-obsidian-notes.vaultPath",
-  PREF_NOTES: "extensions.zotero-obsidian-notes.notesDir",
   PREF_TEMPLATE: "extensions.zotero-obsidian-notes.templatePath",
-  PREF_FILENAME: "extensions.zotero-obsidian-notes.filenamePattern",
   PREF_FORMATS_DIR: "extensions.zotero-obsidian-notes.formatsDir",
   PREF_TEMPLATES_DIR: "extensions.zotero-obsidian-notes.templatesDir",
   PREF_DEFAULT_NOTE: "extensions.zotero-obsidian-notes.defaultNoteTemplate",
-  PREF_AUTOSYNC: "extensions.zotero-obsidian-notes.autoSync",
-  PREF_SHOWMARKERS: "extensions.zotero-obsidian-notes.showMarkers",
-  PREF_READMODE: "extensions.zotero-obsidian-notes.readMode",
-  PREF_SHOWFRONTMATTER: "extensions.zotero-obsidian-notes.showFrontmatter",
   PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
-  PREF_TAGFIELD: "extensions.zotero-obsidian-notes.tagSyncField",
   PREF_ATTACHFOLDER: "extensions.zotero-obsidian-notes.attachmentFolder",
-  PREF_EXPERIMENTAL: "extensions.zotero-obsidian-notes.experimental",
   PREF_LLM_BASE_URL: "extensions.zotero-obsidian-notes.llmBaseURL",
   PREF_LLM_MODEL: "extensions.zotero-obsidian-notes.llmModel",
   PREF_LLM_API_KEY: "extensions.zotero-obsidian-notes.llmApiKey",
@@ -41,13 +32,10 @@ var ZON = {
   PREF_LLM_MAX_CONTEXT: "extensions.zotero-obsidian-notes.llmMaxContextChars",
   PREF_LLM_TIMEOUT: "extensions.zotero-obsidian-notes.llmTimeoutSeconds",
   PREF_LLM_AUTORUN: "extensions.zotero-obsidian-notes.llmAutoRun",
-  // Defaults are intentionally empty — the vault and folders are user-specific and
-  // are set on first run (Phase 2 onboarding) / in preferences. Empty = "not
-  // configured yet", handled by the pane's empty state rather than guessed.
-  DEFAULT_VAULT: "",
-  DEFAULT_NOTES: "",
+  // Defaults are intentionally empty — folders are user-specific and are set in
+  // preferences. Empty = "not configured yet", handled by the pane's empty state
+  // rather than guessed.
   DEFAULT_TEMPLATE: "",
-  DEFAULT_FILENAME: "@{{citekey}}.md",
   DEFAULT_FORMATS_DIR: "",
   // Unified Templates folder: holds note.md (whole-note scaffold) + one file per
   // insertable block template. Supersedes the separate templatePath/formatsDir,
@@ -59,14 +47,8 @@ var ZON = {
   // mechanism by which the plugin recognizes its own notes. Reused by later slices
   // (already-has-one checks, stale indicator). Body edits never affect it.
   MARKER_TAG: "zps:summary-note",
-  DEFAULT_AUTOSYNC: false, // live auto-sync of annotation blocks while you annotate (off by default — opt-in)
-  DEFAULT_SHOWMARKERS: false, // editor presentation: hide %% zon/ann %% markers + zon: block by default (Obsidian-like)
-  DEFAULT_READMODE: true, // reading view: render links/headings inline by default (toggle off for raw source)
-  DEFAULT_SHOWFRONTMATTER: true, // show the YAML frontmatter by default (toggle off to hide it)
   DEFAULT_COLLAPSED: false, // section starts expanded; the header chevron folds it (persisted)
-  DEFAULT_TAGFIELD: "Topics", // default frontmatter field mirrored to Zotero tags (per-note override via `zon: tags:`)
-  DEFAULT_ATTACHFOLDER: "References/Attachments", // vault-relative folder for exported image annotations (per-note override via `zon: attachments:`)
-  DEFAULT_EXPERIMENTAL: false, // hide the "⋯ More" menu (Sync Metadata / Migrate / Push tags) unless opted in
+  DEFAULT_ATTACHFOLDER: "References/Attachments", // relative folder path used for exported image-annotation embeds (per-note override via `zon: attachments:`)
   DEFAULT_LLM_BASE_URL: "http://localhost:11434/v1",
   DEFAULT_LLM_MODEL: "",
   DEFAULT_LLM_API_KEY: "",
@@ -618,21 +600,12 @@ ZoteroLink: "{{desktopURI}}"
     let seed = (key, def) => {
       try { if (Zotero.Prefs.get(key, true) === undefined) Zotero.Prefs.set(key, def, true); } catch (e) {}
     };
-    seed(this.PREF_VAULT, this.DEFAULT_VAULT);
-    seed(this.PREF_NOTES, this.DEFAULT_NOTES);
     seed(this.PREF_TEMPLATE, this.DEFAULT_TEMPLATE);
-    seed(this.PREF_FILENAME, this.DEFAULT_FILENAME);
     seed(this.PREF_FORMATS_DIR, this.DEFAULT_FORMATS_DIR);
     seed(this.PREF_TEMPLATES_DIR, this.DEFAULT_TEMPLATES_DIR);
     seed(this.PREF_DEFAULT_NOTE, this.DEFAULT_DEFAULT_NOTE);
-    seed(this.PREF_AUTOSYNC, this.DEFAULT_AUTOSYNC);
-    seed(this.PREF_SHOWMARKERS, this.DEFAULT_SHOWMARKERS);
-    seed(this.PREF_READMODE, this.DEFAULT_READMODE);
-    seed(this.PREF_SHOWFRONTMATTER, this.DEFAULT_SHOWFRONTMATTER);
     seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);
-    seed(this.PREF_TAGFIELD, this.DEFAULT_TAGFIELD);
     seed(this.PREF_ATTACHFOLDER, this.DEFAULT_ATTACHFOLDER);
-    seed(this.PREF_EXPERIMENTAL, this.DEFAULT_EXPERIMENTAL);
     seed(this.PREF_LLM_BASE_URL, this.DEFAULT_LLM_BASE_URL);
     seed(this.PREF_LLM_MODEL, this.DEFAULT_LLM_MODEL);
     seed(this.PREF_LLM_API_KEY, this.DEFAULT_LLM_API_KEY);

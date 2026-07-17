@@ -65,8 +65,6 @@
     }
     const wire = (el, fn) => { if (el && !el._zonWired) { el._zonWired = true; el.addEventListener("click", fn); } };
     const map = [
-      ["zon-vault-browse", "zon-vault", PREFIX + "vaultPath"],
-      ["zon-notes-browse", "zon-notes", PREFIX + "notesDir"],
       ["zon-templates-browse", "zon-templates", PREFIX + "templatesDir"],
     ];
     for (const [btnId, inputId, prefKey] of map) {
