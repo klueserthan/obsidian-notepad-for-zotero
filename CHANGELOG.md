@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **LLM in the Composer: placeholders, explicit Run-LLM, Generate gating
+  (ADR-0001).** The Composer now hosts the ADR-0001 LLM semantics. The live
+  preview still never executes a `{% llm %}` block — each renders as an inert
+  placeholder showing its model and context spec — but a new **Run LLM** button
+  (shown only when the current render contains `{% llm %}` blocks, and requiring a
+  configured base URL + model) resolves **all** blocks exactly once via the
+  existing BYOK runner, caches the static markdown into the pending compose, and
+  re-renders the preview with the resolved output substituted in place. **Generate
+  now refuses while any block is unresolved**: the button is disabled with a
+  visible reason and the programmatic path throws loudly, naming the offending
+  blocks, so a Summary Note can never be created with a hole — this gate applies
+  before, and regardless of, the existing-note overwrite choice, and both the
+  create and overwrite paths receive the same resolved markdown. Templates with no
+  LLM blocks Generate immediately, with no Run-LLM button. Context-assembly
+  failures (missing abstract / annotations / primary-PDF full text, etc.) fail
+  loudly in a visible error box in the pane — never console-only, never a silent
+  fallback to weaker context. Zero model calls happen from preview rendering,
+  template switching, or item switching; switching the item or template
+  invalidates the per-compose resolution cache. The resolved compose feeds
+  `generateSummaryNote` (via the same strip → `mdToHtml` pipeline), so the created
+  note contains the resolved LLM output as static markdown. A new pure module
+  `src/compose-gating.js` (the compose state machine — `createComposeState` /
+  `reconcileComposeState`, `unresolvedBlocks`, `canGenerate`, `resolveAll`,
+  `placeholderInfo`, `generateBlockedReason`, and per-item+template cache
+  invalidation) is re-exported through the core bundle and unit-tested.
 - **Note awareness + Stale Indicator (#28).** The Composer now lists the
   selected item's existing Summary Notes — recognised ONLY by the Marker Tag,
   never by title or body content — with title/date, and clicking one selects it
