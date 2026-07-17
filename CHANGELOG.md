@@ -107,6 +107,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survive): `addonRef`, the `ZON`/`ZONCore` globals, `zon-` fluent ids, and
   the `extensions.zotero-obsidian-notes` prefs prefix.
 
+### Removed
+- **Teardown: the entire vault/file/sync machinery is deleted (ADR-0002, #30).**
+  Now that the Composer, Generate, LLM gating, Stale Indicator, and Template
+  Builder are the whole pipeline, nothing depends on the old file world, so it is
+  gone: Obsidian vault detection and `obsidian://` deep links, the atomic
+  temp-file-rename note-write path with its mtime/conflict guards, the note file
+  index and `resolvePath`/`writeNoteForItem` machinery, tag sync
+  (`src/tagsync.js` + the reverse-sync UI), the Notifier-driven annotation
+  auto-sync into notes, and the old file-backed CodeMirror pane UI (`buildEditorUI`
+  and its Insert/Update/Refresh/Reload/Migrate/Sync-Metadata/Open-in-Obsidian
+  actions). The write-side merge engine (`src/merge.js`) and the
+  update-into-existing-file half of the block engine
+  (`migrateLegacyAnnotations`) are removed; live-block syntax now survives **only**
+  as template-authoring input to the render → strip pipeline (`syncBlocks` /
+  `makeBlock` stay, as the render-side of `src/blocks.js`). No code path reads or
+  writes a markdown file, and no Obsidian vault/notes preference is read anywhere.
+  The item-list context menu drops its file-note "Create note" action (Generate
+  Summary Note and Find DOI remain). Obsolete unit and integration suites were
+  removed with their modules; the surviving suites stay green. (The pref
+  declarations/pane and agent docs are updated in a follow-up slice, #31.)
+
 ## [1.0.0-beta.19] — 2026-07-02
 
 ### Added

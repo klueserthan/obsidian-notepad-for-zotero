@@ -13,7 +13,11 @@ describe("startup", function () {
     assert.ok(Zotero.ZON._registeredPaneID, "section pane id should be set");
   });
 
-  it("registered a Notifier observer (for auto-sync)", function () {
-    assert.ok(Zotero.ZON._notifierID, "notifier id should be set");
+  it("registers NO Notifier observer (auto-sync was deleted, ADR-0002)", function () {
+    // The teardown (#30) removed the annotation auto-sync entirely — startup
+    // must no longer register a Zotero.Notifier observer, and the old
+    // `_notifierID` handle field is gone with it.
+    assert.notOk(Zotero.ZON._notifierID, "no notifier observer should be registered");
+    assert.isUndefined(Zotero.ZON.registerNotifier, "registerNotifier should be deleted");
   });
 });

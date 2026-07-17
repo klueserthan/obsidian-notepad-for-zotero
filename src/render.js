@@ -10,9 +10,9 @@
 //   - `{% persist %}` block tag
 //
 // Crucially, `{% persist %}` is rendered *transparently* (body passed through).
-// In the mgmeyers tool, persist preserves manual edits across re-imports. Here
-// that job moves to the idempotent merge layer (src/merge.js), which is more
-// robust — so the tag becomes a no-op wrapper and the template stays compatible.
+// In the mgmeyers tool, persist preserves manual edits across re-imports. The
+// fork renders Summary Notes create-once (ADR-0002) with no merge-back, so the
+// tag is just a no-op wrapper kept for template compatibility.
 
 import nunjucks from "nunjucks";
 import dayjs from "dayjs";

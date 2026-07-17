@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseBlocks, parseConfig, renderBlockBody, syncBlocks, makeBlock, migrateLegacyAnnotations } from "../src/blocks.js";
+import { parseBlocks, parseConfig, renderBlockBody, syncBlocks, makeBlock } from "../src/blocks.js";
 
 const ANNS = [
   { key: "A", type: "highlight", attachmentKey: "PDF", pageLabel: "3", pageIndex: 3, sortIndex: "1", annotatedText: "yellow point", comment: "", colourName: "yellow" },
@@ -328,58 +328,6 @@ describe("per-annotation tags variable", () => {
     const noTagField = [{ key: "X", type: "highlight", attachmentKey: "PDF", pageLabel: "1", pageIndex: 1, sortIndex: "1", annotatedText: "plain", colourName: "yellow" }];
     expect(() => renderBlockBody({ colour: "all", format: "roles" }, noTagField, { formats })).not.toThrow();
     expect(renderBlockBody({ colour: "all", format: "roles" }, noTagField, { formats })).toContain("- plain");
-  });
-});
-
-describe("migrateLegacyAnnotations", () => {
-  const legacy = `---
-citekey: x
-KeyIdea: my idea
----
-
-## Notes
-my prose
-
-## Annotations
-
-%% begin annotations %%
-
-### Imported: 2026-05-06 10:57 am
-
-- [p.1](zotero://open-pdf/library/items/MFZ?page=) "old highlight"
-- [p.2](zotero://open-pdf/library/items/MFZ?page=2) "another" — *comment*
-
-%% end annotations %%
-
-%% Import Date: 2026-05-06T10:57:28.934+01:00 %%
-`;
-
-  it("replaces the legacy dump with an empty live block, preserving prose", () => {
-    const { markdown, changed } = migrateLegacyAnnotations(legacy, {});
-    expect(changed).toBe(true);
-    expect(markdown).toContain("%% zon kind=annotations colour=all sync=on format=list %%");
-    expect(markdown).toContain("%% /zon %%");
-    expect(markdown).not.toContain("%% begin annotations %%");
-    expect(markdown).not.toContain("### Imported:");
-    expect(markdown).not.toContain("Import Date:");
-    expect(markdown).toContain("my prose");      // prose kept
-    expect(markdown).toContain("KeyIdea: my idea");
-    expect(markdown).toContain("## Annotations"); // heading kept
-  });
-
-  it("leaves a note without legacy markers unchanged", () => {
-    const note = `---\ncitekey: y\n---\n\n## Notes\nstuff\n`;
-    const { markdown, changed } = migrateLegacyAnnotations(note, {});
-    expect(changed).toBe(false);
-    expect(markdown).toBe(note);
-  });
-
-  it("the migrated block then fills on sync", () => {
-    const { markdown } = migrateLegacyAnnotations(legacy, {});
-    const anns = [{ key: "A", type: "highlight", attachmentKey: "MFZ", pageLabel: "1", pageIndex: 1, sortIndex: "1", annotatedText: "fresh", colourName: "yellow" }];
-    const synced = syncBlocks(markdown, anns, {});
-    expect(synced).toContain('"fresh"');
-    expect(synced).toContain("my prose"); // still preserved
   });
 });
 
