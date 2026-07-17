@@ -18,8 +18,6 @@ var ZON = {
   rootURI: null,
   _registeredPaneID: null,
 
-  PREF_TEMPLATE: "extensions.zotero-obsidian-notes.templatePath",
-  PREF_FORMATS_DIR: "extensions.zotero-obsidian-notes.formatsDir",
   PREF_TEMPLATES_DIR: "extensions.zotero-obsidian-notes.templatesDir",
   PREF_DEFAULT_NOTE: "extensions.zotero-obsidian-notes.defaultNoteTemplate",
   PREF_COLLAPSED: "extensions.zotero-obsidian-notes.sectionCollapsed",
@@ -35,14 +33,9 @@ var ZON = {
   // One-time migration flag: set after the vault-era templatesDir pref has been
   // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
   PREF_TEMPLATES_MIGRATED: "extensions.zotero-obsidian-notes.templatesMigrated",
-  // Defaults are intentionally empty — folders are user-specific and are set in
-  // preferences. Empty = "not configured yet", handled by the pane's empty state
-  // rather than guessed.
-  DEFAULT_TEMPLATE: "",
-  DEFAULT_FORMATS_DIR: "",
-  // Unified Templates folder: holds note.md (whole-note scaffold) + one file per
-  // insertable block template. Supersedes the separate templatePath/formatsDir,
-  // which still work as fallbacks.
+  // Templates folder: holds note.md (whole-note scaffold) + one file per
+  // insertable block template. The pref default is intentionally empty —
+  // empty means "use the addon-owned folder" (defaultTemplatesDir()).
   DEFAULT_TEMPLATES_DIR: "",
   NOTE_SCAFFOLD_NAME: "note", // <templatesDir>/note.md = the default whole-note scaffold
   DEFAULT_DEFAULT_NOTE: "note", // which note scaffold "Create note" uses by default
@@ -381,8 +374,6 @@ var ZON = {
 
   // ---------------------------------------------------------------- prefs
 
-  templatePath() { return Zotero.Prefs.get(this.PREF_TEMPLATE, true) || this.DEFAULT_TEMPLATE; },
-  formatsDir() { return Zotero.Prefs.get(this.PREF_FORMATS_DIR, true) || this.DEFAULT_FORMATS_DIR; },
   templatesDir() { return Zotero.Prefs.get(this.PREF_TEMPLATES_DIR, true) || this.defaultTemplatesDir(); },
 
   // The addon-owned templates folder: lives under the Zotero data directory so the
@@ -445,10 +436,10 @@ var ZON = {
   },
 
   // Resolve the TEXT of a note scaffold by name, in priority order:
-  //   user Templates folder file → shipped BUILTIN_TEMPLATES → legacy templatePath.
-  // Guarantees "Create note" / "Manage fields" have a real scaffold even when no
-  // Templates folder is configured (fresh install). Returns "" only if nothing
-  // resolves (and the named template isn't a built-in).
+  //   user Templates folder file → shipped BUILTIN_TEMPLATES.
+  // Guarantees "Create note" / "Manage fields" have a real scaffold even when the
+  // Templates folder hasn't been seeded yet (fresh install). Returns "" only if
+  // nothing resolves (and the named template isn't a built-in).
   async resolveNoteScaffoldText(name) {
     name = name || this.defaultNoteTemplate() || this.NOTE_SCAFFOLD_NAME;
     let dir = this.templatesDir();
@@ -457,8 +448,6 @@ var ZON = {
       try { if (await IOUtils.exists(p)) return await IOUtils.readUTF8(p); } catch (e) {}
     }
     if (this.BUILTIN_TEMPLATES[name] != null) return this.BUILTIN_TEMPLATES[name];
-    let legacy = this.templatePath();
-    if (legacy) { try { return await IOUtils.readUTF8(legacy); } catch (e) {} }
     return "";
   },
 
@@ -549,8 +538,7 @@ var ZON = {
       }
     };
     this.addBuiltins(out);             // shipped starters (lowest priority)
-    await load(this.formatsDir());     // legacy formats
-    await load(this.templatesDir());   // unified folder (wins — user files override)
+    await load(this.templatesDir());   // templates folder (wins — user files override)
     this._templates = out;
     return out;
   },
@@ -619,8 +607,6 @@ var ZON = {
     let seed = (key, def) => {
       try { if (Zotero.Prefs.get(key, true) === undefined) Zotero.Prefs.set(key, def, true); } catch (e) {}
     };
-    seed(this.PREF_TEMPLATE, this.DEFAULT_TEMPLATE);
-    seed(this.PREF_FORMATS_DIR, this.DEFAULT_FORMATS_DIR);
     seed(this.PREF_TEMPLATES_DIR, this.DEFAULT_TEMPLATES_DIR);
     seed(this.PREF_DEFAULT_NOTE, this.DEFAULT_DEFAULT_NOTE);
     seed(this.PREF_COLLAPSED, this.DEFAULT_COLLAPSED);

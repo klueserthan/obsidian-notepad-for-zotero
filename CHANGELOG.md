@@ -149,6 +149,12 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   the `extensions.zotero-obsidian-notes` prefs prefix.
 
 ### Removed
+- **Legacy template-fallback preferences.** The *Note template file (legacy)*
+  (`templatePath`) and *Custom formats folder (legacy)* (`formatsDir`)
+  preferences are gone — pane rows, declarations, and every read. They were
+  file-era fallbacks for a missing Templates folder; the addon-owned, seeded
+  templates folder makes them redundant (builtins already back any missing
+  file). Old stored values are simply ignored.
 - **Teardown: the entire vault/file/sync machinery is deleted (ADR-0002, #30).**
   Now that the Composer, Generate, LLM gating, Stale Indicator, and Template
   Builder are the whole pipeline, nothing depends on the old file world, so it is
