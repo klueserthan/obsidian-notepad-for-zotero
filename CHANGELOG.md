@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Generate summary note (ADR-0002, first slice).** A new item context-menu
+  action, "Generate summary note", renders the default template for the
+  selected item(s) and creates a native Zotero child note from it. The rendered
+  markdown has its file-world YAML frontmatter and all live-block delimiters
+  (`%% zon … %%`, `%% /zon %%`, `%% ann:KEY %%`) stripped, is converted to
+  Zotero-note-safe HTML (markdown-it, `html:false`), and saved as a new child
+  note stamped with the Marker Tag `zps:summary-note`. Create-once: every
+  invocation adds a fresh note; no existing note is ever read or modified, and no
+  markdown file is touched. Two new pure modules back it (`src/strip-markers.js`,
+  `src/md-html.js`), re-exported through the core bundle as
+  `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
+
 ### Changed
 - **Identity break (fork ownership, ADR-0003).** This build now ships under its
   own name and addon ID instead of upstream's: `addonName` is

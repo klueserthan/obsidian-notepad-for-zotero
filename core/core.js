@@ -16,6 +16,8 @@ export { frontmatterList, cleanTag, tagSyncPlan } from "../src/tagsync.js";
 export { findMarkerRanges, rangeRevealed } from "../src/markers.js";
 export { findFrontmatterRange, findHeadingRanges, findLinkRanges, findEmphasisRanges, findImageEmbedRanges } from "../src/preview.js";
 export { COLOR_NAMES } from "../src/colors.js";
+export { stripMarkers, stripFrontmatter } from "../src/strip-markers.js";
+export { mdToHtml } from "../src/md-html.js";
 export { buildCrossrefURL, pickBestMatch, normalizeTitle, titleSimilarity, normalizeDOI, crossrefYear, extractYear } from "../src/crossref.js";
 export { splitPath, vaultName, vaultRelative, buildObsidianUri, obsidianConfigPath, parseObsidianVaults, sanitizeFilename, isUnder } from "../src/paths.js";
 export { LLM_DEFAULTS, isLLMConfigured, canAutoRun, sanitizeLLMSettings, buildChatCompletionsURL, buildLLMHeaders, buildChatCompletionsPayload, buildTestConnectionPayload, parseChatCompletionsResponse, sanitizeError, sanitizeLogMetadata } from "../src/llm.js";
