@@ -64,6 +64,10 @@ var ZON = {
   DEFAULT_TEMPLATES_DIR: "",
   NOTE_SCAFFOLD_NAME: "note", // <templatesDir>/note.md = the default whole-note scaffold
   DEFAULT_DEFAULT_NOTE: "note", // which note scaffold "Create note" uses by default
+  // The Zotero tag stamped on every generated Summary Note (ADR-0002) — the sole
+  // mechanism by which the plugin recognizes its own notes. Reused by later slices
+  // (already-has-one checks, stale indicator). Body edits never affect it.
+  MARKER_TAG: "zps:summary-note",
   DEFAULT_AUTOSYNC: false, // live auto-sync of annotation blocks while you annotate (off by default — opt-in)
   DEFAULT_SHOWMARKERS: false, // editor presentation: hide %% zon/ann %% markers + zon: block by default (Obsidian-like)
   DEFAULT_READMODE: true, // reading view: render links/headings inline by default (toggle off for raw source)
@@ -503,6 +507,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "menu.createdSummary": "Notes — created {created}, already existed {existed}, skipped {skipped}, failed {failed}.",
     "menu.findDOI": "Find DOI (Crossref)",
     "menu.findDOIN": "Find DOIs for {count} items (Crossref)",
+    "menu.generateSummary": "Generate summary note",
+    "menu.generateSummaryN": "Generate {count} summary notes",
+    "summary.generatingTitle": "Generating summary notes…",
+    "summary.createdSummary": "Summary notes — created {created}, failed {failed}.",
+    "summary.failed": "Generate summary note failed: {error}",
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
@@ -2494,13 +2503,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       sep.id = "zon-itemmenu-sep";
       sep.classList.add("zon-itemmenu");
       let miNote = mk("zon-itemmenu-create", () => this.bulkCreateNotes(win));
+      let miSummary = mk("zon-itemmenu-summary", () => this.generateSummaryNotes(win));
       let miDOI = mk("zon-itemmenu-doi", () => this.findDOIsForItems(win));
       popup.appendChild(sep);
       popup.appendChild(miNote);
+      popup.appendChild(miSummary);
       popup.appendChild(miDOI);
-      let onShow = () => this.updateItemMenu(win, { sep, miNote, miDOI });
+      let onShow = () => this.updateItemMenu(win, { sep, miNote, miSummary, miDOI });
       popup.addEventListener("popupshowing", onShow);
-      win._zonItemMenu = { popup, items: [sep, miNote, miDOI], onShow };
+      win._zonItemMenu = { popup, items: [sep, miNote, miSummary, miDOI], onShow };
     } catch (e) { this.log("addItemMenu failed: " + e); }
   },
 
@@ -2512,10 +2523,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let show = n > 0;
       els.sep.hidden = !show;
       els.miNote.hidden = !show;
+      els.miSummary.hidden = !show;
       els.miDOI.hidden = !show;
       if (!show) return;
       els.miNote.setAttribute("label",
         n === 1 ? this.t("menu.createNote") : this.t("menu.createNotesN", { count: n }));
+      els.miSummary.setAttribute("label",
+        n === 1 ? this.t("menu.generateSummary") : this.t("menu.generateSummaryN", { count: n }));
       let missing = items.filter((it) => this.itemDoiState(it) === "missing").length;
       els.miDOI.hidden = missing === 0;
       els.miDOI.setAttribute("label",
@@ -2569,6 +2583,46 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       try { for (let el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot); } catch (e) {}
     };
     walk(win.document);
+  },
+
+  // ----------------------------------------------------- Generate summary note
+
+  // Render the DEFAULT template for `item`, strip all live-block delimiters and the
+  // file-world frontmatter, convert the clean markdown to Zotero-note-safe HTML, and
+  // create a NEW child note stamped with the Marker Tag. Create-once (ADR-0002):
+  // every call adds a fresh note; no existing note is ever read or modified, and no
+  // markdown file is touched. Returns the saved Zotero.Item (the note).
+  async generateSummaryNote(win, item) {
+    if (!win.ZONCore) await this.injectCore(win);
+    // Templates folder IO once, not per selected item (loadTemplates caches in
+    // _templates — guard like the other call sites).
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    // Same data assembly + render pipeline the pane uses, with the default scaffold.
+    let md = await this.renderTemplateAsNote(win, item, this.defaultNoteTemplate());
+    // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%.
+    md = win.ZONCore.stripFrontmatter(md);
+    md = win.ZONCore.stripMarkers(md);
+    let html = win.ZONCore.mdToHtml(md);
+    let note = new Zotero.Item("note");
+    if (item.libraryID) note.libraryID = item.libraryID;
+    note.parentID = item.id;
+    note.setNote(html);
+    note.addTag(this.MARKER_TAG);
+    await note.saveTx();
+    return note;
+  },
+
+  // Context-menu action: generate a Summary Note for each selected regular item.
+  async generateSummaryNotes(win) {
+    let items = this.selectedRegularItems(win);
+    if (!items.length) return;
+    let pw = this.progress(win, this.t("summary.generatingTitle"));
+    let created = 0, failed = 0;
+    for (let item of items) {
+      try { await this.generateSummaryNote(win, item); created++; }
+      catch (e) { failed++; this.log("generateSummaryNote failed for " + (this.getCitekey(item) || item.key) + ": " + e); }
+    }
+    this.finishProgress(pw, this.t("summary.createdSummary", { created, failed }));
   },
 
   // ----------------------------------------------------------- Crossref DOI lookup
