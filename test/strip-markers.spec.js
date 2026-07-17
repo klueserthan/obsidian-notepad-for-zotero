@@ -153,6 +153,11 @@ describe("withSummaryTitle", () => {
     expect(withSummaryTitle(once, "A Thing")).toBe(once);
   });
 
+  it("is idempotent on CRLF input — no second heading", () => {
+    const md = "# Summary: A Thing\r\n\r\nbody";
+    expect(withSummaryTitle(md, "A Thing")).toBe(md);
+  });
+
   it("leaves the body byte-identical below the heading", () => {
     const body = "line one\r\nline two\n\n> quote 100% intact\n";
     expect(withSummaryTitle(body, "T").endsWith(body)).toBe(true);

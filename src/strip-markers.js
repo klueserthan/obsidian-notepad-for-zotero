@@ -68,6 +68,8 @@ export function withSummaryTitle(md, itemTitle) {
   const body = String(md == null ? "" : md);
   const title = String(itemTitle == null ? "" : itemTitle).trim();
   const heading = title ? `# Summary: ${title}` : "# Summary";
-  if (body === heading || body.startsWith(heading + "\n")) return body;
+  // Both newline styles count as "already titled" — CRLF input must not gain a
+  // second heading on a re-run.
+  if (body === heading || body.startsWith(heading + "\n") || body.startsWith(heading + "\r\n")) return body;
   return heading + "\n\n" + body;
 }
