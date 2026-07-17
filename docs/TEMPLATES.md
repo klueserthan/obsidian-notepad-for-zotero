@@ -19,6 +19,14 @@ your Templates folder, distinguished only by name:
   a `note.md` via `highlights(...)` (below), it routes a subset of highlights
   into a section.
 
+**Where the folder lives:** by default the plugin manages its own folder —
+`paper-summarizer/templates` under your Zotero data directory. It is created on
+startup and **seeded** with the starter templates (each written only if its file
+is missing, so your edits are never overwritten; deleting a seeded file restores
+the pristine version on the next start). The starters are Obsidian-free: no YAML
+frontmatter, no `[[wikilinks]]`, no `> [!callout]` syntax. You can point the
+*Templates folder* preference somewhere else if you want to relocate it.
+
 Add or edit a file in the Templates folder on disk (there's no in-app editor
 for the raw file — use the **Template Builder** for a live-preview authoring
 UI instead, opened from the Composer). Templates are cached in memory and
@@ -219,11 +227,15 @@ does this, in order:
 4. **Strip markers** — every `%% zon … %%` / `%% /zon %%` line and every
    `%% ann:KEY %%` anchor is removed, byte-identically preserving everything
    else.
-5. **Markdown → HTML** — the stripped markdown is converted with a fixed,
+5. **Title** — the generic heading `# Summary: <item title>` is prepended
+   automatically (Zotero titles a note from its first line, so every generated
+   note is instantly recognizable). **Don't start a template with your own
+   `# H1`** — you'd get two.
+6. **Markdown → HTML** — the stripped markdown is converted with a fixed,
    explicit rule set (headings, lists, blockquotes, links, emphasis, code,
    tables, strikethrough, hard breaks; raw HTML is escaped, never passed
    through) and saved as the Summary Note's content.
-6. **Create** — a new Zotero child note carrying the Marker Tag
+7. **Create** — a new Zotero child note carrying the Marker Tag
    (`zps:summary-note`) is created, or (with your explicit confirmation) the
    newest existing Summary Note is overwritten. No other note is ever touched.
 
@@ -244,9 +256,10 @@ if you don't want that text in your notes.
 
 - **`highlight.md`** — plain list, colour chosen when selected directly.
 - **`key-quote.md`** — blockquote, pinned to `yellow` (`%%! colour=yellow %%`).
-- **`critique.md`** — red callout, pinned to `red`.
+- **`critique.md`** — bold-labelled blockquote, pinned to `red`.
 - **`snapshot.md`** — a block set `sync=off` (renders empty — see above).
-- **`abstract.md`** — a `kind=field` element: the item's abstract in a callout.
+- **`abstract.md`** — a `kind=field` element: the item's abstract as a
+  labelled blockquote.
 - **`note-by-colour.md`** — a whole-note scaffold that routes each highlight
   colour into its own section with `highlights(colour="…")`.
 
