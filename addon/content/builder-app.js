@@ -47,20 +47,20 @@
     header.append(el("span", "b-sub", usingSample
       ? "previewing with sample data (no item selected)"
       : "previewing: " + (ctx.itemData.title || ctx.citekey || "selected item")));
-    // Preview toggles — these control how the LIVE PREVIEW renders (not the editor,
-    // where you author raw source): hide/show the %% zon %% markers, and reading
-    // view (render links/headings inline). Default = clean rendered note.
+    // Preview toggle — controls how the LIVE PREVIEW renders (not the editor, where
+    // you author raw source): reading view (render links/headings inline). The
+    // preview is always fed STRIPPED output (frontmatter + %% zon %% markers removed,
+    // like the Composer), so there is no marker toggle here.
     var pvToggle = function (label, on) {
       var lab = el("label", "b-toggle"); var cb = doc.createElement("input"); cb.type = "checkbox"; cb.checked = !!on;
       lab.append(cb, el("span", null, label)); header.append(lab); return cb;
     };
-    var pvMarkers = pvToggle("Markers", false);
     var pvRead = pvToggle("Reading view", true);
     var closeX = el("button", "b-x", "✕"); closeX.title = "Close (Esc)";
     header.append(closeX);
 
     // One-line orientation for first-timers.
-    var help = el("div", "b-help", "The panel on the left offers pieces for wherever your cursor is. The right shows a live preview. When it looks right, use the buttons below to create / save the note or save a template.");
+    var help = el("div", "b-help", "The panel on the left offers pieces for wherever your cursor is. The right shows a live preview. When it looks right, save it to your Templates folder — it becomes selectable in the Composer, which generates the note.");
 
     // ---- body: palette | editor | preview -----------------------------------
     var body = el("div", "b-body");
@@ -83,26 +83,26 @@
     var addOpt = function (v, t) { var o = el("option"); o.value = v; o.textContent = t; startSel.append(o); };
     addOpt("__note", "Note starter"); addOpt("__format", "Highlight-format starter"); addOpt("__blank", "Blank");
     Object.keys(templates).sort().forEach(function (n) { addOpt("t:" + n, "Edit: " + n); });
-    var nameInput = el("input", "b-name"); nameInput.type = "text"; nameInput.value = "my-template";
-    var saveBtn = el("button", "b-btn", "Save to folder");
+    var nameInput = el("input", "b-name"); nameInput.type = "text";
+    nameInput.value = (typeof opts.initialName === "string" && opts.initialName) ? opts.initialName : "my-template";
+    var saveBtn = el("button", "b-btn b-primary", "Save template");
     var defaultLab = el("label", "b-toggle"); var defaultChk = doc.createElement("input"); defaultChk.type = "checkbox";
-    defaultLab.title = "Also make this the template Create/Build uses by default";
+    defaultLab.title = "Also make this the template the Composer selects by default";
     defaultLab.append(defaultChk, el("span", null, "default"));
-    // No note yet → "Create note"; an open note → "Save to note".
-    var createBtn = opts.canCreate ? el("button", "b-btn b-primary", "Create note") : null;
-    var saveNoteBtn = opts.canSaveNote ? el("button", "b-btn" + (opts.canCreate ? "" : " b-primary"), "Save to note") : null;
+    // The Builder is a pure template-authoring surface: it saves TEMPLATES only and
+    // never touches an item note file. Saving hands off to the Composer (it selects
+    // the just-saved template); the Composer's Generate action creates the note.
     var closeBtn = el("button", "b-btn", "Close");
     var status = el("span", "b-status");
     footer.append(el("span", "b-name-label", "Start:"), startSel, el("span", "b-name-label", "Save as:"), nameInput, saveBtn, defaultLab);
-    if (createBtn) footer.append(createBtn);
-    if (saveNoteBtn) footer.append(saveNoteBtn);
     footer.append(closeBtn, status);
 
     root.append(header, help, body, footer);
 
     // ---- editor -------------------------------------------------------------
-    // Seed with what the plugin handed us: the existing note (edit-in-place) or
-    // this item's default note template; else the generic starter scaffold.
+    // Seed with the TEMPLATE the plugin handed us — the one currently selected in
+    // the Composer's picker (or the default template); else the generic starter
+    // scaffold. Never a note file: the Builder edits templates only.
     var initialDoc = (typeof opts.initialDoc === "string" && opts.initialDoc.length) ? opts.initialDoc : Core.STARTER_NOTE;
     var view = Ed.create({
       parent: editorHost, doc: initialDoc, dark: dark,
@@ -111,12 +111,12 @@
       onCursor: function () { renderPalette(); },
     });
 
-    // ---- live preview (a read-only editor so the toggles can reuse its engine) --
+    // ---- live preview (a read-only editor so the reading-view toggle reuses its
+    // engine). Fed STRIPPED output (see renderPreview), so markers are already gone.
     var previewView = Ed.create({
       parent: previewHost, doc: "", editable: false, dark: dark,
       readMode: true, showMarkers: false, showFrontmatter: true,
     });
-    pvMarkers.addEventListener("change", function () { try { Ed.setShowMarkers(previewView, pvMarkers.checked); } catch (e) {} });
     pvRead.addEventListener("change", function () { try { Ed.setReadMode(previewView, pvRead.checked); } catch (e) {} });
 
     var previewTimer = null;
@@ -125,9 +125,9 @@
       var r = Core.previewTemplate(text, ctx);
       kindBadge.textContent = r.error ? "not valid yet" : (r.kind === "document" ? "whole-note" : "per-highlight");
       kindBadge.className = "b-kind" + (r.error ? " b-kind-err" : "");
-      // Show r.raw (markers + filled content); the preview editor's view engine
-      // hides markers / renders reading view per the toggles.
-      var out = r.error ? "⚠️ The template isn't valid yet — keep editing.\n\n" + (r.raw || "") : (r.raw || "");
+      // Show r.preview — the frontmatter/marker-STRIPPED body, consistent with the
+      // Composer preview. Any {% llm %} block survives as literal text (never run).
+      var out = r.error ? "⚠️ The template isn't valid yet — keep editing.\n\n" + (r.raw || "") : (r.preview || "");
       try { Ed.setDoc(previewView, out); } catch (e) {}
     }
     function schedulePreview() { if (previewTimer) clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 180); }
@@ -521,32 +521,16 @@
     // ---- actions ------------------------------------------------------------
     function flash(msg, isErr) { status.textContent = msg; status.className = "b-status" + (isErr ? " b-err" : ""); }
     function doClose() { try { Ed.destroy && Ed.destroy(view); } catch (e) {} if (bridge.close) bridge.close(); }
-    // Save the edited note back. We pass the editor text AS-IS (it's the note's own
-    // content, loaded for editing) — the plugin re-syncs its %% zon %% blocks on
-    // write, so blocks you added or reconfigured fill in.
-    if (saveNoteBtn) saveNoteBtn.addEventListener("click", function () {
-      var text = ""; try { text = Ed.getDoc(view) || ""; } catch (e) {}
-      if (!bridge.saveNote) return;
-      flash("Saving…");
-      Promise.resolve(bridge.saveNote(text)).then(function () { flash("Saved to note ✓"); }, function (e) { flash("Save failed: " + e, true); });
-    });
-    if (createBtn) createBtn.addEventListener("click", function () {
-      var text = ""; try { text = Ed.getDoc(view) || ""; } catch (e) {}
-      var r = Core.previewTemplate(text, ctx);
-      if (r.error) { flash("Fix the template error first", true); return; }
-      if (!bridge.createNote) return;
-      flash("Creating note…");
-      // Pass the TEMPLATE SOURCE — the plugin renders it into the new note file.
-      Promise.resolve(bridge.createNote(text)).then(
-        function () { flash("Note created ✓"); setTimeout(doClose, 700); },
-        function (e) { flash("Create failed: " + e, true); }
-      );
-    });
+    // Save the composed TEMPLATE to the Templates folder (never an item note file).
+    // On success the plugin hands off to the Composer — it selects this template and
+    // refreshes its preview — so closing the Builder lands on the new template ready
+    // to Generate.
     saveBtn.addEventListener("click", function () {
       var name = (nameInput.value || "").trim().replace(/\.md$/i, "");
       if (!name) { flash("Enter a template name", true); nameInput.focus(); return; }
       var text = ""; try { text = Ed.getDoc(view) || ""; } catch (e) {}
       if (!bridge.save) return;
+      flash("Saving…");
       Promise.resolve(bridge.save(name, text, defaultChk.checked)).then(function (res) { flash(res || "Saved"); }, function (e) { flash("Save failed: " + e, true); });
     });
     closeBtn.addEventListener("click", doClose);
