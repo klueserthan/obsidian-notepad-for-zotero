@@ -8,7 +8,6 @@
   "applications": {
     "zotero": {
       "id": "__addonID__",
-      "update_url": "__updateURL__",
       "strict_min_version": "7.0",
       "strict_max_version": "9.*"
     }
