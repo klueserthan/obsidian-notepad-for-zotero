@@ -8,19 +8,18 @@ export default defineConfig({
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
 
-  // Identity break (issue #24 / ADR-0003): this is a locally built personal
-  // fork, never published to a "releases" feed anyone should auto-update
-  // from. The built manifest.json must carry NO update_url key at all —
-  // Mozilla's manifest schema rejects an empty-string update_url as invalid
-  // ("Extension is invalid" on install), and any URL would re-enable update
-  // checks. Scaffold's makeManifest step unconditionally injects
-  // `update_url: <updateURL>`, so it is disabled below (build.makeManifest)
-  // and addon/manifest.json — which carries every field makeManifest would
-  // generate, via __key__ tokens — is shipped verbatim without the key.
-  // updateURL is kept empty as belt-and-braces so that re-enabling
-  // makeManifest could still never point update checks at upstream.
-  // Do not repoint this at a GitHub releases URL.
-  updateURL: "",
+  // Identity break (issue #24 / ADR-0003): {{owner}}/{{repo}} resolve from
+  // package.json's repository.url, which now points at the FORK
+  // (klueserthan/obsidian-notepad-for-zotero) — so update checks can never
+  // reach an upstream (Acatechnic) release. Zotero requires
+  // applications.zotero.update_url to be present AND a valid URL (absent or
+  // empty both fail install with "Extension is invalid"), so the key cannot
+  // simply be dropped. Today the fork publishes no release asset at this
+  // URL, so update checks 404 harmlessly; it can serve real fork releases
+  // later. Do not repoint this at upstream's repo.
+  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
+    pkg.version.includes("-") ? "update-beta.json" : "update.json"
+  }`,
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
@@ -50,10 +49,6 @@ export default defineConfig({
 
   build: {
     assets: ["addon/**/*.*"],
-    // See the updateURL comment above: addon/manifest.json is authoritative
-    // (all fields present as __key__ tokens) and deliberately has no
-    // update_url; scaffold's generator would inject one, so it's off.
-    makeManifest: { enable: false },
     // Our Fluent message ids are already namespaced (`zon-*`) and the code
     // references a fixed filename + ids in JS, so keep them verbatim rather than
     // letting scaffold rewrite them to `<namespace>-…`.
