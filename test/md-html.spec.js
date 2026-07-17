@@ -1,11 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { mdToHtml } from "../src/md-html.js";
 
-// Zotero-note-safe tag allowlist (what the Generate path is expected to emit).
+// Zotero-note-safe tag allowlist — the module's documented output vocabulary
+// (see src/md-html.js). The Generate path must emit exactly this set and
+// nothing else.
 const ALLOWED = new Set([
   "h1", "h2", "h3", "h4", "h5", "h6",
   "p", "ul", "ol", "li", "blockquote",
   "a", "strong", "em", "code", "pre", "hr",
+  "img", "br", "s",
+  "table", "thead", "tbody", "tr", "th", "td",
 ]);
 
 function tagNames(html) {
@@ -68,6 +72,29 @@ describe("mdToHtml — formatting constructs", () => {
     expect(mdToHtml("see https://example.com now"))
       .toContain('<a href="https://example.com">');
   });
+
+  it("renders images", () => {
+    expect(mdToHtml("![a figure](https://example.com/fig.png)"))
+      .toContain('<img src="https://example.com/fig.png" alt="a figure">');
+  });
+
+  it("renders hard line breaks as <br> (soft newlines stay plain)", () => {
+    expect(mdToHtml("line one  \nline two")).toContain("<br>");
+    expect(mdToHtml("soft one\nsoft two")).not.toContain("<br>");
+  });
+
+  it("renders strikethrough", () => {
+    expect(mdToHtml("~~gone~~")).toContain("<s>gone</s>");
+  });
+
+  it("renders GFM tables", () => {
+    const html = mdToHtml("| a | b |\n| - | - |\n| 1 | 2 |");
+    expect(html).toContain("<table>");
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<th>a</th>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain("<td>1</td>");
+  });
 });
 
 describe("mdToHtml — safety", () => {
@@ -83,11 +110,19 @@ describe("mdToHtml — safety", () => {
     expect(html).toContain("&lt;div");
   });
 
-  it("emits no tags outside the Zotero-note-safe allowlist", () => {
+  it("emits exactly the documented Zotero-note-safe tag set, nothing else", () => {
+    // Kitchen sink: exercises every construct the module documents.
     const md = [
-      "# Title",
+      "# H1",
+      "## H2",
+      "### H3",
+      "#### H4",
+      "##### H5",
+      "###### H6",
       "",
-      "Para with **bold**, *italic*, `code`, and a [link](https://ex.com).",
+      "Para with **bold**, *italic*, `code`, ~~strike~~, a [link](https://ex.com),",
+      "a hard break  ",
+      "after it, and ![an image](https://ex.com/i.png).",
       "",
       "> a quote",
       "",
@@ -97,6 +132,10 @@ describe("mdToHtml — safety", () => {
       "1. a",
       "2. b",
       "",
+      "| a | b |",
+      "| - | - |",
+      "| 1 | 2 |",
+      "",
       "```",
       "code block",
       "```",
@@ -105,10 +144,8 @@ describe("mdToHtml — safety", () => {
       "",
       "<script>bad()</script>",
     ].join("\n");
-    const html = mdToHtml(md);
-    for (const name of tagNames(html)) {
-      expect(ALLOWED.has(name), `unexpected tag <${name}>`).toBe(true);
-    }
+    const emitted = tagNames(mdToHtml(md));
+    expect([...emitted].sort()).toEqual([...ALLOWED].sort());
   });
 
   it("returns '' for empty/nullish input", () => {

@@ -2594,7 +2594,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // markdown file is touched. Returns the saved Zotero.Item (the note).
   async generateSummaryNote(win, item) {
     if (!win.ZONCore) await this.injectCore(win);
-    await this.loadTemplates();
+    // Templates folder IO once, not per selected item (loadTemplates caches in
+    // _templates — guard like the other call sites).
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     // Same data assembly + render pipeline the pane uses, with the default scaffold.
     let md = await this.renderTemplateAsNote(win, item, this.defaultNoteTemplate());
     // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%.
