@@ -375,7 +375,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let after = Object.keys(this._templates || {}).sort().join("\n");
     if (before === after) return;
     for (let rec of this.openRecs()) {
-      try { await this.populateTemplatePicker(rec); } catch (e) {}
+      try { await this.populateComposerTemplates(rec); } catch (e) {}
     }
   },
 
@@ -512,6 +512,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "summary.generatingTitle": "Generating summary notes…",
     "summary.createdSummary": "Summary notes — created {created}, failed {failed}.",
     "summary.failed": "Generate summary note failed: {error}",
+    // Composer pane (item-pane section): template picker + live preview + Generate.
+    "composer.title": "Composer",
+    "btn.generate": "Generate",
+    "tip.generate": "Create a Summary Note for this item from the selected template",
+    "tip.composerTemplate": "Template used to render this item's Summary Note preview and the note Generate creates",
+    "composer.rendering": "Rendering preview…",
+    "composer.previewEmpty": "This template renders no visible content for this item.",
+    "composer.previewFailed": "Preview failed: {error}",
+    "composer.generating": "Generating…",
+    "composer.generated": "Summary Note created.",
+    "composer.generateFailed": "Generate failed: {error}",
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
@@ -1259,79 +1270,282 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
   // ---------------------------------------------------------------- rendering
 
+  // The item pane is the Composer (ADR-0002): a template picker, a live rendered
+  // preview of the Summary Note the selected template would produce for this item,
+  // and a Generate button that creates it via the #25 pipeline. The old file-backed
+  // CodeMirror editor is gone from the pane (the editor survives only in the
+  // Template Builder). Preview refreshes on item change and template change,
+  // debounced, and NEVER executes {% llm %} blocks (they render as inert
+  // placeholders — see src/compose-preview.js). No disk writes happen here.
   async renderInto(wrap, item) {
     let win = wrap.ownerDocument.defaultView;
     let rec = wrap._zon;
     if (!rec) {
-      rec = this.buildEditorUI(wrap, win);
+      rec = this.buildComposerUI(wrap, win);
       wrap._zon = rec;
-      // The Template dropdown is built synchronously from the formats known so
-      // far; custom folder templates + ZONCore's built-ins may still be loading,
-      // so repopulate it once they're ready (else it shows only the hard-coded
-      // fallback list/quote/callout/compact).
-      this.populateTemplatePicker(rec).catch((e) => this.log("template picker failed: " + e));
+      // The picker is built synchronously from the templates known so far; custom
+      // folder templates + ZONCore's built-ins may still be loading, so repopulate
+      // once they're ready.
+      this.populateComposerTemplates(rec).catch((e) => this.log("composer templates failed: " + e));
     }
-
-    // Not configured yet → show the onboarding empty state instead of operating
-    // against an unset notes folder. (vaultPath is only needed for "Open in
-    // Obsidian"; notesDir is what every read/write/create needs.)
-    if (!this.notesDir()) {
-      await this.flush(rec);
-      rec.item = item;
-      rec.path = null;
-      rec.toolbar.style.display = "none";
-      rec.banner.style.display = "none";
-      rec.host.style.display = "none";
-      rec.setup.style.display = "";
-      return;
-    }
-    rec.host.style.display = "";
-    rec.setup.style.display = "none";
-
-    let path = await this.resolvePath(item);
-
-    // Already showing this exact note in a live editor → do NOT remount.
-    // mountEditor recreates CodeMirror with the cursor at position 0, so a
-    // spurious onRender/onAsyncRender mid-typing (Zotero fires these on
-    // incidental re-layouts, not just item switches) would otherwise yank the
-    // caret to the top. Just re-fit the width in case the pane resized, and
-    // leave the document and cursor untouched. External file changes go through
-    // mountEditor directly (Sync/Insert/Migrate/Reload), so they still update.
-    if (rec.view && path && rec.path === path && rec.item && item && rec.item.id === item.id) {
-      rec.item = item;
-      this.updateLLMButton(rec);
-      try { this.fitHost(rec); if (rec.lib) rec.lib.refresh(rec.view); } catch (e) {}
-      // This fires on pane re-focus too, so it doubles as our external-change
-      // check: if Obsidian changed the file, reload it (when we have no unsaved
-      // edits) or surface the conflict bar (when we do) — never silently stale.
-      if (await this.externallyChanged(rec)) {
-        if (rec.timer) this.showConflict(rec); else await this.reload(rec, win);
-      }
-      return;
-    }
-
-    // Switching notes: flush any pending save for the note we're leaving.
-    await this.flush(rec);
     rec.item = item;
-    this.updateLLMButton(rec);
-    if (path) {
-      let content = "";
-      try { content = await IOUtils.readUTF8(path); } catch (e) { this.log("read failed: " + e); }
-      rec.path = path;
-      rec.diskMtime = await this.noteMtime(path); // baseline for conflict detection
-      this.hideConflict(rec);
-      this.mountEditor(rec, win, content);
-      rec.banner.style.display = "none";
-      rec.toolbar.style.display = "";
-      this.setStatus(rec, this.t("status.saved"));
-    } else {
-      rec.path = null;
-      this.hideConflict(rec);
-      this.mountEditor(rec, win, "");
-      rec.toolbar.style.display = "none";
-      rec.banner.style.display = "";
-      rec.bannerText.textContent = this.t("banner.noNote", { dir: this.notesDir() });
-      await this.populateNoteTemplatePicker(rec);
+    this.schedulePreview(rec);
+  },
+
+  // Build the Composer pane: styled header, a template picker + Generate + Builder
+  // toolbar, a status line, and a scrollable preview area. Returns the `rec` the
+  // preview/generate paths operate on.
+  buildComposerUI(wrap, win) {
+    let doc = wrap.document || win.document;
+    let h = (tag, cls) => {
+      let el = win.document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+      if (cls) el.className = cls;
+      return el;
+    };
+    wrap.textContent = "";
+    this.injectToolbarCSS(win);
+    this.injectComposerCSS(win);
+
+    // Our own styled section header (Zotero doesn't give `custom` plugin sections
+    // the native icon+title head — see paintSection). Click, Enter or Space
+    // collapses/expands; exposed to AT as a button with aria-expanded (kept in
+    // sync across every open pane by applyCollapsedAll).
+    let header = h("div", "zon-header-bar");
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+    let headerIcon = h("img", "zon-header-icon"); headerIcon.src = this.icon;
+    headerIcon.setAttribute("alt", ""); // decorative — the title text carries the name
+    let headerTitle = h("span", "zon-header-title"); headerTitle.textContent = this.t("composer.title");
+    let chevron = h("span", "zon-header-chevron"); chevron.textContent = "⌄";
+    chevron.setAttribute("aria-hidden", "true");
+    header.append(headerIcon, headerTitle, chevron);
+    let toggleCollapsed = () => {
+      let collapsed = !wrap.classList.contains("zon-collapsed");
+      try { Zotero.Prefs.set(this.PREF_COLLAPSED, collapsed, true); } catch (e) {}
+      this.applyCollapsedAll(collapsed);
+    };
+    header.addEventListener("click", toggleCollapsed);
+    header.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        toggleCollapsed();
+      }
+    });
+
+    let toolbar = h("div", "zon-toolbar");
+
+    // Template picker — every template (folder files + built-in formats), default
+    // note scaffold first. Changing it re-renders the preview.
+    let templateSel = h("select"); templateSel.title = this.t("tip.composerTemplate");
+    this.orderedTemplateNames(win).forEach((f) => { let o = h("option"); o.value = f; o.textContent = f; templateSel.appendChild(o); });
+
+    let generateBtn = h("button", "zon-primary");
+    generateBtn.textContent = this.t("btn.generate");
+    generateBtn.title = this.t("tip.generate");
+
+    let builderBtn = h("button");
+    builderBtn.textContent = this.t("btn.builder");
+    builderBtn.title = this.t("tip.builder");
+
+    let status = h("span", "zon-status");
+
+    let row1 = h("div", "zon-row"); row1.append(templateSel, generateBtn, builderBtn);
+    toolbar.append(row1, status);
+
+    // Rendered preview of the future Summary Note (marker-free HTML, LLM blocks as
+    // placeholders). Scrolls internally so a long note doesn't push the pane.
+    let preview = h("div", "zon-preview");
+
+    wrap.append(header, toolbar, preview);
+    if (this.sectionCollapsed()) wrap.classList.add("zon-collapsed");
+    header.setAttribute("aria-expanded", String(!this.sectionCollapsed()));
+
+    let rec = {
+      wrap, host: preview, toolbar, templateSel, generateBtn, builderBtn,
+      statusEl: status, item: null, previewTimer: null, previewSeq: 0,
+    };
+
+    templateSel.addEventListener("change", () => this.schedulePreview(rec, { immediate: true }));
+    generateBtn.addEventListener("click", () => this.composerGenerate(rec).catch((e) => this.log("composer generate failed: " + e)));
+    builderBtn.addEventListener("click", () => { try { this.openTemplateBuilder(win, rec); } catch (e) { this.log("openTemplateBuilder failed: " + e); } });
+
+    return rec;
+  },
+
+  // Composer-specific styling (preview typography + the inert LLM placeholder).
+  // Kept separate from injectToolbarCSS so the two concerns stay legible.
+  injectComposerCSS(win) {
+    try {
+      let doc = win.document;
+      if (doc.getElementById("zon-composer-css")) return;
+      let style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
+      style.id = "zon-composer-css";
+      style.textContent =
+        ".zon-preview{max-height:60vh;overflow:auto;padding:10px 12px;margin:2px 3px 6px;"
+        + "border:1px solid var(--fill-quinary,#ddd);border-radius:5px;"
+        + "background:var(--material-background,#fff);color:var(--fill-primary,#1a1a1a);"
+        + "font-size:13px;line-height:1.5;word-wrap:break-word;overflow-wrap:anywhere;}"
+        + ".zon-preview > :first-child{margin-top:0;}"
+        + ".zon-preview > :last-child{margin-bottom:0;}"
+        + ".zon-preview h1,.zon-preview h2,.zon-preview h3,.zon-preview h4{margin:.8em 0 .35em;line-height:1.25;}"
+        + ".zon-preview h1{font-size:1.4em;} .zon-preview h2{font-size:1.22em;} .zon-preview h3{font-size:1.08em;}"
+        + ".zon-preview p,.zon-preview ul,.zon-preview ol,.zon-preview blockquote,.zon-preview table{margin:.45em 0;}"
+        + ".zon-preview ul,.zon-preview ol{padding-left:1.4em;}"
+        + ".zon-preview blockquote{border-left:3px solid var(--fill-quarternary,rgba(0,0,0,.18));"
+        + "margin-left:0;padding:.1em .9em;color:var(--fill-secondary,#555);}"
+        + ".zon-preview code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;"
+        + "background:var(--fill-quinary,rgba(0,0,0,.06));padding:.05em .3em;border-radius:3px;}"
+        + ".zon-preview pre{overflow:auto;} .zon-preview pre code{background:none;padding:0;}"
+        + ".zon-preview img{max-width:100%;height:auto;}"
+        + ".zon-preview table{border-collapse:collapse;} .zon-preview th,.zon-preview td{border:1px solid var(--fill-quinary,rgba(0,0,0,.18));padding:3px 7px;}"
+        + ".zon-preview a{color:var(--color-accent,#3367d6);}"
+        // Empty / error / loading states.
+        + ".zon-preview-empty,.zon-preview-error{color:var(--fill-secondary,#888);font-style:italic;}"
+        + ".zon-preview-error{color:var(--accent-red,#c0392b);font-style:normal;white-space:pre-wrap;}"
+        // Inert LLM placeholder — clearly not-yet-run, shows model + context + prompt.
+        + ".zon-llm-placeholder{border:1px dashed var(--color-accent,#3367d6);border-radius:6px;"
+        + "padding:8px 10px;margin:.6em 0;background:var(--fill-quinary,rgba(51,103,214,.06));}"
+        + ".zon-llm-placeholder-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:5px;}"
+        + ".zon-llm-placeholder-badge{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;"
+        + "padding:1px 6px;border-radius:4px;background:var(--color-accent,#3367d6);color:#fff;}"
+        + ".zon-llm-placeholder-meta{font-size:11px;color:var(--fill-secondary,#666);}"
+        + ".zon-llm-placeholder-meta code{background:var(--fill-quinary,rgba(0,0,0,.06));padding:.03em .3em;border-radius:3px;}"
+        + ".zon-llm-placeholder-note{font-size:11px;font-style:italic;color:var(--fill-secondary,#888);margin-bottom:5px;}"
+        + ".zon-llm-placeholder-prompt{margin:0;white-space:pre-wrap;font-size:12px;"
+        + "font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--fill-primary,#333);"
+        + "background:var(--material-background,#fff);border-radius:4px;padding:6px 8px;overflow:auto;}";
+      (doc.head || doc.documentElement).appendChild(style);
+    } catch (e) {}
+  },
+
+  // (Re)fill the Composer picker from the unified template list once loadTemplates
+  // + ZONCore are ready. Default note scaffold first; preserves any selection.
+  async populateComposerTemplates(rec) {
+    let sel = rec.templateSel;
+    if (!sel) return;
+    let win = rec.wrap.ownerDocument.defaultView;
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
+    let names = this.orderedTemplateNames(win);
+    let prev = sel.value;
+    let doc = sel.ownerDocument;
+    sel.textContent = "";
+    for (let n of names) {
+      let o = doc.createElementNS("http://www.w3.org/1999/xhtml", "option");
+      o.value = n; o.textContent = n;
+      sel.appendChild(o);
+    }
+    sel.value = (prev && names.includes(prev)) ? prev : names[0];
+    this.schedulePreview(rec, { immediate: true });
+  },
+
+  // Debounced preview refresh. Item switches and template changes both funnel here;
+  // `opts.immediate` shortens the debounce for a deliberate template pick.
+  schedulePreview(rec, opts = {}) {
+    let win = rec.wrap.ownerDocument.defaultView;
+    if (rec.previewTimer) { try { win.clearTimeout(rec.previewTimer); } catch (e) {} rec.previewTimer = null; }
+    let delay = opts.immediate ? 30 : 180;
+    try {
+      rec.previewTimer = win.setTimeout(() => {
+        rec.previewTimer = null;
+        this.refreshPreview(rec).catch((e) => this.log("preview refresh failed: " + e));
+      }, delay);
+    } catch (e) {
+      this.refreshPreview(rec).catch((e2) => this.log("preview refresh failed: " + e2));
+    }
+  },
+
+  // Compute + display the preview HTML for the current item/template. Guards
+  // against stale results (a later item/template change wins). Never writes disk,
+  // never calls an LLM.
+  async refreshPreview(rec) {
+    let win = rec.wrap.ownerDocument.defaultView;
+    let item = rec.item;
+    let seq = ++rec.previewSeq;
+    let host = rec.host;
+    if (!item) { host.textContent = ""; this.setStatus(rec, ""); return; }
+    if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+    this.setStatus(rec, this.t("composer.rendering"));
+
+    let html = null, err = null;
+    try {
+      html = await this.composerPreviewHtml(win, item, name);
+    } catch (e) {
+      err = (e && e.message) ? e.message : String(e);
+    }
+    // A newer refresh (or item switch) started while we awaited → drop this one.
+    if (seq !== rec.previewSeq || rec.item !== item) return;
+
+    if (err != null) {
+      host.textContent = "";
+      let d = win.document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      d.className = "zon-preview-error";
+      d.textContent = this.t("composer.previewFailed", { error: err });
+      host.appendChild(d);
+      this.setStatus(rec, "");
+      return;
+    }
+
+    if (!html || !html.trim()) {
+      host.textContent = "";
+      let d = win.document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      d.className = "zon-preview-empty";
+      d.textContent = this.t("composer.previewEmpty");
+      host.appendChild(d);
+      this.setStatus(rec, "");
+      return;
+    }
+
+    // Parse the preview HTML with DOMParser and import the nodes, rather than
+    // assigning innerHTML (which the privileged chrome document restricts). The
+    // markup is our own — mdToHtml output (html:false, a fixed safe tag set) plus
+    // the fully-escaped LLM placeholder — so this only realises trusted content.
+    try {
+      let parser = new win.DOMParser();
+      let pdoc = parser.parseFromString("<!DOCTYPE html><body>" + html + "</body>", "text/html");
+      host.textContent = "";
+      for (let node of Array.from(pdoc.body.childNodes)) {
+        host.appendChild(win.document.importNode(node, true));
+      }
+    } catch (e) {
+      host.textContent = "";
+      this.log("preview render failed: " + e);
+    }
+    this.setStatus(rec, "");
+  },
+
+  // The preview pipeline — the SAME steps as generateSummaryNote, minus the note
+  // creation: render (preview mode, no image export) → stripFrontmatter →
+  // stripMarkers → composePreviewHtml (mdToHtml + inert {% llm %} placeholders).
+  async composerPreviewHtml(win, item, name) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+    md = win.ZONCore.stripFrontmatter(md);
+    md = win.ZONCore.stripMarkers(md);
+    let model = "";
+    try { model = this.llmModel() || ""; } catch (e) {}
+    return win.ZONCore.composePreviewHtml(md, { model });
+  },
+
+  // Generate a Summary Note for the pane's item from the selected template — the
+  // exact #25 path, just with the chosen template name.
+  async composerGenerate(rec) {
+    let win = rec.wrap.ownerDocument.defaultView;
+    let item = rec.item;
+    if (!item) return;
+    let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+    rec.generateBtn.disabled = true;
+    this.setStatus(rec, this.t("composer.generating"));
+    try {
+      await this.generateSummaryNote(win, item, name);
+      this.setStatus(rec, this.t("composer.generated"));
+    } catch (e) {
+      this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
+      this.log("composerGenerate failed: " + e);
+    } finally {
+      rec.generateBtn.disabled = false;
     }
   },
 
@@ -2219,14 +2433,20 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     };
   },
 
-  async renderDocument(win, item, templateText) {
+  // `opts.preview` renders the note WITHOUT any disk side effects: the annotation
+  // image files are not exported (the Composer preview must never write). The
+  // annotation blocks are still filled via syncBlocks, so the preview stays
+  // truthful — only the on-disk image realisation is skipped.
+  async renderDocument(win, item, templateText, opts = {}) {
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item), isFirstImport: true });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
     let attachmentFolder = this.resolveAttachmentFolder(md, win);
-    try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) { this.log("image export failed: " + e); }
+    if (!opts.preview) {
+      try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) { this.log("image export failed: " + e); }
+    }
     try { md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder }); } catch (e) {}
     return md;
   },
@@ -2234,7 +2454,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // Render template `name` as a whole note. A document template is rendered in
   // full; a per-annotation format becomes a note that's just a filled annotations
   // block (so you really can "start a note that's just a list of annotations").
-  async renderTemplateAsNote(win, item, name) {
+  async renderTemplateAsNote(win, item, name, opts = {}) {
     let t = this.allTemplates(win)[name];
     if (!t) {
       let text = await this.resolveNoteScaffoldText(name);
@@ -2245,7 +2465,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
             + " " + v.errors.map(e => "line " + (e.line != null ? e.line : "?") + ": " + e.message).join("; "));
         }
       }
-      return this.renderDocument(win, item, text);
+      return this.renderDocument(win, item, text, opts);
     }
     if (t.kind === "document") {
       if (t.text) {
@@ -2255,13 +2475,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
             + " " + v.errors.map(e => "line " + (e.line != null ? e.line : "?") + ": " + e.message).join("; "));
         }
       }
-      return this.renderDocument(win, item, t.text);
+      return this.renderDocument(win, item, t.text, opts);
     }
     let anns = this.gatherAnnotations(item, win);
     let bibliography = await this.getBibliography(item);
     let blockOpts = this.syncOpts(win, item, { bibliography });
-    try { await this.exportAnnotationImages(anns, this.getCitekey(item), blockOpts.attachmentFolder, win); }
-    catch (e) { this.log("image export failed: " + e); }
+    if (!opts.preview) {
+      try { await this.exportAnnotationImages(anns, this.getCitekey(item), blockOpts.attachmentFolder, win); }
+      catch (e) { this.log("image export failed: " + e); }
+    }
     let cfg = this.blockConfigFor(t, name, {});
     return win.ZONCore.makeBlock(cfg, anns, blockOpts) + "\n";
   },
@@ -2592,13 +2814,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // create a NEW child note stamped with the Marker Tag. Create-once (ADR-0002):
   // every call adds a fresh note; no existing note is ever read or modified, and no
   // markdown file is touched. Returns the saved Zotero.Item (the note).
-  async generateSummaryNote(win, item) {
+  // `templateName` selects the template to render (the Composer passes the pane's
+  // chosen one); the context-menu path omits it and falls back to the default
+  // scaffold, so the #25 behaviour is unchanged.
+  async generateSummaryNote(win, item, templateName) {
     if (!win.ZONCore) await this.injectCore(win);
     // Templates folder IO once, not per selected item (loadTemplates caches in
     // _templates — guard like the other call sites).
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
-    // Same data assembly + render pipeline the pane uses, with the default scaffold.
-    let md = await this.renderTemplateAsNote(win, item, this.defaultNoteTemplate());
+    // Same data assembly + render pipeline the preview uses, with the chosen (or
+    // default) template.
+    let md = await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
     // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%.
     md = win.ZONCore.stripFrontmatter(md);
     md = win.ZONCore.stripMarkers(md);
@@ -2982,10 +3208,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   },
 
   // Collapse/expand every open section's body (everything but the header) to match
-  // the global collapsed pref. Toggled by clicking the section header.
+  // the global collapsed pref. Toggled by clicking the section header. Also keeps
+  // each header's aria-expanded in step for assistive tech.
   applyCollapsedAll(collapsed) {
     for (let rec of this.openRecs()) {
       try { if (rec.wrap) rec.wrap.classList.toggle("zon-collapsed", !!collapsed); } catch (e) {}
+      try {
+        let hb = rec.wrap && rec.wrap.querySelector(".zon-header-bar");
+        if (hb) hb.setAttribute("aria-expanded", String(!collapsed));
+      } catch (e) {}
     }
   },
 

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Composer pane (ADR-0002).** The item-pane section is now the Composer: a
+  template picker (over every loaded template, defaulting to the default note
+  template), a live rendered preview of the Summary Note the selected template
+  would produce for the selected item, and a Generate button that creates the
+  note. The preview goes through the exact same pipeline as Generate — render →
+  `stripFrontmatter` → `stripMarkers` → markdown→HTML — so it is truthful, and it
+  refreshes (debounced) on item selection and template change. `{% llm %}` blocks
+  are **never executed** in the preview: each renders as an inert, visible
+  placeholder showing the target model and the block's context spec plus its
+  (variable-resolved) prompt. No model call, and no disk write, happens from the
+  Composer (annotation image export is skipped in preview mode). A new pure module
+  `src/compose-preview.js` (`composePreviewHtml` / `llmPlaceholderHtml`) backs the
+  placeholder substitution and is re-exported through the core bundle.
 - **Generate summary note (ADR-0002, first slice).** A new item context-menu
   action, "Generate summary note", renders the default template for the
   selected item(s) and creates a native Zotero child note from it. The rendered
@@ -21,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
+- **Item pane no longer edits a file-backed note.** The Composer replaces the
+  CodeMirror editor and its file-note controls (Insert, Update, Open in Obsidian,
+  Reload, Sync Metadata, …) in the item pane; the Template Builder still opens
+  from the pane and the editor survives only inside it. The underlying
+  file/sync/editor machinery is retained for now (teardown is a later slice).
 - **Identity break (fork ownership, ADR-0003).** This build now ships under its
   own name and addon ID instead of upstream's: `addonName` is
   "Paper Summarizer for Zotero" and `addonID` is
