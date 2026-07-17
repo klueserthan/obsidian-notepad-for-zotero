@@ -525,10 +525,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "composer.overwritten": "Summary Note overwritten.",
     "composer.generateFailed": "Generate failed: {error}",
     // Note awareness + Stale Indicator (#28) — read-only, never triggers a write.
-    "composer.notes.heading": "Summary Notes",
-    "composer.notes.noNote": "No Summary Note yet",
     "composer.notes.stale": "Stale — annotations newer than the latest summary",
-    "composer.notes.fresh": "Up to date",
+    "composer.notes.empty": "No summary note yet — Generate creates one",
     "composer.notes.untitled": "(untitled)",
     "composer.notes.open": "Open this Summary Note",
     "composer.overwriteChoice": "This item already has {count} Summary Note(s), recognised by tag.\n\nOverwrite the NEWEST one with a fresh render instead of creating an additional note? Overwriting replaces its entire content — hand edits made in Better Notes will be lost.\n\nChoose Cancel to create an additional Summary Note instead.",
@@ -1402,20 +1400,24 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
       style.id = "zon-composer-css";
       style.textContent =
-        // Note awareness + Stale Indicator (#28) — read-only.
+        // Note awareness + Stale Indicator (#28) — read-only. The badge exists
+        // ONLY in the "stale" state ("fresh" shows nothing; "no-note" is covered
+        // by the list's placeholder row instead).
         ".zon-notes-section{margin:0 3px 6px;}"
         + ".zon-stale-badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;"
-        + "border-radius:10px;margin:0 0 4px;}"
+        + "border-radius:10px;margin:0 0 4px;"
+        + "background:rgba(224,124,26,.15);color:var(--accent-orange,#b5560a);}"
         + ".zon-stale-badge:empty{display:none;}"
-        + ".zon-stale-badge.zon-stale-no-note{background:var(--fill-quinary,rgba(0,0,0,.06));color:var(--fill-secondary,#666);}"
-        + ".zon-stale-badge.zon-stale-fresh{background:var(--fill-quinary,rgba(46,160,67,.12));color:var(--accent-green,#2e7d32);}"
-        + ".zon-stale-badge.zon-stale-stale{background:rgba(224,124,26,.15);color:var(--accent-orange,#b5560a);}"
         + ".zon-notes-list{list-style:none;margin:0;padding:0;}"
         + ".zon-notes-list:empty{display:none;}"
         + ".zon-notes-item{font-size:12px;padding:2px 4px;border-radius:4px;cursor:pointer;"
         + "color:var(--fill-secondary,#555);}"
         + ".zon-notes-item:hover,.zon-notes-item:focus{background:var(--fill-quinary,rgba(0,0,0,.06));"
         + "color:var(--fill-primary,#1a1a1a);outline:none;}"
+        // Empty-state placeholder row — deliberately non-interactive: default
+        // cursor, no hover affordance, never focusable, no click handler.
+        + ".zon-notes-placeholder{font-size:12px;padding:2px 4px;cursor:default;"
+        + "font-style:italic;color:var(--fill-secondary,#888);}"
         + ".zon-preview{max-height:60vh;overflow:auto;padding:10px 12px;margin:2px 3px 6px;"
         + "border:1px solid var(--fill-quinary,#ddd);border-radius:5px;"
         + "background:var(--material-background,#fff);color:var(--fill-primary,#1a1a1a);"
@@ -3111,13 +3113,16 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     };
 
     notesListEl.textContent = "";
-    if (!item) {
-      badgeEl.textContent = "";
-      badgeEl.className = "zon-stale-badge";
-      return;
-    }
+    badgeEl.textContent = ""; // hidden via :empty until (and unless) proven stale
+    if (!item) return;
 
     let notes = this.existingSummaryNotes(item);
+    // Distinct empty state: a non-interactive placeholder row (no tabindex, no
+    // role, no click handler — see .zon-notes-placeholder) instead of a badge.
+    if (!notes.length) {
+      notesListEl.appendChild(mkLi("zon-notes-placeholder", this.t("composer.notes.empty")));
+      return; // state is "no-note" by definition — nothing to compare
+    }
     let sorted = notes.slice().sort((a, b) => this.noteDateAddedMs(b) - this.noteDateAddedMs(a));
     for (let note of sorted) {
       let title = "";
@@ -3139,10 +3144,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       notesListEl.appendChild(li);
     }
 
-    // Stale Indicator — read-only comparison via the pure core module. Any
-    // failure here degrades to "no-note" styling rather than throwing, since
-    // this must never block the rest of the Composer.
-    let state = "no-note";
+    // Stale Indicator — read-only comparison via the pure core module. The
+    // badge renders ONLY when the state is "stale": "fresh" shows nothing, and
+    // "no-note" was handled above by the placeholder row. Any failure here
+    // degrades to no badge rather than throwing, since this must never block
+    // the rest of the Composer.
+    let state = "fresh";
     try {
       if (!win.ZONCore) await this.injectCore(win);
       if (rec.item !== item) return; // item changed while we awaited injectCore
@@ -3152,10 +3159,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     } catch (e) { this.log("staleness compute failed: " + e); }
     if (rec.item !== item) return; // stale async result — a later refresh wins
 
-    badgeEl.className = "zon-stale-badge zon-stale-" + state;
-    badgeEl.textContent = state === "stale" ? this.t("composer.notes.stale")
-      : state === "no-note" ? this.t("composer.notes.noNote")
-      : this.t("composer.notes.fresh");
+    if (state === "stale") badgeEl.textContent = this.t("composer.notes.stale");
   },
 
   // Copy the cached PNG for each image annotation into the note's attachment
