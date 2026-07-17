@@ -16,15 +16,7 @@
 var ZON = {
   pluginID: "__addonID__", // replaced at build time by scaffold (config.addonID)
   rootURI: null,
-  index: null,       // Map<itemKey, filePath>
-  indexing: null,    // in-flight index promise
   _registeredPaneID: null,
-  _notifierID: null,        // Zotero.Notifier observer handle
-  _autoSyncTimer: null,     // debounce timer for annotation-driven auto-sync
-  _autoSyncItems: null,     // Set<regular-item id> pending auto-sync
-  _autoSyncAll: false,      // true when a delete left us unable to resolve the parent
-  _prefObservers: null,     // Zotero.Prefs observer handles (notes folder / filename pattern)
-  _rescanTimer: null,       // debounce timer for pref-driven rescans
 
   PREF_VAULT: "extensions.zotero-obsidian-notes.vaultPath",
   PREF_NOTES: "extensions.zotero-obsidian-notes.notesDir",
