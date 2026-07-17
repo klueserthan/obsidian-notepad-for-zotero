@@ -17,7 +17,28 @@ import {
   history,
   historyKeymap,
   indentWithTab,
+  cursorCharLeft, selectCharLeft,
+  cursorCharRight, selectCharRight,
+  cursorLineUp, selectLineUp,
+  cursorLineDown, selectLineDown,
+  cursorLineBoundaryBackward, selectLineBoundaryBackward,
+  cursorLineBoundaryForward, selectLineBoundaryForward,
+  cursorPageUp, selectPageUp,
+  cursorPageDown, selectPageDown,
 } from "@codemirror/commands";
+
+// Bare caret-navigation keys → CM's own [move, shift-extend] commands. Used by the
+// keydown guard in create() — see the comment there for why it's needed.
+const NAV_COMMANDS = {
+  ArrowLeft: [cursorCharLeft, selectCharLeft],
+  ArrowRight: [cursorCharRight, selectCharRight],
+  ArrowUp: [cursorLineUp, selectLineUp],
+  ArrowDown: [cursorLineDown, selectLineDown],
+  Home: [cursorLineBoundaryBackward, selectLineBoundaryBackward],
+  End: [cursorLineBoundaryForward, selectLineBoundaryForward],
+  PageUp: [cursorPageUp, selectPageUp],
+  PageDown: [cursorPageDown, selectPageDown],
+};
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { yamlFrontmatter } from "@codemirror/lang-yaml";
 import { findMarkerRanges, rangeRevealed } from "../src/markers.js";
@@ -339,12 +360,15 @@ export function setImageEpoch(view, epoch) {
 // `readMode` renders links/headings inline (default on), `showFrontmatter` keeps
 // the YAML block visible (default on). `onOpenLink(href)` is called when a
 // rendered inline link is clicked.
-export function create({ parent, doc, onChange, editable = true, dark = false,
+export function create({ parent, doc, onChange, onCursor, editable = true, dark = false,
   showMarkers = false, readMode = true, showFrontmatter = true, vaultPath = "", imageEpoch = 0, onOpenLink } = {}) {
   const root = parent.getRootNode ? parent.getRootNode() : undefined;
 
   const updateListener = EditorView.updateListener.of((u) => {
     if (u.docChanged && onChange) onChange(u.state.doc.toString());
+    // Fire on any caret/selection move (and after edits) so a context-aware UI
+    // (the Template Builder palette) can react to where the cursor now sits.
+    if ((u.docChanged || u.selectionSet) && onCursor) onCursor(u.state.selection.main.head);
   });
 
   // Click a rendered link (its label carries data-zon-href) → open it, instead of
@@ -396,6 +420,52 @@ export function create({ parent, doc, onChange, editable = true, dark = false,
   });
 
   const view = new EditorView({ state, parent, root });
+
+  // Arrow-key fix (the Template Builder bug). Diagnosed live: a bare arrow keydown
+  // DOES reach the focused editor, but in the builder's overlay iframe CodeMirror
+  // doesn't claim it (no preventDefault), so the browser runs its default and moves
+  // FOCUS to the next focusable control (a header checkbox) instead of moving the
+  // caret — arrows looked dead. (Typing and Cmd-shortcuts were unaffected: different
+  // paths.) Fix: claim the bare nav keys ourselves on the contentDOM in the capture
+  // phase — run CM's own motion command, then preventDefault (stop the focus-move)
+  // + stopPropagation. Only fires when the editor is the keydown target (it's bound
+  // to contentDOM), and only for un-modified keys (Cmd/Ctrl/Alt fall through to CM).
+  // State-based caret move (pure doc math — no layout, so it never throws). Used
+  // as a fallback because CM's own vertical-motion commands throw "f is not a
+  // function" in the builder's overlay editor (a measurement issue), which is the
+  // very reason plain arrows were dead: CM's keymap hit the same throw, never
+  // claimed the key, and the browser moved focus to the next control instead.
+  const moveCaret = (key, shift) => {
+    const s = view.state, sel = s.selection.main, doc = s.doc, head = sel.head, line = doc.lineAt(head);
+    let to = head;
+    if (key === "ArrowLeft") to = Math.max(0, head - 1);
+    else if (key === "ArrowRight") to = Math.min(doc.length, head + 1);
+    else if (key === "Home") to = line.from;
+    else if (key === "End") to = line.to;
+    else {
+      const col = head - line.from;
+      const delta = key === "ArrowUp" ? -1 : key === "ArrowDown" ? 1 : key === "PageUp" ? -10 : 10;
+      const n = Math.min(doc.lines, Math.max(1, line.number + delta));
+      const tl = doc.line(n);
+      to = Math.min(tl.from + col, tl.to);
+    }
+    const anchor = shift ? sel.anchor : to;
+    if (to === head && anchor === sel.anchor) return false;
+    view.dispatch({ selection: { anchor, head: to }, scrollIntoView: true });
+    return true;
+  };
+  const navKeydown = (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || !NAV_COMMANDS[e.key]) return;
+    // Try CM's own command first (correct visual-line motion where it works);
+    // fall back to the state-based move when it throws or no-ops. Always consume
+    // the key so the browser can't move focus off the editor.
+    let ran = false;
+    try { const c = NAV_COMMANDS[e.key]; ran = (e.shiftKey ? c[1] : c[0])(view); } catch (ce) { ran = false; }
+    if (!ran) { try { moveCaret(e.key, e.shiftKey); } catch (me) {} }
+    e.preventDefault(); e.stopPropagation();
+  };
+  try { view.contentDOM.addEventListener("keydown", navKeydown, true); view.zonNavKeydown = navKeydown; } catch (e) {}
+
   // Re-measure whenever the host changes size — pane-splitter drags, and (the
   // important one) the late initial layout of the item pane. CodeMirror's first
   // width measurement can land before the pane has its real width, which left
@@ -416,6 +486,12 @@ export function getDoc(view) {
   return view.state.doc.toString();
 }
 
+// Current caret offset (head of the main selection) — the Template Builder reads
+// it to classify where the cursor sits for its context-aware palette.
+export function getCursor(view) {
+  return view && view.state ? view.state.selection.main.head : 0;
+}
+
 // Insert text at the current cursor (replacing any selection), then place the
 // cursor after it and focus. Used by the "insert block" commands.
 export function insertAtCursor(view, text) {
@@ -428,11 +504,45 @@ export function insertAtCursor(view, text) {
   view.focus();
 }
 
+// Replace a specific range [from, to) — the builder's block configurator uses it
+// to rewrite a `%% zon … %%` marker in place as you change the controls, without
+// disturbing the rest of the document or the undo history.
+export function replaceRange(view, from, to, text) {
+  if (!view) return;
+  view.dispatch({ changes: { from: from, to: to, insert: text || "" } });
+}
+
+// Place the caret at an offset (and focus). The builder uses it to keep the
+// cursor inside the frontmatter after add/remove, so the panel stays in context.
+export function setCursor(view, pos) {
+  if (!view) return;
+  const p = Math.max(0, Math.min(pos | 0, view.state.doc.length));
+  view.dispatch({ selection: { anchor: p } });
+  view.focus();
+}
+
 // Replace the whole buffer (used when switching to a different item's note).
 // Preserves nothing — caller is responsible for having saved prior edits.
-export function setDoc(view, text) {
+// Pass `{ preserveView: true }` to keep the scroll position and (clamped) caret
+// across the replace — used by auto-sync so pulling in a new highlight doesn't
+// yank the viewport to the top while you're reading/editing further down.
+export function setDoc(view, text, opts = {}) {
+  const t = text || "";
+  if (opts.preserveView && view.scrollDOM) {
+    const scrollTop = view.scrollDOM.scrollTop;
+    const sel = view.state.selection.main;
+    const anchor = Math.min(sel.anchor, t.length);
+    const head = Math.min(sel.head, t.length);
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: t },
+      selection: { anchor, head },
+      scrollIntoView: false,
+    });
+    try { view.scrollDOM.scrollTop = scrollTop; } catch (e) {}
+    return;
+  }
   view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text || "" },
+    changes: { from: 0, to: view.state.doc.length, insert: t },
   });
 }
 
@@ -446,5 +556,6 @@ export function refresh(view) {
 export function destroy(view) {
   if (!view) return;
   try { if (view.zonResizeObserver) view.zonResizeObserver.disconnect(); } catch (e) {}
+  try { if (view.zonNavKeydown) view.contentDOM.removeEventListener("keydown", view.zonNavKeydown, true); } catch (e) {}
   view.destroy();
 }

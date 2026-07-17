@@ -429,7 +429,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "btn.reload": "Reload",
     "btn.more": "⋯ More",
     "btn.pushTags": "Push tags → Zotero…",
+    "btn.builder": "Template Builder…",
+    "tip.builder": "Compose a template with a live preview, then insert it into this note or save it to your Templates folder",
+    "status.templateSaved": "Saved template ‘{name}’ to your Templates folder",
+    "msg.builderOverwrite": "A template named ‘{name}.md’ already exists. Overwrite it?",
     "btn.createNote": "Create note",
+    "btn.buildNote": "Build a note…",
+    "tip.buildNote": "Open the Template Builder to compose this item's note and create it",
     "btn.rescan": "Rescan",
     "btn.setup": "Set up…",
     "btn.openSettings": "Open Settings",
@@ -695,6 +701,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let out = {};
     let all = this.allTemplates(win);
     for (let k of Object.keys(all)) if (all[k].kind === "format") out[k] = all[k];
+    // Always-available item-field formats (citation/abstract/title/authors) so
+    // `kind=field` blocks resolve with zero setup. A same-named Templates-folder
+    // file (already in `out`) overrides them.
+    let ff = (win && win.ZONCore && win.ZONCore.FIELD_FORMATS) || {};
+    for (let k of Object.keys(ff)) if (!out[k]) out[k] = ff[k];
     return out;
   },
 
@@ -706,6 +717,21 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let def = this.defaultNoteTemplate();
     names.sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b)));
     return names;
+  },
+
+  // Window-INDEPENDENT template-name list for the Settings "Default note template"
+  // dropdown. The prefs-pane script scope can't reliably enumerate the folder
+  // (IOUtils/PathUtils aren't dependable globals there — same class of issue as
+  // Services), so it asks the plugin instead: this reads `_templates` (already
+  // loaded in the privileged main-window scope) plus the static built-in formats.
+  prefsTemplateNames() {
+    let names = new Set(["note", "list", "quote", "callout", "compact"]);
+    for (let k of Object.keys(this._templates || {})) {
+      if (!/^(templates|readme)$/i.test(k)) names.add(k);
+    }
+    let def = this.defaultNoteTemplate();
+    if (def) names.add(def);
+    return [...names].sort();
   },
 
   // Store defaults for any unset pref so the preferences pane shows real values
@@ -1482,6 +1508,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let runLLMBtn = h("button"); runLLMBtn.textContent = this.t("btn.runLLM");
     runLLMBtn.title = this.t("tip.runLLM");
     runLLMBtn.disabled = !this.llmConfigured();
+    let builderBtn = h("button"); builderBtn.textContent = this.t("btn.builder"); builderBtn.title = this.t("tip.builder");
     let status = h("span", "zon-status");
 
     // NOTE: live auto-sync is a GLOBAL pref (PREF_AUTOSYNC) driven by the Notifier
@@ -1534,7 +1561,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     // "⋯ More" (Sync Metadata / Migrate / Push tags) is appended only when
     // experimental features are enabled in Settings — keeps the row uncluttered.
     let row2 = h("div", "zon-row zon-row-actions"); row2.append(refreshBtn, runLLMBtn, openBtn, reloadBtn);
+    // The Template Builder now ships for everyone. The "⋯ More" popover (Sync
+    // Metadata / Migrate / Push tags) stays behind the experimental toggle while
+    // those are still being reworked.
+    row2.append(builderBtn);
     if (this.experimentalEnabled()) row2.append(moreWrap);
+    builderBtn.addEventListener("click", () => { try { this.openTemplateBuilder(win, rec); } catch (e) { this.log("openTemplateBuilder failed: " + e); } });
     let row4 = h("div", "zon-row zon-row-view"); row4.append(readLabel, frontLabel, markersLabel);
     toolbar.append(row1, row2, row4, status);
 
@@ -1569,7 +1601,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let noteTplSel = h("select"); noteTplSel.title = this.t("tip.noteTpl");
     let createBtn = h("button", "zon-primary"); createBtn.textContent = this.t("btn.createNote");
     let rescanBtn = h("button"); rescanBtn.textContent = this.t("btn.rescan"); rescanBtn.title = this.t("tip.rescan");
+    let buildNoteBtn = h("button"); buildNoteBtn.textContent = this.t("btn.buildNote"); buildNoteBtn.title = this.t("tip.buildNote");
     createRow.append(noteTplSel, createBtn, rescanBtn);
+    // "Build a note…" opens the (now-shipped) Template Builder from the empty state.
+    createRow.append(buildNoteBtn);
     banner.append(bannerText, createRow);
 
     // First-run / not-configured empty state. Shown (instead of the editor +
@@ -1625,6 +1660,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     createBtn.addEventListener("click", () =>
       this.createNote(rec, rec.noteTplSel && rec.noteTplSel.value)
         .catch((e) => this.log("create failed: " + e)));
+    buildNoteBtn.addEventListener("click", () => { try { this.openTemplateBuilder(win, rec); } catch (e) { this.log("openTemplateBuilder failed: " + e); } });
     rescanBtn.addEventListener("click", async () => {
       try {
         rescanBtn.disabled = true;
@@ -1813,7 +1849,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let win = rec.host.ownerDocument.defaultView;
     this.setStatus(rec, this.t("status.editing"));
     if (rec.timer) win.clearTimeout(rec.timer);
-    rec.timer = win.setTimeout(() => { this.save(rec); }, 700);
+    // Clear the flag when it fires so `rec.timer` means "an unsaved edit is
+    // pending" accurately — the conflict/auto-sync checks gate on it, and a stale
+    // (already-fired) timer id made them misfire.
+    rec.timer = win.setTimeout(() => { rec.timer = null; this.save(rec); }, 700);
   },
 
   // --- data safety: atomic writes + external-change (conflict) detection -----
@@ -1823,7 +1862,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // made outside Zotero; the user reconciles via the conflict bar instead.
 
   async safeWrite(path, text) {
-    await IOUtils.writeUTF8(path, text, { tmpPath: path + ".zon.tmp" });
+    // Unique temp path per write: a fixed `<note>.zon.tmp` was shared by every
+    // writer, so two concurrent writes could corrupt each other's temp file.
+    this._wseq = (this._wseq || 0) + 1;
+    await IOUtils.writeUTF8(path, text, { tmpPath: path + "." + this._wseq + ".zon.tmp" });
   },
 
   async noteMtime(path) {
@@ -1844,19 +1886,39 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   },
   hideConflict(rec) { try { if (rec.conflict) rec.conflict.style.display = "none"; } catch (e) {} },
 
+  // Serialize every disk write to a single note through a per-rec promise chain,
+  // so the debounced editor autosave and the annotation auto-sync (and any other
+  // write path) can never interleave their read-modify-write and clobber each
+  // other. This was the root of the "reload erased my notes" data loss.
+  withNoteLock(rec, fn) {
+    let prev = rec._noteLock || Promise.resolve();
+    let run = prev.then(() => fn(), () => fn());
+    rec._noteLock = run.then(() => {}, () => {}); // the chain never rejects
+    return run;
+  },
+
+  // Write the editor's current text to disk + refresh the mtime baseline. No lock
+  // and no conflict check — callers hold the lock and have decided it's safe.
+  async _persistEditor(rec) {
+    if (!rec.path || !rec.lib || !rec.view) return false;
+    await this.safeWrite(rec.path, rec.lib.getDoc(rec.view));
+    rec.diskMtime = await this.noteMtime(rec.path);
+    return true;
+  },
+
   // Editor autosave. Refuses to overwrite a note that changed on disk since we
   // last saw it (unless forced from the conflict bar's "Overwrite mine").
   async save(rec, opts = {}) {
     if (!rec.path || !rec.lib || !rec.view) return false;
-    if (!opts.force && await this.externallyChanged(rec)) { this.showConflict(rec); return false; }
-    let text = rec.lib.getDoc(rec.view);
-    try {
-      await this.safeWrite(rec.path, text);
-      rec.diskMtime = await this.noteMtime(rec.path);
-      this.hideConflict(rec);
-      this.setStatus(rec, this.t("status.saved"));
-      return true;
-    } catch (e) { this.setStatus(rec, this.t("err.save") + e); this.log("save failed: " + e); return false; }
+    return this.withNoteLock(rec, async () => {
+      if (!opts.force && await this.externallyChanged(rec)) { this.showConflict(rec); return false; }
+      try {
+        await this._persistEditor(rec);
+        this.hideConflict(rec);
+        this.setStatus(rec, this.t("status.saved"));
+        return true;
+      } catch (e) { this.setStatus(rec, this.t("err.save") + e); this.log("save failed: " + e); return false; }
+    });
   },
 
   async flush(rec) {
@@ -2086,6 +2148,23 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     } catch (e) { return "ref" + item.id; }
   },
 
+  // The item's Zotero "Related" items, each with its Better BibTeX citekey, for
+  // template use (`{% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]`).
+  // `item.relatedItems` is an array of item KEYS in the same library; resolve each
+  // and read its citekey. Sync (getCitekey is sync). Returns [{citekey,title,key}].
+  relationsFor(item) {
+    try {
+      let keys = (item && item.relatedItems) || [];
+      let out = [];
+      for (let key of keys) {
+        let rel = Zotero.Items.getByLibraryAndKey(item.libraryID, key);
+        if (!rel) continue;
+        out.push({ citekey: this.getCitekey(rel), title: rel.getField("title") || "", key: rel.key });
+      }
+      return out;
+    } catch (e) { this.log("relationsFor failed: " + e); return []; }
+  },
+
   // Render a DOCUMENT template (whole-note) for this item: fill the item-level
   // Nunjucks vars, then fill any `%% zon %%` annotation blocks with the item's
   // highlights. Returns the finished markdown.
@@ -2118,6 +2197,8 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
           citekey,
           bibliography: extra.bibliography || "",
           importDate: new Date().toISOString(),
+          pdfAttachmentKey: this.primaryPdfKey(item),
+          relations: this.relationsFor(item),
         });
       } catch (e) { this.log("buildItemData failed: " + e); }
     }
@@ -2132,7 +2213,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   async renderDocument(win, item, templateText) {
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
-    let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
+    let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item), isFirstImport: true });
     let md = win.ZONCore.render(templateText, data);
     let anns = this.gatherAnnotations(item, win);
     let attachmentFolder = this.resolveAttachmentFolder(md, win);
@@ -2267,6 +2348,75 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       this.log("writeNoteForItem failed: " + e);
       return { status: "error", error: String(e) };
     }
+  },
+
+  // Like writeNoteForItem, but renders from raw template TEXT (the Template
+  // Builder's composed template) rather than a named template — so the builder can
+  // create a note for an item that doesn't have one yet. Same safety + linking.
+  async writeNoteFromText(win, item, templateText) {
+    if (!item) return { status: "no-item" };
+    try {
+      if (!win.ZONCore) await this.injectCore(win);
+      let citekey = this.getCitekey(item);
+      if (!citekey) return { status: "no-citekey" };
+      let filename = this.expectedNoteFilename(win, item);
+      let dir = this.notesDir();
+      let path = PathUtils.join(dir, filename);
+      if (!win.ZONCore.isUnder(path, dir)) return { status: "outside", path };
+      if (await IOUtils.exists(path)) return { status: "exists", path };
+      let md = await this.renderDocument(win, item, String(templateText || ""));
+      try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
+      await IOUtils.makeDirectory(PathUtils.parent(path), { createAncestors: true });
+      await this.safeWrite(path, md);
+      if (this.index) this.index.set(item.key, path);
+      this.log("created note from builder " + path);
+      return { status: "created", path };
+    } catch (e) {
+      this.log("writeNoteFromText failed: " + e);
+      return { status: "error", error: String(e) };
+    }
+  },
+
+  // Bridge OUT (3): create THIS item's note from the builder's composed template,
+  // then re-render the pane to show it. Throws (with a message) on any problem so
+  // the builder can surface it.
+  async builderCreateNote(rec, win, templateText) {
+    let item = (rec && rec.item) || this.selectedRegularItems(win)[0];
+    if (!item) throw new Error("no item selected");
+    let r = await this.writeNoteFromText(win, item, templateText);
+    if (r.status === "no-citekey") throw new Error("this item has no citekey");
+    if (r.status === "outside") throw new Error("would write outside your notes folder");
+    if (r.status === "exists") throw new Error("a note already exists for this item");
+    if (r.status === "error") throw new Error(r.error || "create failed");
+    try { if (rec && rec.wrap) await this.renderInto(rec.wrap, item); } catch (e) {}
+    return r.path;
+  },
+
+  // Bridge OUT (4): write the builder's edited text back to THIS item's existing
+  // note (the "edit the note in the builder" path). The builder loaded the note's
+  // current content; on save we sync its `%% zon %%` blocks from the item's current
+  // annotations (so blocks the user added/reconfigured fill in, exactly like
+  // Update), keep the durable ZoteroLink, write it, and re-render the pane.
+  async builderSaveNote(rec, win, text) {
+    if (!rec || !rec.path || !rec.item) throw new Error("no open note to save to");
+    if (!win.ZONCore) await this.injectCore(win);
+    let item = rec.item;
+    let md = String(text == null ? "" : text);
+    try {
+      let citekey = this.getCitekey(item);
+      let bibliography = await this.getBibliography(item);
+      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) });
+      let anns = this.gatherAnnotations(item, win);
+      let attachmentFolder = this.resolveAttachmentFolder(md, win);
+      try { await this.exportAnnotationImages(anns, citekey, attachmentFolder, win); } catch (e) {}
+      md = win.ZONCore.syncBlocks(md, anns, { citekey, formats: this.formatMap(win), itemData: data, attachmentFolder });
+      try { md = win.ZONCore.ensureZoteroLink(md, win.ZONCore.zoteroSelectURI(item)); } catch (e) {}
+    } catch (e) { this.log("builderSaveNote sync failed: " + e); }
+    if (md && !md.endsWith("\n")) md += "\n"; // POSIX-clean: end the note with one newline
+    await this.safeWrite(rec.path, md);
+    try { rec.diskMtime = await this.noteMtime(rec.path); } catch (e) {}
+    try { if (rec.wrap) await this.renderInto(rec.wrap, item); } catch (e) {}
+    return rec.path;
   },
 
   // Create @<citekey>.md from the chosen template (any template — a whole-note
@@ -2603,6 +2753,18 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
   },
 
+  // Key of the item's first PDF attachment, for the `{{openPdf}}` template var
+  // (a reader deep link). "" when none — buildItemData then yields openPdf="".
+  primaryPdfKey(item) {
+    try {
+      for (let id of (item && item.getAttachments ? item.getAttachments() : [])) {
+        let att = Zotero.Items.get(id);
+        if (att && (att.isPDFAttachment ? att.isPDFAttachment() : att.attachmentContentType === "application/pdf")) return att.key;
+      }
+    } catch (e) {}
+    return "";
+  },
+
   // ------------------------------------------------------------ auto-sync
   // When enabled (PREF_AUTOSYNC), regenerate a note's live annotation blocks
   // automatically as you highlight in the PDF reader — no Refresh click. We
@@ -2687,42 +2849,57 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     if (!item || !rec.path) return;
     let win = rec.host.ownerDocument.defaultView;
     if (!win.ZONCore) await this.injectCore(win);
-    // Genuine conflict only — unsaved editor edits AND an external change. The
-    // sync itself reads fresh from disk and merges, so an external edit with no
-    // pending editor edit is preserved automatically (no need to block).
-    if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
-    await this.flush(rec);
-    await this.loadTemplates();
-    let existing = "";
-    try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
-    let anns = this.gatherAnnotations(item, win);
-    let folder = this.resolveAttachmentFolder(existing, win);
-    try {
-      let copied = await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win);
-      // A resized/moved image keeps the same key → same embed text, so the note
-      // body won't change below; but the PNG did. Bump the token + refresh the
-      // live view's images IN PLACE (no remount → no caret disruption).
-      if (copied) {
-        this._imgEpoch = (this._imgEpoch || 0) + 1;
-        try { if (rec.lib && rec.view && rec.lib.setImageEpoch) rec.lib.setImageEpoch(rec.view, this._imgEpoch); } catch (e) {}
+    // Everything below runs under the per-rec write lock, so the debounced
+    // autosave can't interleave with this read-modify-write (that race is what
+    // dropped freshly-typed prose and tripped the false "changed outside Zotero").
+    return this.withNoteLock(rec, async () => {
+      // Genuine conflict only — unsaved editor edits AND an external (Obsidian)
+      // change. Surface it; don't clobber either side.
+      if (rec.timer && await this.externallyChanged(rec)) { this.showConflict(rec); return; }
+      // Persist any pending editor edits to disk FIRST, inline (we hold the lock,
+      // so no concurrent autosave). Then the file is the source of truth and we can
+      // safely read → sync → write. clearTimeout so the pending autosave is a no-op.
+      if (rec.timer) {
+        try { win.clearTimeout(rec.timer); } catch (e) {}
+        rec.timer = null;
+        try { await this._persistEditor(rec); } catch (e) { this.log("auto-sync flush failed: " + e); }
       }
-    } catch (e) { this.log("image export failed: " + e); }
-    let updated;
-    try { updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item, { attachmentFolder: folder })); }
-    catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
-    if (updated === existing) return; // body unchanged — image (if any) already refreshed above
-    try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
-    catch (e) { this.setStatus(rec, this.t("err.autoSyncWrite") + e); this.log("auto-sync write failed: " + e); return; }
-    // Push the new content into the open editor. Guard with rec.loading so the
-    // programmatic setDoc's onChange doesn't schedule a redundant save (which
-    // would also overwrite the status below with "Saved").
-    try {
-      if (rec.lib && rec.view) {
-        rec.loading = true;
-        try { rec.lib.setDoc(rec.view, updated); } finally { rec.loading = false; }
-      }
-    } catch (e) {}
-    this.setStatus(rec, this.t("status.autoSynced", { count: anns.length }));
+      await this.loadTemplates();
+      let existing = "";
+      try { existing = await IOUtils.readUTF8(rec.path); } catch (e) { return; }
+      let anns = this.gatherAnnotations(item, win);
+      let folder = this.resolveAttachmentFolder(existing, win);
+      try {
+        let copied = await this.exportAnnotationImages(anns, this.getCitekey(item), folder, win);
+        // A resized/moved image keeps the same key → same embed text, so the note
+        // body won't change below; but the PNG did. Bump the token + refresh the
+        // live view's images IN PLACE (no remount → no caret disruption).
+        if (copied) {
+          this._imgEpoch = (this._imgEpoch || 0) + 1;
+          try { if (rec.lib && rec.view && rec.lib.setImageEpoch) rec.lib.setImageEpoch(rec.view, this._imgEpoch); } catch (e) {}
+        }
+      } catch (e) { this.log("image export failed: " + e); }
+      let updated;
+      try { updated = win.ZONCore.syncBlocks(existing, anns, this.syncOpts(win, item, { attachmentFolder: folder })); }
+      catch (e) { this.log("auto-sync syncBlocks failed: " + e); return; }
+      if (updated === existing) return; // body unchanged — image (if any) already refreshed above
+      // Don't clobber edits the user typed DURING our awaits above: if the live
+      // editor no longer matches what we synced from, skip this round — the next
+      // autosave / annotation change picks it up from the newer content.
+      try { if (rec.lib && rec.view && rec.lib.getDoc(rec.view) !== existing) return; } catch (e) {}
+      try { await this.safeWrite(rec.path, updated); rec.diskMtime = await this.noteMtime(rec.path); }
+      catch (e) { this.setStatus(rec, this.t("err.autoSyncWrite") + e); this.log("auto-sync write failed: " + e); return; }
+      // Push the new content into the open editor, preserving scroll + caret (no
+      // jump to top). rec.loading guards the programmatic setDoc's onChange so it
+      // doesn't schedule a redundant save.
+      try {
+        if (rec.lib && rec.view) {
+          rec.loading = true;
+          try { rec.lib.setDoc(rec.view, updated, { preserveView: true }); } finally { rec.loading = false; }
+        }
+      } catch (e) {}
+      this.setStatus(rec, this.t("status.autoSynced", { count: anns.length }));
+    });
   },
 
   // Apply the "Show markers" state to every open editor (reveal/hide live) and
@@ -2838,7 +3015,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let citekey = this.getCitekey(item);
     let bibliography = await this.getBibliography(item);
     let data = {};
-    try { data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() }); }
+    try { data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) }); }
     catch (e) { this.log("buildItemData failed: " + e); }
 
     if (win.ZONCore.hasManifest(existing)) {
@@ -2853,12 +3030,12 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let scaffold = await this.resolveNoteScaffoldText();
       if (scaffold) {
         try {
+          // Refresh ONLY the frontmatter (Zotero-owned keys) from the scaffold;
+          // the whole body is the user's — free prose, any/no headings, and
+          // `%% zon %%` blocks anywhere — and is left byte-for-byte untouched.
+          // Only syncBlocks (below) ever rewrites the body, and only inside blocks.
           let fresh = win.ZONCore.render(scaffold, data);
-          merged = win.ZONCore.mergeNote(existing, fresh, {
-            userOwnedKeys: this.templateUserOwnedKeys(scaffold),
-            proseSections: ["notes", "annotations"], // the zon engine owns annotations
-            annotationSections: [],
-          });
+          merged = win.ZONCore.refreshFrontmatter(existing, fresh, this.templateUserOwnedKeys(scaffold));
         } catch (e) { this.log("metadata refresh failed: " + e); merged = existing; }
       }
     }
@@ -3106,7 +3283,7 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     try {
       let citekey = this.getCitekey(item);
       let bibliography = await this.getBibliography(item);
-      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString() });
+      let data = win.ZONCore.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), pdfAttachmentKey: this.primaryPdfKey(item), relations: this.relationsFor(item) });
       updated = win.ZONCore.applyManifest(withManifest, data);
     } catch (e) { this.log("manage-fields apply failed: " + e); }
     if (updated !== existing) {
@@ -3183,6 +3360,207 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
     rec.lib.insertAtCursor(rec.view, "\n" + String(text).trim() + "\n");
     // The edit fires the debounced save automatically (onEdit).
+  },
+
+  // --------------------------------------------------------- Template Builder
+  // A dedicated builder surface: a full-window modal overlay (in the main window)
+  // hosting ONE srcdoc iframe that loads core.bundle.js + editor.bundle.js +
+  // builder-app.js. The iframe runs the whole builder UI (CM editor + palette +
+  // live preview, all over ZONCore — the same pure engine the write paths use);
+  // this glue gathers the preview context from the selected item, opens/tears
+  // down the overlay, and provides the privileged insert/save bridge.
+  async openTemplateBuilder(win, rec) {
+    win = win || Zotero.getMainWindows()[0];
+    if (!win) return;
+    if (!win.ZONCore) await this.injectCore(win);
+    this.closeTemplateBuilder(win); // only one at a time
+
+    let item = (rec && rec.item) || (this.selectedRegularItems(win)[0] || null);
+    let ctx = await this.gatherPreviewContext(win, item);
+    let dark = this.isDarkTheme(win, rec && rec.host);
+    // Name → raw text map of existing templates, for the builder's "Edit existing".
+    // Plus the per-annotation format names (built-ins + custom, EXCLUDING field/
+    // section/custom directive templates) for the block configurator's dropdown.
+    let templates = {};
+    let formatNames = [];
+    try {
+      await this.loadTemplates();
+      let all = this.allTemplates(win) || {};
+      for (let name in all) {
+        let t = all[name];
+        if (t && typeof t.text === "string") templates[name] = t.text;
+        let dk = t && t.defaults && t.defaults.kind;
+        if (t && t.kind === "format" && (!dk || dk === "annotations")) formatNames.push(name);
+      }
+      formatNames.sort();
+    } catch (e) { this.log("builder: template list failed: " + e); }
+
+    let NS = "http://www.w3.org/1999/xhtml";
+    let overlay = win.document.createElementNS(NS, "div");
+    overlay.id = "zon-builder-overlay";
+    overlay.setAttribute("style",
+      "position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;"
+      + "justify-content:center;background:rgba(0,0,0,0.45);");
+    let panel = win.document.createElementNS(NS, "div");
+    panel.setAttribute("style",
+      "width:92%;height:88%;max-width:1180px;max-height:840px;border-radius:10px;"
+      + "overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.5);background:"
+      + (dark ? "#1e1e1e" : "#ffffff") + ";");
+    let iframe = win.document.createElementNS(NS, "iframe");
+    iframe.setAttribute("style", "width:100%;height:100%;border:0;display:block;background:transparent;");
+    iframe.srcdoc = this.builderPageHTML(
+      this.rootURI + "content/core.bundle.js",
+      this.rootURI + "content/editor.bundle.js",
+      this.rootURI + "content/builder-app.js",
+      dark,
+    );
+    panel.appendChild(iframe);
+    overlay.appendChild(panel);
+    // Click the dimmed backdrop (not the panel) to close.
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) this.closeTemplateBuilder(win); });
+    win.document.documentElement.appendChild(overlay);
+
+    let self = this;
+    let bridge = {
+      save: (name, text, setDefault) => self.builderSaveTemplate(win, name, text, setDefault),
+      createNote: (text) => self.builderCreateNote(rec, win, text),
+      saveNote: (text) => self.builderSaveNote(rec, win, text),
+      close: () => self.closeTemplateBuilder(win),
+    };
+    // No linked note yet → the builder offers "Create note" and starts from this
+    // item's DEFAULT note template. An open note → it LOADS that note to edit in
+    // place, and offers "Save to note".
+    let canSaveNote = !!(rec && rec.view && rec.path);
+    let canCreate = !canSaveNote && !!item;
+    let initialDoc = null;
+    if (canSaveNote) { try { initialDoc = rec.lib && rec.view ? rec.lib.getDoc(rec.view) : null; } catch (e) {} }
+    else if (canCreate) { try { initialDoc = await this.resolveNoteScaffoldText(); } catch (e) {} }
+    // Poll the (srcdoc-swapped) contentWindow for the app entry + both bundles,
+    // then start it — same robustness trick the note editor iframe uses.
+    let tries = 0;
+    let waitForApp = function () {
+      let fw = iframe.contentWindow;
+      if (fw && fw.startBuilder && fw.ZONCore && fw.ZOSEditorLib) {
+        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, templates, formatNames, canCreate, canSaveNote, initialDoc }); }
+        catch (e) { self.log("startBuilder failed: " + e); }
+        return;
+      }
+      if (tries++ < 250) { try { win.setTimeout(waitForApp, 20); } catch (e) {} }
+      else self.log("builder: app never appeared");
+    };
+    waitForApp();
+  },
+
+  closeTemplateBuilder(win) {
+    try { let o = win.document.getElementById("zon-builder-overlay"); if (o) o.remove(); } catch (e) {}
+  },
+
+  // Build preview data for the selected item; null when nothing usable is selected
+  // (the builder app then falls back to ZONCore's bundled sample data).
+  async gatherPreviewContext(win, item) {
+    if (!item) return null;
+    try {
+      let citekey = this.getCitekey(item) || "";
+      let bibliography = "";
+      try { bibliography = await this.getBibliography(item); } catch (e) {}
+      let itemData = win.ZONCore.buildItemData(item, {
+        citekey, bibliography,
+        importDate: new Date().toISOString(),
+        pdfAttachmentKey: this.primaryPdfKey(item),
+        relations: this.relationsFor(item),
+      });
+      let annotations = this.gatherAnnotations(item, win);
+      // Pass the full format map so the preview can render the user's custom
+      // formats (and field formats), not just the built-ins.
+      return { itemData, annotations, citekey, attachmentFolder: this.attachmentFolder(), formats: this.formatMap(win) };
+    } catch (e) { this.log("gatherPreviewContext failed: " + e); return null; }
+  },
+
+  // The srcdoc page: minimal markup + styles, then the three bundles (absolute
+  // jar: URLs — Gecko loads <script src> from jar: fine, even though it won't
+  // navigate the iframe document itself to jar:). builder-app.js builds the UI.
+  builderPageHTML(coreURL, edURL, appURL, dark) {
+    let bg = dark ? "#1e1e1e" : "#ffffff";
+    let fg = dark ? "#e6e6e6" : "#1a1a1a";
+    let muted = dark ? "#9aa0a6" : "#666";
+    let border = dark ? "#3a3a3a" : "#ddd";
+    let pane = dark ? "#252526" : "#f6f6f6";
+    let accent = "#7048e8";
+    let css = "html,body{margin:0;height:100%;background:" + bg + ";color:" + fg + ";font:13px/1.4 -apple-system,system-ui,sans-serif;}"
+      + "#zon-builder-root{display:flex;flex-direction:column;height:100%;}"
+      + ".b-header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid " + border + ";}"
+      + ".b-title{font-weight:600;font-size:14px;}.b-sub{color:" + muted + ";font-size:12px;flex:1;}"
+      + ".b-x{margin-left:auto;border:0;background:transparent;color:" + muted + ";font-size:15px;cursor:pointer;}"
+      + ".b-toggle{display:flex;align-items:center;gap:4px;font-size:11px;color:" + muted + ";cursor:pointer;white-space:nowrap;}"
+      + ".b-help{padding:6px 14px;font-size:11px;color:" + muted + ";background:" + pane + ";border-bottom:1px solid " + border + ";}"
+      + ".b-body{flex:1;display:flex;min-height:0;}"
+      + ".b-side{width:300px;border-right:1px solid " + border + ";overflow:auto;padding:8px 10px;background:" + pane + ";}"
+      + ".b-pal-head{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;margin:12px 2px 5px;}"
+      + ".b-section{font-weight:700;color:" + fg + ";font-size:13px;text-transform:uppercase;letter-spacing:.02em;margin:14px 0 6px;padding-top:10px;border-top:2px solid " + border + ";}"
+      + ".b-ctx{font-size:11px;color:" + accent + ";background:rgba(112,72,232,0.10);border-radius:5px;padding:5px 8px;margin:2px 0 8px;}"
+      + ".b-pal-group{display:flex;flex-wrap:wrap;gap:4px;}"
+      + ".b-chip{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:5px;padding:3px 7px;font-size:11px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
+      + ".b-chip:hover{border-color:" + accent + ";color:" + accent + ";}.b-chip-l{pointer-events:none;}"
+      + ".b-chip.b-on{border-color:" + accent + ";color:" + accent + ";background:rgba(112,72,232,0.12);font-weight:600;}"
+      + ".b-col{text-transform:capitalize;}.b-rm{color:#d33;font-weight:600;}"
+      // guided chooser + compose form
+      + ".b-chooser{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;}"
+      + ".b-chooser-q{font-size:18px;font-weight:600;margin-bottom:20px;}"
+      + ".b-cards{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;max-width:760px;}"
+      + ".b-card{width:220px;border:1px solid " + border + ";border-radius:10px;padding:16px;cursor:pointer;background:" + pane + ";transition:border-color .1s;}"
+      + ".b-card:hover{border-color:" + accent + ";}.b-card-off{opacity:.45;cursor:default;}.b-card-off:hover{border-color:" + border + ";}"
+      + ".b-card-t{font-weight:600;font-size:14px;margin-bottom:6px;}.b-card-d{color:" + muted + ";font-size:12px;line-height:1.45;}"
+      + ".b-back{border:0;background:transparent;color:" + accent + ";cursor:pointer;font-size:12px;padding:0 6px 0 0;}"
+      + ".b-form{display:flex;flex-direction:column;gap:6px;margin:2px 0 8px;}"
+      + ".b-form-h{font-weight:600;font-size:11px;color:" + muted + ";margin:8px 0 2px;}"
+      + ".b-checks{display:flex;flex-wrap:wrap;gap:2px 12px;}"
+      + ".b-check{display:flex;align-items:center;gap:5px;font-size:12px;width:46%;cursor:pointer;}"
+      + ".b-form-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:3px 0;}"
+      + ".b-form-rl{font-size:12px;color:" + fg + ";}"
+      + ".b-select{border:1px solid " + border + ";border-radius:5px;padding:3px 6px;background:" + bg + ";color:" + fg + ";font-size:12px;max-width:170px;}"
+      + ".b-gen{width:100%;margin:6px 0 2px;}"
+      + ".b-hint{color:" + muted + ";font-size:11px;line-height:1.4;margin:4px 2px 8px;}"
+      + ".b-editor,.b-preview{flex:1;display:flex;flex-direction:column;min-width:0;}"
+      + ".b-editor{border-right:1px solid " + border + ";}"
+      + ".b-colhead{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;padding:8px 12px;display:flex;align-items:center;gap:8px;}"
+      + ".b-editor-host{flex:1;min-height:0;overflow:auto;}.cm-editor{height:100%;}"
+      + ".b-kind{font-weight:500;text-transform:none;color:" + accent + ";border:1px solid " + accent + ";border-radius:4px;padding:0 6px;font-size:10px;}"
+      + ".b-kind-err{color:#d33;border-color:#d33;}"
+      + ".b-preview-out{flex:1;margin:0;padding:10px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,Menlo,monospace;}"
+      + ".b-preview-out.b-err{color:#d33;}"
+      + ".b-preview-host{flex:1;min-height:0;overflow:auto;}"
+      + ".b-footer{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid " + border + ";background:" + pane + ";}"
+      + ".b-name-label{color:" + muted + ";}.b-name{border:1px solid " + border + ";border-radius:5px;padding:4px 8px;background:" + bg + ";color:" + fg + ";width:160px;}"
+      + ".b-btn{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:6px;padding:5px 12px;cursor:pointer;}"
+      + ".b-btn:hover{border-color:" + accent + ";}.b-primary{background:" + accent + ";color:#fff;border-color:" + accent + ";}"
+      + ".b-btn:disabled{opacity:0.4;cursor:not-allowed;border-color:" + border + ";background:" + bg + ";color:" + fg + ";}"
+      + ".b-status{margin-left:auto;color:" + muted + ";}.b-status.b-err{color:#d33;}";
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + css + '</style></head>'
+      + '<body><div id="zon-builder-root"></div>'
+      + '<script src="' + coreURL + '"></scr' + 'ipt>'
+      + '<script src="' + edURL + '"></scr' + 'ipt>'
+      + '<script src="' + appURL + '"></scr' + 'ipt>'
+      + '</body></html>';
+  },
+
+  // Bridge OUT (2): write the builder's template SOURCE to the Templates folder
+  // (idempotent — confirms before overwriting), then refresh the template list so
+  // it's immediately usable in the Insert dropdown.
+  async builderSaveTemplate(win, name, text, setDefault) {
+    let safe = String(name || "").trim().replace(/\.md$/i, "").replace(/[\/\\:*?"<>|]+/g, "-");
+    if (!safe) throw new Error("empty name");
+    let dir = this.templatesDir();
+    try { await IOUtils.makeDirectory(dir, { ignoreExisting: true }); } catch (e) {}
+    let path = PathUtils.join(dir, safe + ".md");
+    if (await IOUtils.exists(path)) {
+      let ok = Services.prompt.confirm(win, "Obsidian Notepad", this.t("msg.builderOverwrite", { name: safe }));
+      if (!ok) return "Save cancelled";
+    }
+    await this.safeWrite(path, String(text || ""));
+    try { await this.refreshTemplates(); } catch (e) {}
+    // Optionally make this the template "Create note" / "Build a note" uses by default.
+    if (setDefault) { try { Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, safe, true); } catch (e) {} }
+    return this.t("status.templateSaved", { name: safe }) + (setDefault ? " — set as default" : "");
   },
 
   // Convert a legacy annotation dump in the current note into a live block,

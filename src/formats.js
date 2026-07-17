@@ -28,6 +28,66 @@ export const DEFAULT_FORMATS = {
     item: `- {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}"{{text}}"{% endif %} (p.{{page}}){% if comment %} — {{comment}}{% endif %}`,
     sep: "\n",
   },
+  // Foregrounds YOUR comment; the quote + page sit underneath as support.
+  "comment-first": {
+    item: `{% if comment %}{{comment}}\n{% endif %}- {% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}"{{text}}"{% endif %} — [p.{{page}}]({{link}})`,
+    sep: "\n\n",
+  },
 };
 
 export const DEFAULT_FORMAT_NAME = "list";
+
+// Item-FIELD formats, for `%% zon kind=field … %%` blocks — an updatable piece of
+// item metadata placed in the note body (rendered ONCE over the item's data and
+// refreshed on Update, exactly like an annotation block). These let citation /
+// abstract / title / authors live in the body and stay in sync — not just
+// annotations. Always available (merged into the format map regardless of the
+// user's Templates folder), but a same-named file in that folder overrides them.
+// Variables: title, date, dateAdded, dateModified, itemType, publicationTitle,
+// abstractNote, bibliography, citekey, desktopURI, openPdf/pdfZoteroLink, allTags,
+// tags[] ({tag}), authors (string), creators[] ({firstName,lastName}),
+// relations[] ({citekey,title,key}).
+// Compose a per-annotation format from a base STYLE + optional PARTS — the engine
+// behind the block configurator's "advanced" mode. A block can carry
+// `style=quote parts=page,comment,tags` instead of a named `format=…`, and the
+// renderer composes the body from these (the highlight `text` is always shown).
+// `commentFirst` (from a block's `order=comment-first`) reverses the quote↔comment
+// order, so YOUR comment leads and the quote sits underneath as support — for all
+// three styles. It only changes anything when `comment` is one of the parts.
+// Pure; returns a `{ item, sep }` format object like the named ones.
+export function composeFormat(style, parts, commentFirst = false) {
+  const list = Array.isArray(parts)
+    ? parts
+    : String(parts == null ? "" : parts).split(",").map((s) => s.trim()).filter(Boolean);
+  const p = { page: list.indexOf("page") !== -1, comment: list.indexOf("comment") !== -1, tags: list.indexOf("tags") !== -1 };
+  const tagBit = p.tags ? " {% for t in tags %}#{{t}} {% endfor %}" : "";
+  // Image (area) annotations have no `text` — they carry an `imageBaseName`. Emit
+  // an Obsidian embed for those and the (optionally quoted) text otherwise, mirroring
+  // the built-in named formats so composed formats don't blank out image highlights.
+  const body = (quoted) =>
+    "{% if imageBaseName %}![[{{attachmentFolder}}/{{citekey}}/{{imageBaseName}}]]{% else %}"
+    + (quoted ? '"{{text}}"' : "{{text}}") + "{% endif %}";
+  const lead = commentFirst && p.comment;
+  if (style === "list") {
+    const bullet = "- " + (p.page ? "[p.{{page}}]({{link}}) " : "") + body(true) + tagBit;
+    // Comment first: it leads on its own line, then the bullet underneath.
+    if (lead) return { item: "{% if comment %}*{{comment}}*\n{% endif %}" + bullet, sep: "\n" };
+    return { item: bullet + (p.comment ? "{% if comment %} — *{{comment}}*{% endif %}" : ""), sep: "\n" };
+  }
+  if (style === "callout") {
+    const head = "> [!quote]" + (p.page ? " p.{{page}}" : "");
+    if (lead) return { item: head + "{% if comment %}\n> {{comment}}\n>{% endif %}\n> " + body(false) + tagBit, sep: "\n\n" };
+    return { item: head + "\n> " + body(false) + tagBit + (p.comment ? "{% if comment %}\n>\n> {{comment}}{% endif %}" : ""), sep: "\n\n" };
+  }
+  // quote (default)
+  if (lead) return { item: "{% if comment %}> {{comment}}\n>\n{% endif %}> " + body(false) + tagBit + (p.page ? "\n> — [p.{{page}}]({{link}})" : ""), sep: "\n\n" };
+  return { item: "> " + body(false) + tagBit + (p.page ? "\n> — [p.{{page}}]({{link}})" : "") + (p.comment ? "\n{% if comment %}>\n> {{comment}}{% endif %}" : ""), sep: "\n\n" };
+}
+
+export const FIELD_FORMATS = {
+  citation: { item: `**Citation:** {{bibliography}}`, sep: "\n" },
+  abstract: { item: `> [!abstract] Abstract\n> {% if abstractNote %}{{abstractNote}}{% else %}(no abstract){% endif %}`, sep: "\n" },
+  title: { item: `# {{title}}`, sep: "\n" },
+  authors: { item: `**Authors:** {% for c in creators %}[[{{c.lastName}}, {{c.firstName}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },
+  related: { item: `**Related:** {% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },
+};
