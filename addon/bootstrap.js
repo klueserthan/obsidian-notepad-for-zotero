@@ -522,7 +522,14 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "composer.previewFailed": "Preview failed: {error}",
     "composer.generating": "Generating…",
     "composer.generated": "Summary Note created.",
+    "composer.overwritten": "Summary Note overwritten.",
     "composer.generateFailed": "Generate failed: {error}",
+    // Note awareness + Stale Indicator (#28) — read-only, never triggers a write.
+    "composer.notes.stale": "Stale — annotations newer than the latest summary",
+    "composer.notes.empty": "No summary note yet — Generate creates one",
+    "composer.notes.untitled": "(untitled)",
+    "composer.notes.open": "Open this Summary Note",
+    "composer.overwriteChoice": "This item already has {count} Summary Note(s), recognised by tag.\n\nOverwrite the NEWEST one with a fresh render instead of creating an additional note? Overwriting replaces its entire content — hand edits made in Better Notes will be lost.\n\nChoose Cancel to create an additional Summary Note instead.",
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
@@ -1290,6 +1297,9 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     }
     rec.item = item;
     this.schedulePreview(rec);
+    // Note awareness + Stale Indicator (#28): refresh on every item selection
+    // change. Purely reads existing notes/annotations — never writes.
+    this.refreshNoteAwareness(rec).catch((e) => this.log("note awareness refresh failed: " + e));
   },
 
   // Build the Composer pane: styled header, a template picker + Generate + Builder
@@ -1352,17 +1362,26 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let row1 = h("div", "zon-row"); row1.append(templateSel, generateBtn, builderBtn);
     toolbar.append(row1, status);
 
+    // Note awareness (#28): existing Summary Notes for this item (recognised
+    // ONLY by the Marker Tag — see existingSummaryNotes) plus the read-only
+    // Stale Indicator badge. Strictly display-only: nothing here ever writes.
+    let notesSection = h("div", "zon-notes-section");
+    let staleBadge = h("span", "zon-stale-badge");
+    let notesList = h("ul", "zon-notes-list");
+    notesSection.append(staleBadge, notesList);
+
     // Rendered preview of the future Summary Note (marker-free HTML, LLM blocks as
     // placeholders). Scrolls internally so a long note doesn't push the pane.
     let preview = h("div", "zon-preview");
 
-    wrap.append(header, toolbar, preview);
+    wrap.append(header, toolbar, notesSection, preview);
     if (this.sectionCollapsed()) wrap.classList.add("zon-collapsed");
     header.setAttribute("aria-expanded", String(!this.sectionCollapsed()));
 
     let rec = {
       wrap, host: preview, toolbar, templateSel, generateBtn, builderBtn,
-      statusEl: status, item: null, previewTimer: null, previewSeq: 0,
+      statusEl: status, notesListEl: notesList, staleBadgeEl: staleBadge,
+      item: null, previewTimer: null, previewSeq: 0,
     };
 
     templateSel.addEventListener("change", () => this.schedulePreview(rec, { immediate: true }));
@@ -1381,7 +1400,25 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       let style = doc.createElementNS("http://www.w3.org/1999/xhtml", "style");
       style.id = "zon-composer-css";
       style.textContent =
-        ".zon-preview{max-height:60vh;overflow:auto;padding:10px 12px;margin:2px 3px 6px;"
+        // Note awareness + Stale Indicator (#28) — read-only. The badge exists
+        // ONLY in the "stale" state ("fresh" shows nothing; "no-note" is covered
+        // by the list's placeholder row instead).
+        ".zon-notes-section{margin:0 3px 6px;}"
+        + ".zon-stale-badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;"
+        + "border-radius:10px;margin:0 0 4px;"
+        + "background:rgba(224,124,26,.15);color:var(--accent-orange,#b5560a);}"
+        + ".zon-stale-badge:empty{display:none;}"
+        + ".zon-notes-list{list-style:none;margin:0;padding:0;}"
+        + ".zon-notes-list:empty{display:none;}"
+        + ".zon-notes-item{font-size:12px;padding:2px 4px;border-radius:4px;cursor:pointer;"
+        + "color:var(--fill-secondary,#555);}"
+        + ".zon-notes-item:hover,.zon-notes-item:focus{background:var(--fill-quinary,rgba(0,0,0,.06));"
+        + "color:var(--fill-primary,#1a1a1a);outline:none;}"
+        // Empty-state placeholder row — deliberately non-interactive: default
+        // cursor, no hover affordance, never focusable, no click handler.
+        + ".zon-notes-placeholder{font-size:12px;padding:2px 4px;cursor:default;"
+        + "font-style:italic;color:var(--fill-secondary,#888);}"
+        + ".zon-preview{max-height:60vh;overflow:auto;padding:10px 12px;margin:2px 3px 6px;"
         + "border:1px solid var(--fill-quinary,#ddd);border-radius:5px;"
         + "background:var(--material-background,#fff);color:var(--fill-primary,#1a1a1a);"
         + "font-size:13px;line-height:1.5;word-wrap:break-word;overflow-wrap:anywhere;}"
@@ -1531,6 +1568,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
   // Generate a Summary Note for the pane's item from the selected template — the
   // exact #25 path, just with the chosen template name.
+  // Create-once refinement (#28): when the item already has one or more Summary
+  // Notes (recognised ONLY by the Marker Tag), offer a choice via a single
+  // confirm dialog — OK overwrites the NEWEST existing note (this dialog IS the
+  // required explicit confirmation), Cancel/default creates an additional note.
+  // No existing note -> straight create, unchanged #25 behaviour.
   async composerGenerate(rec) {
     let win = rec.wrap.ownerDocument.defaultView;
     let item = rec.item;
@@ -1539,13 +1581,31 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     rec.generateBtn.disabled = true;
     this.setStatus(rec, this.t("composer.generating"));
     try {
-      await this.generateSummaryNote(win, item, name);
-      this.setStatus(rec, this.t("composer.generated"));
+      let existing = this.existingSummaryNotes(item);
+      let overwriteTarget = null;
+      if (existing.length) {
+        let ok = false;
+        try {
+          ok = Services.prompt.confirm(win, this.t("menu.title"),
+            this.t("composer.overwriteChoice", { count: existing.length }));
+        } catch (e) {}
+        if (ok) overwriteTarget = this.newestNote(existing);
+      }
+      if (overwriteTarget) {
+        await this.overwriteSummaryNote(win, item, overwriteTarget, name);
+        this.setStatus(rec, this.t("composer.overwritten"));
+      } else {
+        await this.generateSummaryNote(win, item, name);
+        this.setStatus(rec, this.t("composer.generated"));
+      }
     } catch (e) {
       this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
       this.log("composerGenerate failed: " + e);
     } finally {
       rec.generateBtn.disabled = false;
+      // The note list / Stale Indicator may now be out of date either way
+      // (a note was added, or the newest one was overwritten).
+      this.refreshNoteAwareness(rec).catch((e) => this.log("note awareness refresh failed: " + e));
     }
   },
 
@@ -2838,6 +2898,29 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     return note;
   },
 
+  // Create-once refinement (#28): overwrite a SPECIFIC existing Summary Note's
+  // body wholesale with a fresh render, replacing its content in place rather
+  // than creating a new note. Only ever called after the caller has obtained
+  // explicit confirmation (composerGenerate's dialog); never touches any note
+  // other than `noteItem`. Still a one-way render — no merge with the old body.
+  async overwriteSummaryNote(win, item, noteItem, templateName) {
+    if (!win.ZONCore) await this.injectCore(win);
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    let md = await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
+    md = win.ZONCore.stripFrontmatter(md);
+    md = win.ZONCore.stripMarkers(md);
+    let html = win.ZONCore.mdToHtml(md);
+    noteItem.setNote(html);
+    // Re-stamp defensively — the note already carried the tag (that's how it was
+    // found), this just guards against it having been removed by hand.
+    try {
+      let tags = (noteItem.getTags && noteItem.getTags()) || [];
+      if (!tags.some((t) => t && t.tag === this.MARKER_TAG)) noteItem.addTag(this.MARKER_TAG);
+    } catch (e) {}
+    await noteItem.saveTx();
+    return noteItem;
+  },
+
   // Context-menu action: generate a Summary Note for each selected regular item.
   async generateSummaryNotes(win) {
     let items = this.selectedRegularItems(win);
@@ -2948,6 +3031,135 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
       }
     } catch (e) { this.log("gatherAnnotations failed: " + e); }
     return out;
+  },
+
+  // ------------------------------------------------ note awareness (#28)
+  //
+  // Existing Summary Notes + the read-only Stale Indicator. Everything here is
+  // strictly read-only — it must never create, modify, or delete anything. The
+  // only write paths for Summary Notes remain generateSummaryNote (create) and
+  // overwriteSummaryNote (explicit-confirmation overwrite), both above.
+
+  // The item's child notes carrying the Marker Tag — the ONLY recognition
+  // mechanism for "this is one of ours" (never by title or body content, which
+  // are freely hand-edited in Better Notes; see CONTEXT.md "Marker Tag").
+  existingSummaryNotes(item) {
+    let out = [];
+    try {
+      let ids = (item && item.getNotes) ? item.getNotes() : [];
+      for (let id of ids) {
+        let note = Zotero.Items.get(id);
+        if (!note) continue;
+        let tags = (note.getTags && note.getTags()) || [];
+        if (tags.some((t) => t && t.tag === this.MARKER_TAG)) out.push(note);
+      }
+    } catch (e) { this.log("existingSummaryNotes failed: " + e); }
+    return out;
+  },
+
+  // dateAdded as epoch ms, defaulting to 0 (oldest) for anything unparseable so
+  // sorting/finding-the-newest never throws.
+  noteDateAddedMs(note) {
+    try {
+      let t = new Date(note.dateAdded).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    } catch (e) { return 0; }
+  },
+
+  // The most-recently-added of a list of Summary Note items (for the overwrite
+  // target — Create-once only ever overwrites the NEWEST one).
+  newestNote(notes) {
+    if (!notes || !notes.length) return null;
+    return notes.reduce((a, b) => (this.noteDateAddedMs(b) > this.noteDateAddedMs(a) ? b : a));
+  },
+
+  // Raw annotation dateModified values across the item's PDF attachments, for
+  // the Stale Indicator's date comparison ONLY (src/staleness.js takes plain
+  // {dateModified} descriptors). Deliberately separate from gatherAnnotations
+  // (which maps to the render shape and does real work per annotation) — this
+  // path stays a trivial, read-only date scan.
+  annotationModifiedDates(item) {
+    let out = [];
+    try {
+      let ids = (item && item.getAttachments) ? item.getAttachments() : [];
+      for (let id of ids) {
+        let att = Zotero.Items.get(id);
+        if (!att) continue;
+        let isPDF = att.isPDFAttachment ? att.isPDFAttachment()
+          : (att.attachmentContentType === "application/pdf");
+        if (!isPDF) continue;
+        let anns = att.getAnnotations ? att.getAnnotations() : [];
+        for (let a of anns) out.push({ dateModified: a.dateModified });
+      }
+    } catch (e) { this.log("annotationModifiedDates failed: " + e); }
+    return out;
+  },
+
+  // Repaint the Composer's Summary Notes list + Stale Indicator badge for the
+  // pane's current item. Called on item selection change and after a Generate
+  // (renderInto / composerGenerate). Purely reads item/note/annotation state —
+  // NEVER writes, and must stay that way (ADR-0002: the indicator is read-only).
+  async refreshNoteAwareness(rec) {
+    let notesListEl = rec.notesListEl, badgeEl = rec.staleBadgeEl;
+    if (!notesListEl || !badgeEl) return;
+    let win = rec.wrap.ownerDocument.defaultView;
+    let item = rec.item;
+    let doc = win.document;
+    let mkLi = (cls, text) => {
+      let li = doc.createElementNS("http://www.w3.org/1999/xhtml", "li");
+      li.className = cls;
+      li.textContent = text;
+      return li;
+    };
+
+    notesListEl.textContent = "";
+    badgeEl.textContent = ""; // hidden via :empty until (and unless) proven stale
+    if (!item) return;
+
+    let notes = this.existingSummaryNotes(item);
+    // Distinct empty state: a non-interactive placeholder row (no tabindex, no
+    // role, no click handler — see .zon-notes-placeholder) instead of a badge.
+    if (!notes.length) {
+      notesListEl.appendChild(mkLi("zon-notes-placeholder", this.t("composer.notes.empty")));
+      return; // state is "no-note" by definition — nothing to compare
+    }
+    let sorted = notes.slice().sort((a, b) => this.noteDateAddedMs(b) - this.noteDateAddedMs(a));
+    for (let note of sorted) {
+      let title = "";
+      try { title = (note.getNoteTitle && note.getNoteTitle()) || ""; } catch (e) {}
+      let dateStr = "";
+      try {
+        let ms = this.noteDateAddedMs(note);
+        if (ms) dateStr = new Date(ms).toLocaleString();
+      } catch (e) {}
+      let li = mkLi("zon-notes-item", (title || this.t("composer.notes.untitled")) + (dateStr ? " — " + dateStr : ""));
+      li.title = this.t("composer.notes.open");
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+      let openNote = () => { try { win.ZoteroPane.selectItem(note.id); } catch (e) { this.log("open summary note failed: " + e); } };
+      li.addEventListener("click", openNote);
+      li.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); openNote(); }
+      });
+      notesListEl.appendChild(li);
+    }
+
+    // Stale Indicator — read-only comparison via the pure core module. The
+    // badge renders ONLY when the state is "stale": "fresh" shows nothing, and
+    // "no-note" was handled above by the placeholder row. Any failure here
+    // degrades to no badge rather than throwing, since this must never block
+    // the rest of the Composer.
+    let state = "fresh";
+    try {
+      if (!win.ZONCore) await this.injectCore(win);
+      if (rec.item !== item) return; // item changed while we awaited injectCore
+      let noteDescs = notes.map((n) => ({ dateAdded: n.dateAdded }));
+      let annDescs = this.annotationModifiedDates(item);
+      state = win.ZONCore.summaryNoteStaleness(noteDescs, annDescs);
+    } catch (e) { this.log("staleness compute failed: " + e); }
+    if (rec.item !== item) return; // stale async result — a later refresh wins
+
+    if (state === "stale") badgeEl.textContent = this.t("composer.notes.stale");
   },
 
   // Copy the cached PNG for each image annotation into the note's attachment

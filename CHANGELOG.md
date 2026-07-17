@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Note awareness + Stale Indicator (#28).** The Composer now lists the
+  selected item's existing Summary Notes — recognised ONLY by the Marker Tag,
+  never by title or body content — with title/date, and clicking one selects it
+  in the Zotero pane. A read-only Stale Indicator badge shows whether the
+  newest Summary Note is `fresh`, `stale` (an annotation was modified after it),
+  or there's `no-note` yet; it refreshes on item selection and after Generate,
+  and never triggers a write. A new pure module `src/staleness.js`
+  (`summaryNoteStaleness`) computes the state from note/annotation dates and is
+  re-exported through the core bundle. Create-once is refined: when the item
+  already has a Summary Note, Generate now offers a choice via a confirmation
+  dialog — overwrite the NEWEST existing note in place, or (default/Cancel)
+  create an additional one as before; overwrite never happens without that
+  explicit confirmation and never touches any other note.
 - **Composer pane (ADR-0002).** The item-pane section is now the Composer: a
   template picker (over every loaded template, defaulting to the default note
   template), a live rendered preview of the Summary Note the selected template
