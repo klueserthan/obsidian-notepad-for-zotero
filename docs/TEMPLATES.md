@@ -263,6 +263,24 @@ if you don't want that text in your notes.
 - **`note-by-colour.md`** — a whole-note scaffold that routes each highlight
   colour into its own section with `highlights(colour="…")`.
 
+### LLM summary templates (one per paper type)
+
+Whole-note scaffolds that fill each section from the paper's full text with
+`{% llm context="fulltext" %}` blocks. Pick the one that fits the paper in the
+Composer, click **Run LLM**, then **Generate**. They need a configured model
+(Settings → LLM) and a PDF with extractable text — like all `fulltext` blocks
+they fail loudly (ADR-0001) rather than guess. Each also keeps a `## Notes`
+scratch area and a `## Annotations` block for your highlights.
+
+- **`note-quantitative.md`** — research questions, hypotheses, theoretical
+  framework, study design, a key-variables table, main findings, limitations.
+- **`note-qualitative.md`** — research questions, theoretical framing, methods
+  & data, key themes, interpretation & contribution, trustworthiness & limits.
+- **`note-theoretical.md`** — motivating problem, constructs & definitions
+  table, propositions, model/mechanism, scope conditions, contribution & critique.
+- **`note-review.md`** — scope & questions, corpus & method, organizing
+  framework, key findings/debates, identified gaps, future research agenda.
+
 Copy any of these to make your own. Rename freely — the filename is the label.
 The built-in formats `list`, `quote`, `callout`, `compact` are always present
 even if the Templates folder is empty or unset.

@@ -47,6 +47,10 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
         "note",
         "note-by-colour",
         "note-minimal",
+        "note-qualitative",
+        "note-quantitative",
+        "note-review",
+        "note-theoretical",
         "research-questions",
         "snapshot",
       ]
@@ -58,8 +62,18 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     expect(templateKind(builtins["note-minimal"])).toBe("document");
     expect(templateKind(builtins["note-by-colour"])).toBe("document");
     expect(templateKind(builtins["research-questions"])).toBe("document");
+    for (const n of ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"]) {
+      expect(templateKind(builtins[n])).toBe("document");
+    }
     for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot"]) {
       expect(templateKind(builtins[n])).toBe("format");
+    }
+  });
+
+  it("the paper-type LLM templates carry an LLM block and the annotations block", () => {
+    for (const n of ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"]) {
+      expect(builtins[n], `${n} LLM block`).toContain('{% llm context="fulltext" %}');
+      expect(builtins[n], `${n} annotations block`).toContain("%% zon kind=annotations colour=all sync=on format=list %%");
     }
   });
 

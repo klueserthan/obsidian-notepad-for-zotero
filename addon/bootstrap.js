@@ -126,6 +126,137 @@ var ZON = {
 
 {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
 `,
+    "note-quantitative": `**Citation:** {{bibliography}}
+
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
+
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
+
+## Summary
+### Research Question(s)
+{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
+
+### Hypotheses
+{% llm context="fulltext" %}What are the paper's hypotheses? State them verbatim where possible. Render as concrete bullet points.{% endllm %}
+
+### Theoretical Framework
+{% llm context="fulltext" %}What core theoretical concepts and arguments does the paper build on or contribute? Render as concrete bullet points.{% endllm %}
+
+### Study Design
+{% llm context="fulltext" %}Extract the study design as concrete facts. Cover: Type (classify as one of Experiment, Survey, Content Analysis, Panel, Field Study, or Meta-Analysis); Data source; Sample/setting (N, population, context); Time period.{% endllm %}
+
+### Key Variables
+{% llm context="fulltext" %}List the key variables as a markdown table with columns Role, Variable, and Operationalization, with one row each for Independent, Dependent, Moderator, Mediator, and Control. Omit any row that does not apply.{% endllm %}
+
+### Main Findings
+{% llm context="fulltext" %}What are the key findings? Render as concrete bullet points, noting the direction of each effect and its statistical significance where stated.{% endllm %}
+
+### Limitations
+{% llm context="fulltext" %}What limitations does the paper acknowledge, especially about its analytical approach? Render as concrete bullet points.{% endllm %}
+
+## Notes
+
+
+## Annotations
+%% zon kind=annotations colour=all sync=on format=list %%
+%% /zon %%
+`,
+    "note-qualitative": `**Citation:** {{bibliography}}
+
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
+
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
+
+## Summary
+### Research Question(s)
+{% llm context="fulltext" %}What is/are the research question(s) or interpretive aims of this study? Render as concrete bullet points.{% endllm %}
+
+### Theoretical Framing
+{% llm context="fulltext" %}What theoretical or conceptual lens frames the analysis? Render as concrete bullet points.{% endllm %}
+
+### Methods & Data
+{% llm context="fulltext" %}Extract the qualitative design as concrete facts. Cover: Approach (classify as one of ethnography, grounded theory, case study, interview study, or discourse/content analysis); Data sources; Sampling and setting (who, where, how many); Analytic strategy (e.g. coding, thematic analysis).{% endllm %}
+
+### Key Themes / Findings
+{% llm context="fulltext" %}What are the central themes or findings? Render as concrete bullet points, one per theme, each with a short gloss.{% endllm %}
+
+### Interpretation & Contribution
+{% llm context="fulltext" %}How does the paper interpret its findings, and what does it claim to contribute theoretically or empirically? Render as concrete bullet points.{% endllm %}
+
+### Trustworthiness & Limitations
+{% llm context="fulltext" %}What does the paper say about trustworthiness or rigour (e.g. reflexivity, triangulation, member checking), and what limitations does it acknowledge? Render as concrete bullet points.{% endllm %}
+
+## Notes
+
+
+## Annotations
+%% zon kind=annotations colour=all sync=on format=list %%
+%% /zon %%
+`,
+    "note-theoretical": `**Citation:** {{bibliography}}
+
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
+
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
+
+## Summary
+### Motivating Problem
+{% llm context="fulltext" %}What problem, puzzle, or gap motivates this theoretical contribution? Render as concrete bullet points.{% endllm %}
+
+### Core Constructs & Definitions
+{% llm context="fulltext" %}What are the central constructs and how does the paper define them? Render as a markdown table with columns Construct and Definition.{% endllm %}
+
+### Central Propositions / Arguments
+{% llm context="fulltext" %}What are the paper's key propositions or arguments? State them verbatim or as close paraphrases. Render as a numbered list.{% endllm %}
+
+### Model / Mechanism
+{% llm context="fulltext" %}What is the proposed model or causal mechanism, and how do the core constructs relate? Describe it concisely as concrete bullet points.{% endllm %}
+
+### Scope Conditions & Assumptions
+{% llm context="fulltext" %}Under what scope conditions or assumptions does the argument hold? Render as concrete bullet points.{% endllm %}
+
+### Contribution & Critique
+{% llm context="fulltext" %}What does the paper claim to contribute, and what tensions, boundary cases, or open questions does it leave? Render as concrete bullet points.{% endllm %}
+
+## Notes
+
+
+## Annotations
+%% zon kind=annotations colour=all sync=on format=list %%
+%% /zon %%
+`,
+    "note-review": `**Citation:** {{bibliography}}
+
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
+
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
+
+## Summary
+### Scope & Review Questions
+{% llm context="fulltext" %}What is the scope of this review and what questions does it address? Render as concrete bullet points.{% endllm %}
+
+### Corpus & Method
+{% llm context="fulltext" %}Extract the review method as concrete facts. Cover: Review type (classify as one of narrative, systematic, scoping, or meta-analysis); Databases or sources searched; Inclusion and exclusion criteria; Number of studies included; Time span.{% endllm %}
+
+### Organizing Framework
+{% llm context="fulltext" %}How does the review organize the literature (e.g. by themes, chronology, theoretical camps, or methods)? Render as concrete bullet points.{% endllm %}
+
+### Key Findings / Debates
+{% llm context="fulltext" %}What are the main findings, points of consensus, and unresolved debates in the literature as synthesized here? Render as concrete bullet points.{% endllm %}
+
+### Identified Gaps
+{% llm context="fulltext" %}What gaps or limitations in the existing literature does the review identify? Render as concrete bullet points.{% endllm %}
+
+### Future Research Agenda
+{% llm context="fulltext" %}What future research directions does the review propose? Render as concrete bullet points.{% endllm %}
+
+## Notes
+
+
+## Annotations
+%% zon kind=annotations colour=all sync=on format=list %%
+%% /zon %%
+`,
   },
 
 
