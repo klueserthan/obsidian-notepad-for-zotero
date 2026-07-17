@@ -19,6 +19,9 @@ export { COLOR_NAMES } from "../src/colors.js";
 export { stripMarkers, stripFrontmatter } from "../src/strip-markers.js";
 export { mdToHtml } from "../src/md-html.js";
 export { composePreviewHtml, llmPlaceholderHtml, PLACEHOLDER_NOTE } from "../src/compose-preview.js";
+// `hasLLMBlocks` is aliased to `composeHasLLMBlocks` — the llm-blocks.js export of
+// the same name takes note text, this one takes a compose gate state.
+export { composeKey, blockFingerprint, blocksFingerprint, createComposeState, reconcileComposeState, hasLLMBlocks as composeHasLLMBlocks, isResolved, unresolvedBlocks, canGenerate, resolveAll, setResolution, clearResolutions, orderedOutputs, placeholderInfo, generateBlockedReason } from "../src/compose-gating.js";
 export { buildCrossrefURL, pickBestMatch, normalizeTitle, titleSimilarity, normalizeDOI, crossrefYear, extractYear } from "../src/crossref.js";
 export { splitPath, vaultName, vaultRelative, buildObsidianUri, obsidianConfigPath, parseObsidianVaults, sanitizeFilename, isUnder } from "../src/paths.js";
 export { LLM_DEFAULTS, isLLMConfigured, canAutoRun, sanitizeLLMSettings, buildChatCompletionsURL, buildLLMHeaders, buildChatCompletionsPayload, buildTestConnectionPayload, parseChatCompletionsResponse, sanitizeError, sanitizeLogMetadata } from "../src/llm.js";

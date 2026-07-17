@@ -530,6 +530,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     "composer.notes.untitled": "(untitled)",
     "composer.notes.open": "Open this Summary Note",
     "composer.overwriteChoice": "This item already has {count} Summary Note(s), recognised by tag.\n\nOverwrite the NEWEST one with a fresh render instead of creating an additional note? Overwriting replaces its entire content — hand edits made in Better Notes will be lost.\n\nChoose Cancel to create an additional Summary Note instead.",
+    // LLM gating in the Composer (#27, ADR-0001).
+    "composer.generateBlocked": "unresolved {% llm %} block(s)",
+    "tip.composerRunLLM": "Run the LLM interpreter on this template's {% llm %} blocks so the Summary Note can be generated (requires base URL and model)",
+    "err.generateBlocked": "Cannot generate yet — {reason}",
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
@@ -1349,6 +1353,13 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     let templateSel = h("select"); templateSel.title = this.t("tip.composerTemplate");
     this.orderedTemplateNames(win).forEach((f) => { let o = h("option"); o.value = f; o.textContent = f; templateSel.appendChild(o); });
 
+    // Run-LLM (ADR-0001): resolves every {% llm %} block once so Generate can run.
+    // Hidden until the current render is known to contain blocks (see refreshPreview).
+    let runLLMBtn = h("button");
+    runLLMBtn.textContent = this.t("btn.runLLM");
+    runLLMBtn.title = this.t("tip.composerRunLLM");
+    runLLMBtn.style.display = "none";
+
     let generateBtn = h("button", "zon-primary");
     generateBtn.textContent = this.t("btn.generate");
     generateBtn.title = this.t("tip.generate");
@@ -1359,8 +1370,11 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
     let status = h("span", "zon-status");
 
-    let row1 = h("div", "zon-row"); row1.append(templateSel, generateBtn, builderBtn);
-    toolbar.append(row1, status);
+    let row1 = h("div", "zon-row"); row1.append(templateSel, runLLMBtn, generateBtn, builderBtn);
+    // A visible error box for LLM run failures (context assembly, HTTP, etc.) —
+    // ADR-0001 fail-loud: never console-only. Hidden until there's something to show.
+    let llmError = h("div", "zon-llm-error"); llmError.style.display = "none";
+    toolbar.append(row1, status, llmError);
 
     // Note awareness (#28): existing Summary Notes for this item (recognised
     // ONLY by the Marker Tag — see existingSummaryNotes) plus the read-only
@@ -1379,12 +1393,15 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     header.setAttribute("aria-expanded", String(!this.sectionCollapsed()));
 
     let rec = {
-      wrap, host: preview, toolbar, templateSel, generateBtn, builderBtn,
-      statusEl: status, notesListEl: notesList, staleBadgeEl: staleBadge,
+      wrap, host: preview, toolbar, templateSel, runLLMBtn, generateBtn, builderBtn,
+      statusEl: status, llmError, notesListEl: notesList, staleBadgeEl: staleBadge,
       item: null, previewTimer: null, previewSeq: 0,
+      // Compose gating: the current (item+template) render's md and gate state.
+      composeMd: "", composeState: null, llmRunning: false,
     };
 
     templateSel.addEventListener("change", () => this.schedulePreview(rec, { immediate: true }));
+    runLLMBtn.addEventListener("click", () => this.composerRunLLM(rec).catch((e) => this.log("composer run LLM failed: " + e)));
     generateBtn.addEventListener("click", () => this.composerGenerate(rec).catch((e) => this.log("composer generate failed: " + e)));
     builderBtn.addEventListener("click", () => { try { this.openTemplateBuilder(win, rec); } catch (e) { this.log("openTemplateBuilder failed: " + e); } });
 
@@ -1439,6 +1456,10 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         // Empty / error / loading states.
         + ".zon-preview-empty,.zon-preview-error{color:var(--fill-secondary,#888);font-style:italic;}"
         + ".zon-preview-error{color:var(--accent-red,#c0392b);font-style:normal;white-space:pre-wrap;}"
+        // Visible LLM-run error box (ADR-0001 fail-loud) — sits in the toolbar.
+        + ".zon-llm-error{margin:4px 3px 2px;padding:7px 9px;border-radius:5px;white-space:pre-wrap;"
+        + "font-size:12px;line-height:1.45;color:var(--accent-red,#c0392b);"
+        + "border:1px solid var(--accent-red,#c0392b);background:rgba(192,57,43,.08);}"
         // Inert LLM placeholder — clearly not-yet-run, shows model + context + prompt.
         + ".zon-llm-placeholder{border:1px dashed var(--color-accent,#3367d6);border-radius:6px;"
         + "padding:8px 10px;margin:.6em 0;background:var(--fill-quinary,rgba(51,103,214,.06));}"
@@ -1494,26 +1515,77 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
 
   // Compute + display the preview HTML for the current item/template. Guards
   // against stale results (a later item/template change wins). Never writes disk,
-  // never calls an LLM.
+  // never calls an LLM. Also (re)builds the compose gate state so Run-LLM /
+  // Generate reflect the current render, preserving any resolved LLM output across
+  // a same-compose re-render (reconcileComposeState).
   async refreshPreview(rec) {
     let win = rec.wrap.ownerDocument.defaultView;
     let item = rec.item;
     let seq = ++rec.previewSeq;
     let host = rec.host;
-    if (!item) { host.textContent = ""; this.setStatus(rec, ""); return; }
+    if (!item) {
+      host.textContent = "";
+      rec.composeMd = ""; rec.composeState = null;
+      this.clearLLMError(rec);
+      this.updateComposerButtons(rec);
+      this.setStatus(rec, "");
+      return;
+    }
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
     this.setStatus(rec, this.t("composer.rendering"));
 
-    let html = null, err = null;
+    // Render the raw Summary-Note markdown (still carries frontmatter, %% zon %%
+    // markers and unresolved {% llm %} blocks). This is the SAME text Generate
+    // uses; the gate + preview strip/resolve from here.
+    let rawMd = null, err = null;
     try {
-      html = await this.composerPreviewHtml(win, item, name);
+      rawMd = await this.renderTemplateAsNote(win, item, name, { preview: true });
     } catch (e) {
       err = (e && e.message) ? e.message : String(e);
     }
     // A newer refresh (or item switch) started while we awaited → drop this one.
     if (seq !== rec.previewSeq || rec.item !== item) return;
+
+    if (err != null) {
+      // A render failure means we have no trustworthy md — drop the gate state so
+      // Generate can't fire against stale text.
+      rec.composeMd = ""; rec.composeState = null;
+      this.clearLLMError(rec);
+      this.updateComposerButtons(rec);
+      host.textContent = "";
+      let d = win.document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      d.className = "zon-preview-error";
+      d.textContent = this.t("composer.previewFailed", { error: err });
+      host.appendChild(d);
+      this.setStatus(rec, "");
+      return;
+    }
+
+    // (Re)build the gate state. reconcile carries resolved LLM output forward when
+    // the compose (item + template + blocks) is unchanged; a switch of item or
+    // template (key change) invalidates the resolution cache.
+    let C = win.ZONCore;
+    let state = null;
+    try {
+      state = C.reconcileComposeState(rec.composeState, rawMd, { itemKey: item.key, templateName: name });
+    } catch (e) { this.log("reconcileComposeState failed: " + e); }
+    rec.composeMd = rawMd;
+    rec.composeState = state;
+    // A fresh compose (key change) clears any stale Run-LLM error; a same-compose
+    // re-render is harmless to clear (no error is set outside a failed run).
+    this.clearLLMError(rec);
+    this.updateComposerButtons(rec);
+
+    let model = "";
+    try { model = this.llmModel() || ""; } catch (e) {}
+    let html = null;
+    try {
+      html = this.composePreviewHtmlFromState(win, rawMd, state, model);
+    } catch (e) {
+      err = (e && e.message) ? e.message : String(e);
+    }
 
     if (err != null) {
       host.textContent = "";
@@ -1553,34 +1625,262 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
     this.setStatus(rec, "");
   },
 
-  // The preview pipeline — the SAME steps as generateSummaryNote, minus the note
-  // creation: render (preview mode, no image export) → stripFrontmatter →
-  // stripMarkers → composePreviewHtml (mdToHtml + inert {% llm %} placeholders).
-  async composerPreviewHtml(win, item, name) {
-    if (!win.ZONCore) await this.injectCore(win);
-    let md = await this.renderTemplateAsNote(win, item, name, { preview: true });
-    md = win.ZONCore.stripFrontmatter(md);
-    md = win.ZONCore.stripMarkers(md);
-    let model = "";
-    try { model = this.llmModel() || ""; } catch (e) {}
-    return win.ZONCore.composePreviewHtml(md, { model });
+  // Turn the compose's raw md + gate state into preview HTML. When every {% llm %}
+  // block has been resolved (Run-LLM ran), their static output is substituted in
+  // place so the preview shows exactly what Generate will write; otherwise blocks
+  // render as inert placeholders. NEVER executes a model call — the substitution
+  // uses already-cached outputs only.
+  composePreviewHtmlFromState(win, rawMd, state, model) {
+    let C = win.ZONCore;
+    let md = rawMd;
+    if (state && C.composeHasLLMBlocks && C.composeHasLLMBlocks(state) && C.canGenerate(state)) {
+      md = C.applyLLMOutputs(rawMd, state.blocks, C.orderedOutputs(state));
+    }
+    md = C.stripFrontmatter(md);
+    md = C.stripMarkers(md);
+    return C.composePreviewHtml(md, { model });
+  },
+
+  // Show / hide the visible LLM-run error box (ADR-0001 fail-loud, never
+  // console-only). An empty message hides it.
+  setLLMError(rec, msg) {
+    if (!rec || !rec.llmError) return;
+    let text = String(msg == null ? "" : msg);
+    rec.llmError.textContent = text;
+    rec.llmError.style.display = text ? "" : "none";
+  },
+  clearLLMError(rec) { this.setLLMError(rec, ""); },
+
+  // Reflect the current gate state on the toolbar: Run-LLM shows only when the
+  // render contains {% llm %} blocks; Generate is disabled (with a visible reason)
+  // while any block is unresolved.
+  updateComposerButtons(rec) {
+    try {
+      let win = rec.wrap.ownerDocument.defaultView;
+      let C = win && win.ZONCore;
+      let state = rec.composeState;
+      let hasBlocks = !!(C && C.composeHasLLMBlocks && state && C.composeHasLLMBlocks(state));
+      if (rec.runLLMBtn) {
+        rec.runLLMBtn.style.display = hasBlocks ? "" : "none";
+        let configured = this.llmConfigured();
+        rec.runLLMBtn.disabled = !configured || !!rec.llmRunning;
+        rec.runLLMBtn.title = configured ? this.t("tip.composerRunLLM") : this.t("err.llmNotConfigured");
+      }
+      if (rec.generateBtn) {
+        let can = rec.item && (!state || !(C && C.canGenerate) || C.canGenerate(state));
+        rec.generateBtn.disabled = !can || !!rec.llmRunning;
+        if (rec.item && !can && C && C.generateBlockedReason) {
+          let reason = C.generateBlockedReason(state);
+          rec.generateBtn.title = reason || this.t("tip.generate");
+        } else {
+          rec.generateBtn.title = this.t("tip.generate");
+        }
+      }
+    } catch (e) { this.log("updateComposerButtons failed: " + e); }
+  },
+
+  // Run-LLM (Composer): resolve EVERY {% llm %} block in the current render exactly
+  // once via the existing runner (BYOK config from prefs), caching the static
+  // markdown into the gate state so the preview updates and Generate unlocks. This
+  // is the only place the Composer performs a model call — never on preview,
+  // template switch, or item switch. All-or-nothing: any failure aborts and is
+  // surfaced in the visible error box.
+  async composerRunLLM(rec) {
+    let item = rec.item;
+    if (!item || rec.llmRunning) return;
+    rec.llmRunning = true;
+    this.updateComposerButtons(rec);
+    this.clearLLMError(rec);
+    try {
+      let win = rec.wrap.ownerDocument.defaultView;
+      if (!win.ZONCore) await this.injectCore(win);
+      let C = win.ZONCore;
+
+      // Guard: runner + gating exports present (graceful if an old bundle is cached).
+      if (!C.prepareLLMRun || !C.applyLLMOutputs || !C.resolveAll) {
+        this.setLLMError(rec, this.t("err.llmCoreMissing"));
+        return;
+      }
+      // Guard: configured (base URL + model).
+      let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+      if (!C.isLLMConfigured(settings)) {
+        this.setLLMError(rec, this.t("err.llmNotConfigured"));
+        return;
+      }
+
+      // Ensure we hold the current render's md + gate state.
+      let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+      let md = rec.composeMd;
+      if (!md) {
+        md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+        rec.composeMd = md;
+        rec.composeState = C.reconcileComposeState(rec.composeState, md, { itemKey: item.key, templateName: name });
+      }
+      let state = rec.composeState;
+      if (!state || !C.composeHasLLMBlocks(state)) {
+        this.setStatus(rec, this.t("status.llmRunNoBlocks"));
+        return;
+      }
+
+      // Gather PDF annotations so context="annotations" blocks can resolve.
+      let annotations = [];
+      try { annotations = this.gatherAnnotations(item, win); }
+      catch (e) { this.log("gatherAnnotations (composer llm) failed: " + e); }
+
+      // Fetch full text only when a block asks for it (avoids needless I/O).
+      // LOGGING CONTRACT: never pass fulltext.text to this.log()/Zotero.debug —
+      // metadata (title, char count, missing reason) only.
+      let needFulltext = false;
+      try { needFulltext = state.blocks.some((b) => b.contexts && b.contexts.includes("fulltext")); }
+      catch (e) {}
+      let fulltext = null;
+      if (needFulltext) {
+        fulltext = await this.getPrimaryPDFFulltext(item, C);
+        if (fulltext && fulltext.ok) {
+          this.log("fulltext context: " + (fulltext.attachmentTitle || "(untitled)") + " (" + fulltext.text.length + " chars)");
+        } else if (fulltext) {
+          this.log("fulltext context missing: " + fulltext.reason);
+        }
+      }
+
+      // Build item data with parity to renderDocument so prompts can use any field.
+      let citekey = this.getCitekey(item);
+      let bibliography = await this.getBibliography(item);
+      let data = {};
+      try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
+      catch (e) { this.log("buildItemData (composer llm) failed: " + e); }
+
+      // Plan the run (pure): parse + validate + resolve context + render prompts.
+      // Any pre-flight failure — including missing/unavailable context — aborts here
+      // and is shown loudly, with no HTTP performed.
+      let prepared = C.prepareLLMRun(md, data, { maxContextChars: settings.maxContextChars });
+      if (!prepared.ok) {
+        if (prepared.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
+          this.setStatus(rec, this.t("status.llmRunNoBlocks"));
+          return;
+        }
+        this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.describeLLMFailure(prepared) }));
+        let first = prepared.errors && prepared.errors[0];
+        if (first && first.detail) this.log("composer llm pre-flight: " + first.detail);
+        this.setStatus(rec, "");
+        return;
+      }
+
+      // Execute HTTP per block, in document order. All-or-nothing: the first
+      // failure aborts and nothing is cached.
+      let url = C.buildChatCompletionsURL(settings.baseURL);
+      let headers = C.buildLLMHeaders(settings);
+      let outputs = [];
+      let n = prepared.tasks.length;
+      for (let i = 0; i < n; i++) {
+        this.setStatus(rec, this.t("status.llmRunning", { i: i + 1, n }));
+        let payload = C.buildChatCompletionsPayload(settings, prepared.tasks[i].messages);
+        let content = "";
+        try {
+          let resp = await Zotero.HTTP.request("POST", url, {
+            headers, body: JSON.stringify(payload), responseType: "text",
+            timeout: settings.timeoutSeconds * 1000,
+          });
+          content = C.parseChatCompletionsResponse(resp.responseText);
+        } catch (e) {
+          let status = (e && typeof e.status === "number") ? e.status : null;
+          let errStr = status ? ("HTTP " + status) : "network error";
+          this.log("composer llm http failed (block " + (i + 1) + "/" + n + ")"
+            + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
+          this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.t("err.llmRunHttp", { i: i + 1, n, error: errStr }) }));
+          this.setStatus(rec, "");
+          return;
+        }
+        let res = C.classifyLLMOutput(content);
+        if (!res.ok) {
+          this.log("composer llm empty response (block " + (i + 1) + "/" + n + ")");
+          this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.t("err.llmRunEmpty", { i: i + 1, n }) }));
+          this.setStatus(rec, "");
+          return;
+        }
+        outputs.push(res.output);
+      }
+
+      // Every block succeeded → cache the static markdown into the gate state.
+      // Preview refresh then substitutes it in place and Generate unlocks.
+      rec.composeState = C.resolveAll(state, outputs);
+      this.clearLLMError(rec);
+      await this.refreshPreview(rec);
+      this.setStatus(rec, this.t("status.llmRunDone", { count: n }));
+    } finally {
+      rec.llmRunning = false;
+      this.updateComposerButtons(rec);
+    }
   },
 
   // Generate a Summary Note for the pane's item from the selected template — the
-  // exact #25 path, just with the chosen template name.
-  // Create-once refinement (#28): when the item already has one or more Summary
-  // Notes (recognised ONLY by the Marker Tag), offer a choice via a single
-  // confirm dialog — OK overwrites the NEWEST existing note (this dialog IS the
-  // required explicit confirmation), Cancel/default creates an additional note.
+  // #25 pipeline, gated FIRST by ADR-0001 (#27): it REFUSES (loudly, naming the
+  // offending blocks) while any {% llm %} block is unresolved, regardless of
+  // existing notes, and feeds the resolved static markdown into the note when
+  // Run-LLM has completed.
+  // Create-once refinement (#28), applied AFTER the gate passes: when the item
+  // already has one or more Summary Notes (recognised ONLY by the Marker Tag),
+  // offer a choice via a single confirm dialog — OK overwrites the NEWEST
+  // existing note (this dialog IS the required explicit confirmation),
+  // Cancel/default creates an additional note. Both paths receive the SAME
+  // resolved markdown, so neither can ever write a note with a placeholder hole.
   // No existing note -> straight create, unchanged #25 behaviour.
   async composerGenerate(rec) {
     let win = rec.wrap.ownerDocument.defaultView;
     let item = rec.item;
     if (!item) return;
+    if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
+    let C = win.ZONCore;
     let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+
+    // Ensure we hold a gate state built from the actual render. If a transient
+    // preview error left it null, rebuild here so the ADR-0001 gate can never be
+    // bypassed by a missing state (which would otherwise let literal {% llm %}
+    // blocks reach the note).
+    let state = rec.composeState;
+    if ((!state || !rec.composeMd) && C && C.reconcileComposeState) {
+      try {
+        let md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+        state = C.reconcileComposeState(rec.composeState, md, { itemKey: item.key, templateName: name });
+        rec.composeMd = md;
+        rec.composeState = state;
+        this.updateComposerButtons(rec);
+      } catch (e) {
+        this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
+        this.log("composerGenerate render failed: " + e);
+        return;
+      }
+    }
+
+    // Hard gate: never produce a note with a hole. The button is disabled while
+    // unresolved, but the programmatic path refuses loudly too.
+    if (state && C && C.canGenerate && !C.canGenerate(state)) {
+      let reason = (C.generateBlockedReason ? C.generateBlockedReason(state) : "") ||
+        this.t("composer.generateBlocked");
+      this.setLLMError(rec, this.t("err.generateBlocked", { reason }));
+      this.setStatus(rec, "");
+      this.updateComposerButtons(rec);
+      throw new Error("composerGenerate refused: " + reason);
+    }
+
     rec.generateBtn.disabled = true;
     this.setStatus(rec, this.t("composer.generating"));
     try {
+      // Prefer the exact md the preview showed (with resolved LLM output baked in)
+      // so the note equals the preview; fall back to a fresh render if no compose
+      // md is held yet (e.g. Generate raced ahead of the first preview). BOTH the
+      // create and the overwrite path below use this — a note can never receive
+      // an unresolved {% llm %} placeholder.
+      let opts = {};
+      if (rec.composeMd) {
+        let md = rec.composeMd;
+        if (state && C.composeHasLLMBlocks && C.composeHasLLMBlocks(state) && C.canGenerate(state)) {
+          md = C.applyLLMOutputs(rec.composeMd, state.blocks, C.orderedOutputs(state));
+        }
+        opts.md = md;
+      }
+      // #28 existing-note choice: create an additional note, or (explicitly
+      // confirmed) overwrite the newest existing Summary Note.
       let existing = this.existingSummaryNotes(item);
       let overwriteTarget = null;
       if (existing.length) {
@@ -1592,17 +1892,17 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
         if (ok) overwriteTarget = this.newestNote(existing);
       }
       if (overwriteTarget) {
-        await this.overwriteSummaryNote(win, item, overwriteTarget, name);
+        await this.overwriteSummaryNote(win, item, overwriteTarget, name, opts);
         this.setStatus(rec, this.t("composer.overwritten"));
       } else {
-        await this.generateSummaryNote(win, item, name);
+        await this.generateSummaryNote(win, item, name, opts);
         this.setStatus(rec, this.t("composer.generated"));
       }
     } catch (e) {
       this.setStatus(rec, this.t("composer.generateFailed", { error: (e && e.message) ? e.message : String(e) }));
       this.log("composerGenerate failed: " + e);
     } finally {
-      rec.generateBtn.disabled = false;
+      this.updateComposerButtons(rec);
       // The note list / Stale Indicator may now be out of date either way
       // (a note was added, or the newest one was overwritten).
       this.refreshNoteAwareness(rec).catch((e) => this.log("note awareness refresh failed: " + e));
@@ -2877,14 +3177,19 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // `templateName` selects the template to render (the Composer passes the pane's
   // chosen one); the context-menu path omits it and falls back to the default
   // scaffold, so the #25 behaviour is unchanged.
-  async generateSummaryNote(win, item, templateName) {
+  async generateSummaryNote(win, item, templateName, opts = {}) {
     if (!win.ZONCore) await this.injectCore(win);
     // Templates folder IO once, not per selected item (loadTemplates caches in
     // _templates — guard like the other call sites).
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     // Same data assembly + render pipeline the preview uses, with the chosen (or
-    // default) template.
-    let md = await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
+    // default) template. The Composer may pass `opts.md` — the exact raw markdown
+    // the preview showed, with any {% llm %} output already resolved in place — so
+    // the created note equals the preview (ADR-0001 static markdown); otherwise we
+    // render fresh (the context-menu path, unchanged from #25).
+    let md = (opts && typeof opts.md === "string")
+      ? opts.md
+      : await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
     // File-world frontmatter first, then every %% zon %% / %% /zon %% / %% ann:KEY %%.
     md = win.ZONCore.stripFrontmatter(md);
     md = win.ZONCore.stripMarkers(md);
@@ -2903,10 +3208,16 @@ Full reference: https://github.com/Acatechnic/obsidian-notepad-for-zotero/blob/m
   // than creating a new note. Only ever called after the caller has obtained
   // explicit confirmation (composerGenerate's dialog); never touches any note
   // other than `noteItem`. Still a one-way render — no merge with the old body.
-  async overwriteSummaryNote(win, item, noteItem, templateName) {
+  // Like generateSummaryNote, the Composer may pass `opts.md` — the exact raw
+  // markdown of the preview with any {% llm %} output already resolved in place
+  // (ADR-0001 static markdown) — so an overwrite never re-renders unresolved
+  // {% llm %} blocks into the note.
+  async overwriteSummaryNote(win, item, noteItem, templateName, opts = {}) {
     if (!win.ZONCore) await this.injectCore(win);
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
-    let md = await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
+    let md = (opts && typeof opts.md === "string")
+      ? opts.md
+      : await this.renderTemplateAsNote(win, item, templateName || this.defaultNoteTemplate());
     md = win.ZONCore.stripFrontmatter(md);
     md = win.ZONCore.stripMarkers(md);
     let html = win.ZONCore.mdToHtml(md);
