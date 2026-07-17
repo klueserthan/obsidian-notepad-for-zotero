@@ -27,9 +27,10 @@ support, no file editor, and no annotation sync; none of that is coming back.
   **template**, see a live preview of the Summary Note it would generate for the
   selected item, then **Generate**.
 - **Summary Notes** are native Zotero child notes (HTML), created **once** per
-  Generate. The plugin never edits a Summary Note after creating it — hand edits
-  you make in Better Notes are always safe. Regenerating creates an additional
-  note, or (with explicit confirmation) overwrites the newest one.
+  Generate. The plugin never touches a Summary Note behind your back — the only
+  way one changes after creation is you choosing Overwrite and confirming it, so
+  hand edits you make in Better Notes are always safe. Regenerating otherwise
+  creates an additional note.
 - **Marker Tag** — every Summary Note is stamped with a Zotero tag
   (`zps:summary-note`) so the plugin can recognize its own notes. That's the only
   thing that identifies one; title and body content are never inspected.

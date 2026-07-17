@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**This release renames the project to Paper Summarizer for Zotero and breaks
-it from upstream (Acatechnic/obsidian-notepad-for-zotero) for good.** The
+**The next release renames the project to Paper Summarizer for Zotero and
+breaks it from upstream (Acatechnic/obsidian-notepad-for-zotero) for good.** The
 Obsidian vault/file/sync/editor layer this plugin used to be built around is
 gone — no vault detection, no `.md` files, no atomic conflict-checked note
 writes, no annotation auto-sync, no reverse tag sync. In its place: the item
@@ -21,7 +21,7 @@ BYOK/OpenAI-compatible) is explicit and gated: Generate refuses while any
 block is unresolved. The Template Builder survives as a pure template-authoring
 tool. See `CONTEXT.md` for the new vocabulary and `docs/adr/0001`–`0003` for
 the decisions; the entries below are the individual slices that built this.
-This is also the fork's first versioned release (`0.1.0`) — a fresh start
+It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
