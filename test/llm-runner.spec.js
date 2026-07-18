@@ -301,8 +301,8 @@ describe("prepareLLMRun — prompt rendering", () => {
     const result = prepareLLMRun(text, item);
     expect(result.ok).toBe(true);
     const userContent = result.tasks[0].messages[1].content;
-    // Task section has rendered values, not raw nunjucks
-    const taskSection = userContent.split("\n\nContext:\n")[0];
+    // Task section (after the context) has rendered values, not raw nunjucks
+    const taskSection = userContent.split("\n\nTask:\n")[1];
     expect(taskSection).toContain("Thinking in Networks - 2023-04-15");
     expect(taskSection).not.toContain("{{title}}");
   });
