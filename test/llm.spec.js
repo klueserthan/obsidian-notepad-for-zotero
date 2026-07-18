@@ -26,6 +26,7 @@ describe("LLM_DEFAULTS", () => {
       maxTokens: 2048,
       maxContextChars: 100000,
       timeoutSeconds: 60,
+      concurrency: 1,
       autoRun: false,
     });
   });
@@ -128,6 +129,16 @@ describe("sanitizeLLMSettings", () => {
     expect(sanitizeLLMSettings({ baseURL: "x", model: "m", timeoutSeconds: 0 }).timeoutSeconds).toBe(1);
     expect(sanitizeLLMSettings({ baseURL: "x", model: "m", timeoutSeconds: 1000 }).timeoutSeconds).toBe(600);
     expect(sanitizeLLMSettings({ baseURL: "x", model: "m", timeoutSeconds: 30 }).timeoutSeconds).toBe(30);
+  });
+
+  it("clamps concurrency to 1..8, rounds, coerces strings, defaults garbage to 1", () => {
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: 0 }).concurrency).toBe(1);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: 20 }).concurrency).toBe(8);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: 3 }).concurrency).toBe(3);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: 2.6 }).concurrency).toBe(3);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: "4" }).concurrency).toBe(4);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m", concurrency: "abc" }).concurrency).toBe(LLM_DEFAULTS.concurrency);
+    expect(sanitizeLLMSettings({ baseURL: "x", model: "m" }).concurrency).toBe(LLM_DEFAULTS.concurrency);
   });
 
   it("handles NaN / invalid numbers by falling back to defaults", () => {
@@ -404,6 +415,7 @@ describe("sanitizeLogMetadata", () => {
     expect(meta).toHaveProperty("maxTokens");
     expect(meta).toHaveProperty("maxContextChars");
     expect(meta).toHaveProperty("timeoutSeconds");
+    expect(meta).toHaveProperty("concurrency");
     expect(meta).toHaveProperty("autoRun");
   });
 
