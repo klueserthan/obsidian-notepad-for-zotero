@@ -84,6 +84,14 @@
         <html:span style="color:#888;font-size:11px;">Request timeout in seconds (default: 60)</html:span>
       </html:label>
 
+      <!-- Concurrency -->
+      <html:label style="display:flex;flex-direction:column;gap:3px;">
+        <html:span>Parallel requests</html:span>
+        <html:input id="zon-llm-concurrency" type="number" min="1" max="8" style="flex:1;box-sizing:border-box;"
+          preference="extensions.zotero-obsidian-notes.llmConcurrency"/>
+        <html:span style="color:#888;font-size:11px;">How many LLM blocks Run LLM requests at once, 1–8 (default: 1). Keep 1 for a local Ollama — it serves requests serially, and the timeout includes time spent queued. Raise for hosted APIs to speed up multi-block templates.</html:span>
+      </html:label>
+
       <!-- Auto-run checkbox -->
       <html:label style="display:flex;align-items:flex-start;gap:8px;">
         <html:input id="zon-llm-autorun" type="checkbox" preference="extensions.zotero-obsidian-notes.llmAutoRun"/>

@@ -30,6 +30,7 @@ export const LLM_DEFAULTS = {
   maxTokens: 2048,
   maxContextChars: 100000,
   timeoutSeconds: 60,
+  concurrency: 1,
   autoRun: false,
 };
 
@@ -55,6 +56,7 @@ export function sanitizeLLMSettings(settings) {
   merged.maxTokens = clampInt(merged.maxTokens, 1, 128000, LLM_DEFAULTS.maxTokens);
   merged.maxContextChars = clampInt(merged.maxContextChars, 1, Infinity, LLM_DEFAULTS.maxContextChars);
   merged.timeoutSeconds = clampInt(merged.timeoutSeconds, 1, 600, LLM_DEFAULTS.timeoutSeconds);
+  merged.concurrency = clampInt(merged.concurrency, 1, 8, LLM_DEFAULTS.concurrency);
   if (!isLLMConfigured(merged)) merged.autoRun = false;
   return merged;
 }
@@ -139,6 +141,7 @@ export function sanitizeLogMetadata(settings) {
     maxTokens: s.maxTokens,
     maxContextChars: s.maxContextChars,
     timeoutSeconds: s.timeoutSeconds,
+    concurrency: s.concurrency,
     autoRun: s.autoRun,
   };
 }

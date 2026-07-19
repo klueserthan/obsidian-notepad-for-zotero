@@ -28,6 +28,7 @@ var ZON = {
   PREF_LLM_MAX_TOKENS: "extensions.zotero-obsidian-notes.llmMaxTokens",
   PREF_LLM_MAX_CONTEXT: "extensions.zotero-obsidian-notes.llmMaxContextChars",
   PREF_LLM_TIMEOUT: "extensions.zotero-obsidian-notes.llmTimeoutSeconds",
+  PREF_LLM_CONCURRENCY: "extensions.zotero-obsidian-notes.llmConcurrency",
   PREF_LLM_AUTORUN: "extensions.zotero-obsidian-notes.llmAutoRun",
   // One-time migration flag: set after the vault-era templatesDir pref has been
   // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
@@ -50,6 +51,7 @@ var ZON = {
   DEFAULT_LLM_MAX_TOKENS: 2048,
   DEFAULT_LLM_MAX_CONTEXT: 100000,
   DEFAULT_LLM_TIMEOUT: 60,
+  DEFAULT_LLM_CONCURRENCY: 1, // parallel Run-LLM requests; keep 1 for a local serial Ollama
   DEFAULT_LLM_AUTORUN: false,
   DEFAULT_TEMPLATES_MIGRATED: false,
   _templates: null,
@@ -484,7 +486,7 @@ var ZON = {
     "tip.llmAutoRun": "Automatically run the LLM interpreter when creating or inserting a note (requires base URL and model)",
     "err.llmBlocksInvalid": "LLM block errors — fix the template before inserting. ({count} error(s))",
     "btn.runLLM": "Run LLM",
-    "status.llmRunning": "Running LLM {i}/{n}…",
+    "status.llmRunning": "Running LLM — {i}/{n} done…",
     "status.llmRunDone": "Ran LLM — {count} block(s) updated",
     "status.llmRunNoBlocks": "No {% llm %} blocks to run",
     "err.llmRunFailed": "LLM run failed — {error}",
@@ -746,6 +748,7 @@ var ZON = {
     seed(this.PREF_LLM_MAX_TOKENS, this.DEFAULT_LLM_MAX_TOKENS);
     seed(this.PREF_LLM_MAX_CONTEXT, this.DEFAULT_LLM_MAX_CONTEXT);
     seed(this.PREF_LLM_TIMEOUT, this.DEFAULT_LLM_TIMEOUT);
+    seed(this.PREF_LLM_CONCURRENCY, this.DEFAULT_LLM_CONCURRENCY);
     seed(this.PREF_LLM_AUTORUN, this.DEFAULT_LLM_AUTORUN);
     seed(this.PREF_TEMPLATES_MIGRATED, this.DEFAULT_TEMPLATES_MIGRATED);
   },
@@ -783,6 +786,10 @@ var ZON = {
     try { let v = Zotero.Prefs.get(this.PREF_LLM_TIMEOUT, true); return v === undefined ? this.DEFAULT_LLM_TIMEOUT : v; }
     catch (e) { return this.DEFAULT_LLM_TIMEOUT; }
   },
+  llmConcurrency() {
+    try { let v = Zotero.Prefs.get(this.PREF_LLM_CONCURRENCY, true); return v === undefined ? this.DEFAULT_LLM_CONCURRENCY : v; }
+    catch (e) { return this.DEFAULT_LLM_CONCURRENCY; }
+  },
   llmAutoRunPref() {
     try { let v = Zotero.Prefs.get(this.PREF_LLM_AUTORUN, true); return v === undefined ? this.DEFAULT_LLM_AUTORUN : !!v; }
     catch (e) { return this.DEFAULT_LLM_AUTORUN; }
@@ -799,6 +806,7 @@ var ZON = {
       maxTokens: this.llmMaxTokens(),
       maxContextChars: this.llmMaxContextChars(),
       timeoutSeconds: this.llmTimeoutSeconds(),
+      concurrency: this.llmConcurrency(),
       autoRun: this.llmAutoRunPref(),
     };
   },
@@ -1500,7 +1508,7 @@ var ZON = {
       let C = win.ZONCore;
 
       // Guard: runner + gating exports present (graceful if an old bundle is cached).
-      if (!C.prepareLLMRun || !C.applyLLMOutputs || !C.resolveAll) {
+      if (!C.prepareLLMRun || !C.applyLLMOutputs || !C.resolveAll || !C.executeLLMBlocks) {
         this.setLLMError(rec, this.t("err.llmCoreMissing"));
         return;
       }
@@ -1553,63 +1561,47 @@ var ZON = {
       try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
       catch (e) { this.log("buildItemData (composer llm) failed: " + e); }
 
-      // Plan the run (pure): parse + validate + resolve context + render prompts.
-      // Any pre-flight failure — including missing/unavailable context — aborts here
-      // and is shown loudly, with no HTTP performed.
-      let prepared = C.prepareLLMRun(md, data, { maxContextChars: settings.maxContextChars });
-      if (!prepared.ok) {
-        if (prepared.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
+      // Plan + execute through the pure runner. Pre-flight (parse + validate +
+      // resolve context + render prompts) happens before any HTTP and aborts
+      // loudly; block requests then run through a bounded worker pool
+      // (settings.concurrency), all-or-nothing.
+      let fetchFn = async (url, headers, payload, timeoutSeconds) => {
+        let resp = await Zotero.HTTP.request("POST", url, {
+          headers, body: JSON.stringify(payload), responseType: "text",
+          timeout: timeoutSeconds * 1000,
+        });
+        return resp.responseText;
+      };
+      let onProgress = (done, n) => this.setStatus(rec, this.t("status.llmRunning", { i: done, n }));
+      let result = await C.executeLLMBlocks(md, data, settings, fetchFn, onProgress);
+
+      if (!result.ok) {
+        if (result.code === C.LLM_RUN_ERRORS.NO_BLOCKS) {
           this.setStatus(rec, this.t("status.llmRunNoBlocks"));
           return;
         }
-        this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.describeLLMFailure(prepared) }));
-        let first = prepared.errors && prepared.errors[0];
+        if (result.code === C.LLM_RUN_ERRORS.HTTP_FAILED) {
+          let e = result.error;
+          let status = (e && typeof e.status === "number") ? e.status : null;
+          this.log("composer llm http failed (block " + (result.blockIndex + 1) + "/" + result.n + ")"
+            + (status ? " (HTTP " + status + ")" : "") + ": "
+            + (C.sanitizeError ? C.sanitizeError(e) : (e && e.message ? e.message : e)));
+        } else if (result.code === C.LLM_RUN_ERRORS.EMPTY_RESPONSE) {
+          this.log("composer llm empty response (block " + (result.blockIndex + 1) + "/" + result.n + ")");
+        }
+        let first = result.errors && result.errors[0];
         if (first && first.detail) this.log("composer llm pre-flight: " + first.detail);
+        this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.describeLLMFailure(result) }));
         this.setStatus(rec, "");
         return;
       }
 
-      // Execute HTTP per block, in document order. All-or-nothing: the first
-      // failure aborts and nothing is cached.
-      let url = C.buildChatCompletionsURL(settings.baseURL);
-      let headers = C.buildLLMHeaders(settings);
-      let outputs = [];
-      let n = prepared.tasks.length;
-      for (let i = 0; i < n; i++) {
-        this.setStatus(rec, this.t("status.llmRunning", { i: i + 1, n }));
-        let payload = C.buildChatCompletionsPayload(settings, prepared.tasks[i].messages);
-        let content = "";
-        try {
-          let resp = await Zotero.HTTP.request("POST", url, {
-            headers, body: JSON.stringify(payload), responseType: "text",
-            timeout: settings.timeoutSeconds * 1000,
-          });
-          content = C.parseChatCompletionsResponse(resp.responseText);
-        } catch (e) {
-          let status = (e && typeof e.status === "number") ? e.status : null;
-          let errStr = status ? ("HTTP " + status) : "network error";
-          this.log("composer llm http failed (block " + (i + 1) + "/" + n + ")"
-            + (status ? " (HTTP " + status + ")" : "") + ": " + (e && e.message ? e.message : e));
-          this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.t("err.llmRunHttp", { i: i + 1, n, error: errStr }) }));
-          this.setStatus(rec, "");
-          return;
-        }
-        let res = C.classifyLLMOutput(content);
-        if (!res.ok) {
-          this.log("composer llm empty response (block " + (i + 1) + "/" + n + ")");
-          this.setLLMError(rec, this.t("err.llmRunFailed", { error: this.t("err.llmRunEmpty", { i: i + 1, n }) }));
-          this.setStatus(rec, "");
-          return;
-        }
-        outputs.push(res.output);
-      }
-
       // Every block succeeded → cache the static markdown into the gate state.
       // Preview refresh then substitutes it in place and Generate unlocks.
-      rec.composeState = C.resolveAll(state, outputs);
+      rec.composeState = C.resolveAll(state, result.outputs);
       this.clearLLMError(rec);
       await this.refreshPreview(rec);
-      this.setStatus(rec, this.t("status.llmRunDone", { count: n }));
+      this.setStatus(rec, this.t("status.llmRunDone", { count: result.outputs.length }));
     } finally {
       rec.llmRunning = false;
       this.updateComposerButtons(rec);
@@ -2469,7 +2461,8 @@ var ZON = {
     if (E && code === E.EMPTY_RESPONSE) {
       return this.t("err.llmRunEmpty", { i: result.blockIndex + 1, n: result.n });
     }
-    if (E && (code === E.CONTEXT_UNSUPPORTED || code === E.CONTEXT_MISSING || code === E.RENDER_FAILED)) {
+    if (E && (code === E.CONTEXT_UNSUPPORTED || code === E.CONTEXT_MISSING
+        || code === E.CONTEXT_TOO_LARGE || code === E.RENDER_FAILED)) {
       let first = result.errors && result.errors[0];
       return this.t("err.llmRunBlock",
         { line: first && first.line != null ? (first.line + 1) : "?", message: first ? first.message : "unknown" });

@@ -23,7 +23,8 @@ export const GROUNDING_SYSTEM_PROMPT =
   "present there. Output only the task result — no preface, no commentary, no " +
   "explanation outside the requested content. If the provided context is not " +
   "sufficient to complete the task, respond with a brief Markdown note stating " +
-  "what is missing.";
+  "what is missing. The user message provides the context first, followed by " +
+  "the task.";
 
 export const RUNNABLE_CONTEXTS = ["abstract", "annotations", "fulltext"];
 
@@ -38,10 +39,13 @@ export const LLM_RUN_ERRORS = {
   HTTP_FAILED: "llm.run.httpFailed",
 };
 
+// Context precedes the task so that requests sharing a context differ only in
+// their tail — the system prompt + context form a byte-identical prefix that
+// OpenAI-compatible servers can reuse via automatic prefix/prompt caching.
 export function buildLLMMessages(systemPrompt, taskText, contextText) {
   const task = String(taskText ?? "");
   const ctx = String(contextText ?? "");
-  const user = `Task:\n${task}\n\nContext:\n${ctx}`;
+  const user = `Context:\n${ctx}\n\nTask:\n${task}`;
   return [
     { role: "system", content: String(systemPrompt ?? "") },
     { role: "user", content: user },
@@ -103,6 +107,9 @@ export function prepareLLMRun(text, itemData, opts = {}) {
     ? Math.floor(opts.maxContextChars) : LLM_DEFAULTS.maxContextChars;
 
   const tasks = [];
+  // Blocks with the same context set share one resolved context string, so it
+  // is resolved (and size-checked) once and reused by reference across tasks.
+  const contextCache = new Map();
 
   for (const block of blocks) {
     // Dedupe contexts while preserving order
@@ -131,43 +138,47 @@ export function prepareLLMRun(text, itemData, opts = {}) {
       };
     }
 
-    // Resolution loop: iterate contexts in template order
-    const sections = [];
-    for (const kind of kinds) {
-      const { text, missingReason } = resolveContext(kind, itemData);
-      if (missingReason !== null) {
+    const contextLabel = kinds.join(", ");
+    let contextText = contextCache.get(contextLabel);
+    if (contextText === undefined) {
+      // Resolution loop: iterate contexts in template order
+      const sections = [];
+      for (const kind of kinds) {
+        const { text, missingReason } = resolveContext(kind, itemData);
+        if (missingReason !== null) {
+          return {
+            ok: false,
+            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+            errors: [{
+              code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+              message: missingReason + " — cannot run with context='" + kinds.join(", ") + "'",
+              line: block.lineFrom,
+            }],
+            blocks,
+            tasks: [],
+          };
+        }
+        sections.push("## Context: " + kind + "\n" + text);
+      }
+
+      contextText = sections.join("\n\n");
+
+      // Size enforcement on combined context text
+      if (contextText.length > maxContextChars) {
         return {
           ok: false,
-          code: LLM_RUN_ERRORS.CONTEXT_MISSING,
+          code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
           errors: [{
-            code: LLM_RUN_ERRORS.CONTEXT_MISSING,
-            message: missingReason + " — cannot run with context='" + kinds.join(", ") + "'",
+            code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
+            message: `context is ${contextText.length} characters, exceeds the configured limit of ${maxContextChars} — reduce the context or raise maxContextChars`,
             line: block.lineFrom,
           }],
           blocks,
           tasks: [],
         };
       }
-      sections.push("## Context: " + kind + "\n" + text);
-    }
 
-    // Build labeled context text and label
-    const contextText = sections.join("\n\n");
-    const contextLabel = kinds.join(", ");
-
-    // Size enforcement on combined context text
-    if (contextText.length > maxContextChars) {
-      return {
-        ok: false,
-        code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
-        errors: [{
-          code: LLM_RUN_ERRORS.CONTEXT_TOO_LARGE,
-          message: `context is ${contextText.length} characters, exceeds the configured limit of ${maxContextChars} — reduce the context or raise maxContextChars`,
-          line: block.lineFrom,
-        }],
-        blocks,
-        tasks: [],
-      };
+      contextCache.set(contextLabel, contextText);
     }
 
     // Prompt rendering
@@ -191,7 +202,7 @@ export function prepareLLMRun(text, itemData, opts = {}) {
 
     // Message assembly
     const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, contextText);
-    tasks.push({ block, messages, contextLabel });
+    tasks.push({ block, messages, contextLabel, contextText });
   }
 
   return { ok: true, code: "ok", errors: [], blocks, tasks };
@@ -217,36 +228,67 @@ export function decideLLMAction(md, settings) {
 }
 
 export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProgress) {
-  const prepared = prepareLLMRun(text, itemData);
+  const s = sanitizeLLMSettings(settings);
+
+  const prepared = prepareLLMRun(text, itemData, { maxContextChars: s.maxContextChars });
   if (!prepared.ok) {
     return { ok: false, code: prepared.code, errors: prepared.errors, blocks: prepared.blocks };
   }
 
-  const s = sanitizeLLMSettings(settings);
   const url = buildChatCompletionsURL(s.baseURL);
   const headers = buildLLMHeaders(s);
-  const outputs = [];
   const { tasks, blocks } = prepared;
   const n = tasks.length;
+  const outputs = new Array(n);
 
-  for (let i = 0; i < n; i++) {
+  const progress = (done) => {
     if (typeof onProgress === "function") {
-      try { onProgress(i + 1, n); } catch { /* ignore callback errors */ }
+      try { onProgress(done, n); } catch { /* ignore callback errors */ }
     }
-    const payload = buildChatCompletionsPayload(s, tasks[i].messages);
-    let content;
-    try {
-      content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
-    } catch (e) {
-      return { ok: false, code: LLM_RUN_ERRORS.HTTP_FAILED, error: e, blockIndex: i, n };
+  };
+  progress(0);
+
+  // Bounded worker pool. Blocks are independent, so up to `concurrency` requests
+  // run at once; outputs land at their block index, keeping document order.
+  // All-or-nothing: the first failure stops workers from claiming further blocks,
+  // in-flight requests are awaited (Zotero.HTTP cannot abort) and discarded, and
+  // the failure with the smallest block index is reported deterministically.
+  let next = 0;
+  let done = 0;
+  let failure = null;
+
+  const worker = async () => {
+    while (failure === null && next < n) {
+      const i = next++;
+      const payload = buildChatCompletionsPayload(s, tasks[i].messages);
+      let content;
+      try {
+        content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
+      } catch (e) {
+        if (failure === null || i < failure.blockIndex) {
+          failure = { ok: false, code: LLM_RUN_ERRORS.HTTP_FAILED, error: e, blockIndex: i, n };
+        }
+        return;
+      }
+      const res = classifyLLMOutput(content);
+      if (!res.ok) {
+        if (failure === null || i < failure.blockIndex) {
+          failure = { ok: false, code: LLM_RUN_ERRORS.EMPTY_RESPONSE, blockIndex: i, n };
+        }
+        return;
+      }
+      outputs[i] = res.output;
+      done += 1;
+      progress(done);
     }
-    const res = classifyLLMOutput(content);
-    if (!res.ok) {
-      return { ok: false, code: LLM_RUN_ERRORS.EMPTY_RESPONSE, blockIndex: i, n };
-    }
-    outputs.push(res.output);
-  }
+  };
+
+  const workers = [];
+  for (let w = 0; w < Math.min(s.concurrency, n); w++) workers.push(worker());
+  await Promise.all(workers);
+
+  if (failure !== null) return failure;
 
   const md = applyLLMOutputs(text, blocks, outputs);
-  return { ok: true, md, blocks };
+  return { ok: true, md, blocks, outputs };
 }

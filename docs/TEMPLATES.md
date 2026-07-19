@@ -376,7 +376,17 @@ in the preview shows as an inert placeholder naming its target model and
 context spec. Click **Run LLM** (shown only when the current render has
 unresolved blocks) to resolve them:
 
-- Blocks execute in document order, exactly once per click.
+- Blocks execute exactly once per click. By default they run one at a time in
+  document order; the **Parallel requests** preference (1–8, default 1) lets
+  hosted APIs run several block requests at once — outputs always land back in
+  document order. Keep it at 1 for a local Ollama, which serves requests
+  serially (the request timeout includes time spent queued on the server).
+- Blocks that share a context spec send **byte-identical request prefixes**:
+  the system prompt and the resolved context come first and only the short
+  task text differs at the end. OpenAI-compatible providers with automatic
+  prompt/prefix caching therefore process the (potentially very large) context
+  once and reuse it across the remaining blocks instead of re-processing it
+  per block.
 - **All-or-nothing:** if any block fails (context missing, HTTP error, empty
   response, etc.), *no* block results are kept and every block stays
   unresolved. The error is surfaced in a visible error box in the pane —

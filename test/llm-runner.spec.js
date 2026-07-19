@@ -71,9 +71,10 @@ describe("buildLLMMessages", () => {
     expect(msgs[1].content).toContain("abstract here");
   });
 
-  it("separates Task and Context with a blank line", () => {
+  it("separates Context and Task with a blank line, context first", () => {
     const msgs = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, "task", "context");
-    expect(msgs[1].content).toContain("\n\nContext:\n");
+    expect(msgs[1].content).toMatch(/^Context:\n/);
+    expect(msgs[1].content).toContain("\n\nTask:\n");
   });
 
   it("handles empty task/context without throwing (still two messages)", () => {
@@ -300,8 +301,8 @@ describe("prepareLLMRun — prompt rendering", () => {
     const result = prepareLLMRun(text, item);
     expect(result.ok).toBe(true);
     const userContent = result.tasks[0].messages[1].content;
-    // Task section has rendered values, not raw nunjucks
-    const taskSection = userContent.split("\n\nContext:\n")[0];
+    // Task section (after the context) has rendered values, not raw nunjucks
+    const taskSection = userContent.split("\n\nTask:\n")[1];
     expect(taskSection).toContain("Thinking in Networks - 2023-04-15");
     expect(taskSection).not.toContain("{{title}}");
   });
@@ -562,7 +563,7 @@ describe("prepareLLMRun — annotations context", () => {
     expect(userContent).toContain("### p.9 — image");
     expect(userContent).toContain("Comment: this figure shows the topology");
     // No blockquote line for an image with only a comment
-    const ctxSection = userContent.split("\n\nContext:\n")[1];
+    const ctxSection = userContent.split("\n\nTask:\n")[0];
     const lines = ctxSection.split("\n");
     const blockquoteLines = lines.filter((l) => l.startsWith(">"));
     expect(blockquoteLines).toHaveLength(0);
@@ -624,12 +625,41 @@ describe("provider message assembly", () => {
     expect(result.tasks[0].messages[0].content).toBe(GROUNDING_SYSTEM_PROMPT);
   });
 
-  it("the user message has 'Task:\\n<prompt>\\n\\nContext:\\n## Context: abstract\\n<abstract>'", () => {
+  it("the user message has 'Context:\\n## Context: abstract\\n<abstract>\\n\\nTask:\\n<prompt>'", () => {
     const text = ['{% llm context="abstract" %}', "Summarize this.", "{% endllm %}"].join("\n");
     const result = prepareLLMRun(text, item);
     expect(result.ok).toBe(true);
-    const expected = "Task:\nSummarize this.\n\nContext:\n## Context: abstract\n" + item.abstractNote;
+    const expected = "Context:\n## Context: abstract\n" + item.abstractNote + "\n\nTask:\nSummarize this.";
     expect(result.tasks[0].messages[1].content).toBe(expected);
+  });
+
+  it("blocks sharing a context set produce byte-identical message prefixes (only the task tail varies)", () => {
+    const text = [
+      '{% llm context="abstract" %}First task.{% endllm %}',
+      "prose",
+      '{% llm context="abstract" %}Second task.{% endllm %}',
+    ].join("\n");
+    const result = prepareLLMRun(text, item);
+    expect(result.ok).toBe(true);
+    const [a, b] = result.tasks.map((t) => t.messages[1].content);
+    const marker = "\n\nTask:\n";
+    const prefixA = a.slice(0, a.lastIndexOf(marker) + marker.length);
+    const prefixB = b.slice(0, b.lastIndexOf(marker) + marker.length);
+    expect(prefixA).toBe(prefixB);
+    // System messages are identical too, so the whole request prefix is shared.
+    expect(result.tasks[0].messages[0].content).toBe(result.tasks[1].messages[0].content);
+  });
+
+  it("blocks sharing a context set reuse the same resolved contextText (reference equality)", () => {
+    const text = [
+      '{% llm context="abstract,annotations" %}First.{% endllm %}',
+      '{% llm context="abstract,annotations" %}Second.{% endllm %}',
+      '{% llm context="abstract" %}Third.{% endllm %}',
+    ].join("\n");
+    const result = prepareLLMRun(text, item);
+    expect(result.ok).toBe(true);
+    expect(result.tasks[0].contextText).toBe(result.tasks[1].contextText);
+    expect(result.tasks[2].contextText).not.toBe(result.tasks[0].contextText);
   });
 });
 
@@ -815,7 +845,7 @@ describe("executeLLMBlocks", () => {
     expect(result.blocks).toEqual([]);
   });
 
-  it("calls onProgress with (i+1, n) for each block", async () => {
+  it("calls onProgress with the completed count: (0, n) up front, then (done, n) per block", async () => {
     const calls = [];
     const onProgress = (i, n) => calls.push({ i, n });
     const text = [
@@ -824,9 +854,11 @@ describe("executeLLMBlocks", () => {
     ].join("\n");
     const fetch = makeFetch(["A", "B"]);
     await executeLLMBlocks(text, item, configuredSettings, fetch, onProgress);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toEqual({ i: 1, n: 2 });
-    expect(calls[1]).toEqual({ i: 2, n: 2 });
+    expect(calls).toEqual([
+      { i: 0, n: 2 },
+      { i: 1, n: 2 },
+      { i: 2, n: 2 },
+    ]);
   });
 
   it("passes correct fetchFn arguments: URL ends with /chat/completions, headers include Content-Type, payload has model/messages/stream:false", async () => {
@@ -892,6 +924,118 @@ describe("executeLLMBlocks", () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe(LLM_RUN_ERRORS.RENDER_FAILED);
     expect(fetchCalled).toBe(0);
+  });
+
+  it("success result includes the raw outputs array in document order", async () => {
+    const text = [
+      '{% llm context="abstract" %}first{% endllm %}',
+      "prose",
+      '{% llm context="abstract" %}second{% endllm %}',
+    ].join("\n");
+    const fetch = makeFetch(["A", "B"]);
+    const result = await executeLLMBlocks(text, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(result.outputs).toEqual(["A", "B"]);
+  });
+
+  it("honors settings.maxContextChars in pre-flight (fetch never called)", async () => {
+    let fetchCalled = 0;
+    const fetch = async () => { fetchCalled++; };
+    const text = ['{% llm context="abstract" %}', "body", "{% endllm %}"].join("\n");
+    const settings = { ...configuredSettings, maxContextChars: 10 };
+    const result = await executeLLMBlocks(text, item, settings, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.CONTEXT_TOO_LARGE);
+    expect(fetchCalled).toBe(0);
+  });
+
+  // Helper for the pool tests: a fetch whose per-call delay is looked up from the
+  // task text inside the payload's user message, tracking in-flight counts.
+  const makeDelayedFetch = (plan) => {
+    const state = { inFlight: 0, maxInFlight: 0, started: [], calls: 0 };
+    const fetch = async (_url, _headers, payload) => {
+      const userContent = payload.messages.find((m) => m.role === "user").content;
+      const entry = plan.find((p) => userContent.endsWith("Task:\n" + p.task));
+      state.calls++;
+      state.started.push(entry.task);
+      state.inFlight++;
+      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+      await new Promise((resolve) => setTimeout(resolve, entry.delayMs));
+      state.inFlight--;
+      if (entry.error) throw entry.error;
+      return JSON.stringify({ choices: [{ message: { content: entry.output } }] });
+    };
+    return { fetch, state };
+  };
+
+  const threeBlockText = [
+    '{% llm context="abstract" %}b0{% endllm %}',
+    '{% llm context="abstract" %}b1{% endllm %}',
+    '{% llm context="abstract" %}b2{% endllm %}',
+  ].join("\n");
+
+  it("concurrency: runs at most settings.concurrency requests in flight", async () => {
+    const { fetch, state } = makeDelayedFetch([
+      { task: "b0", delayMs: 20, output: "O0" },
+      { task: "b1", delayMs: 20, output: "O1" },
+      { task: "b2", delayMs: 20, output: "O2" },
+    ]);
+    const result = await executeLLMBlocks(threeBlockText, item, { ...configuredSettings, concurrency: 2 }, fetch);
+    expect(result.ok).toBe(true);
+    expect(state.maxInFlight).toBe(2);
+  });
+
+  it("concurrency 1 (the default) is strictly sequential in document order", async () => {
+    const { fetch, state } = makeDelayedFetch([
+      { task: "b0", delayMs: 10, output: "O0" },
+      { task: "b1", delayMs: 1, output: "O1" },
+      { task: "b2", delayMs: 5, output: "O2" },
+    ]);
+    const result = await executeLLMBlocks(threeBlockText, item, configuredSettings, fetch);
+    expect(result.ok).toBe(true);
+    expect(state.maxInFlight).toBe(1);
+    expect(state.started).toEqual(["b0", "b1", "b2"]);
+  });
+
+  it("concurrency: outputs stay in document order even when completions arrive out of order", async () => {
+    const { fetch } = makeDelayedFetch([
+      { task: "b0", delayMs: 30, output: "O0" },
+      { task: "b1", delayMs: 1, output: "O1" },
+      { task: "b2", delayMs: 10, output: "O2" },
+    ]);
+    const result = await executeLLMBlocks(threeBlockText, item, { ...configuredSettings, concurrency: 3 }, fetch);
+    expect(result.ok).toBe(true);
+    expect(result.outputs).toEqual(["O0", "O1", "O2"]);
+    expect(result.md).toBe("O0\nO1\nO2");
+  });
+
+  it("concurrency: a failure stops further blocks from launching and awaits in-flight requests", async () => {
+    const { fetch, state } = makeDelayedFetch([
+      { task: "b0", delayMs: 30, output: "O0" },
+      { task: "b1", delayMs: 1, error: new Error("boom") },
+      { task: "b2", delayMs: 1, output: "O2" },
+    ]);
+    const result = await executeLLMBlocks(threeBlockText, item, { ...configuredSettings, concurrency: 2 }, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.HTTP_FAILED);
+    expect(result.blockIndex).toBe(1);
+    // b2 must never launch: b1 fails while b0 is still in flight
+    expect(state.calls).toBe(2);
+    expect(state.started).not.toContain("b2");
+    // executeLLMBlocks returned only after the in-flight b0 settled
+    expect(state.inFlight).toBe(0);
+  });
+
+  it("concurrency: when several blocks fail, the smallest block index is reported", async () => {
+    const { fetch } = makeDelayedFetch([
+      { task: "b0", delayMs: 20, error: new Error("slow failure") },
+      { task: "b1", delayMs: 1, error: new Error("fast failure") },
+      { task: "b2", delayMs: 1, output: "O2" },
+    ]);
+    const result = await executeLLMBlocks(threeBlockText, item, { ...configuredSettings, concurrency: 2 }, fetch);
+    expect(result.ok).toBe(false);
+    expect(result.blockIndex).toBe(0);
+    expect(result.error.message).toBe("slow failure");
   });
 });
 
@@ -1068,7 +1212,7 @@ describe("prepareLLMRun — multi-context", () => {
     const ok = prepareLLMRun(text, item, { maxContextChars: 10_000 });
     expect(ok.ok).toBe(true);
     const userContent = ok.tasks[0].messages[1].content;
-    const combinedContext = userContent.split("\n\nContext:\n")[1];
+    const combinedContext = userContent.slice("Context:\n".length).split("\n\nTask:\n")[0];
     const ctxLen = combinedContext.length;
 
     // One char under the combined length should fail; at the length should pass.
@@ -1097,9 +1241,10 @@ describe("prepareLLMRun — multi-context", () => {
     expect(contextHeadings).toHaveLength(2);
     expect(contextHeadings[0]).toBe("## Context: abstract");
     expect(contextHeadings[1]).toBe("## Context: annotations");
-    // Overall shape
-    expect(userContent).toContain("Task:\nTask body\n\nContext:\n## Context: abstract");
+    // Overall shape — context first, task last
+    expect(userContent).toContain("Context:\n## Context: abstract");
     expect(userContent).toContain("\n\n## Context: annotations");
+    expect(userContent).toMatch(/\n\nTask:\nTask body$/);
   });
 
   it("e. contextLabel is the joined context kinds", () => {
@@ -1136,7 +1281,7 @@ describe("prepareLLMRun — single-context labeled format", () => {
     const userContent = result.tasks[0].messages[1].content;
     expect(userContent).toContain("## Context: abstract");
     expect(userContent).toContain(item.abstractNote);
-    expect(userContent).toMatch(/^Task:\n/);
+    expect(userContent).toMatch(/^Context:\n/);
   });
 
   it("single-context 'annotations' now produces a ## Context: annotations label", () => {

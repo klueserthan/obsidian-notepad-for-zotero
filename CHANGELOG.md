@@ -25,6 +25,14 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Parallel Run-LLM requests (`llmConcurrency` pref).** A new "Parallel
+  requests" preference (1–8, default 1) lets Run LLM execute several block
+  requests at once against hosted OpenAI-compatible APIs, through a bounded
+  worker pool in the pure runner. Outputs always land back in document order,
+  and the all-or-nothing contract is unchanged: the first failure stops new
+  requests, in-flight ones are awaited and discarded, and the failure is
+  reported deterministically. The default of 1 keeps the local-Ollama
+  behaviour exactly as before.
 - **Paper-type LLM starter templates.** Four new whole-note starters ship and
   auto-seed to the templates folder: `note-quantitative`, `note-qualitative`,
   `note-theoretical`, and `note-review` (literature reviews/meta-analyses). Each
@@ -112,6 +120,18 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
+- **Cache-friendly LLM prompts: context first, task last.** The per-block user
+  message is now `Context:\n<context>\n\nTask:\n<task>` (was task-first), so
+  blocks sharing a context spec send byte-identical request prefixes — the
+  system prompt and the full resolved context — with only the short task text
+  varying at the end. Providers with automatic prompt/prefix caching (OpenAI
+  and compatible) then process a large PDF full text once per run instead of
+  once per block; templates with 6–8 fulltext blocks stop re-uploading the
+  whole text into freshly-processed tokens each time. The shared context is
+  also resolved once per unique context spec instead of per block, and the
+  Run-LLM status now shows completed blocks ("2/6 done") rather than the
+  block being started. The Composer now drives the run through the pure,
+  unit-tested `executeLLMBlocks` runner instead of an inline copy of the loop.
 - **Starter templates are Obsidian-free.** The built-in templates no longer
   carry YAML frontmatter (wikilinked authors/topics/journal, `citekey`, tag
   lists), `[[wikilinks]]`, or `> [!abstract]`/`> [!warning]` Obsidian callouts
@@ -203,6 +223,12 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   and the image-annotation-folder pref survived this sweep but were removed in
   a later cleanup — see the entry above). `package.json`'s description now
   matches the new plugin, and the project restarts its version at `0.1.0`.
+
+### Fixed
+- `executeLLMBlocks` (the pure runner) now honours the configured
+  `maxContextChars` limit — it previously ran its pre-flight with the default
+  limit regardless of the setting. Harmless so far only because the Composer
+  didn't use it; it does now.
 
 ## [1.0.0-beta.19] — 2026-07-02
 
