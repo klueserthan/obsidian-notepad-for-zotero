@@ -445,10 +445,23 @@ var ZON = {
     "menu.title": "Obsidian Notepad",
     "menu.findDOI": "Find DOI (Crossref)",
     "menu.findDOIN": "Find DOIs for {count} items (Crossref)",
-    "menu.generateSummary": "Generate summary note",
-    "menu.generateSummaryN": "Generate {count} summary notes",
+    "menu.generateSummary": "Generate summary note…",
+    "menu.generateSummaryN": "Generate {count} summary notes…",
     "summary.generatingTitle": "Generating summary notes…",
     "summary.createdSummary": "Summary notes — created {created}, failed {failed}.",
+    // Bulk AI summary generation (right-click on a multi-item selection).
+    "bulk.dialogTitle": "Generate summary notes for {count} paper(s)",
+    "bulk.templateLabel": "Template",
+    "bulk.policySkip": "Skip papers that already have a Summary Note (default)",
+    "bulk.policyAdditional": "Create an additional Summary Note for every paper",
+    "bulk.policyOverwrite": "Overwrite the newest Summary Note (replaces its entire content — hand edits in Better Notes will be lost)",
+    "bulk.llmHeadsUp": "Runs the LLM — up to {n} model calls.",
+    "bulk.llmNotConfigured": "This template uses the LLM interpreter, which is not configured. Set base URL and model in preferences.",
+    "bulk.generate": "Generate",
+    "bulk.cancel": "Cancel",
+    "bulk.progress": "Summarizing {i}/{n}…",
+    "bulk.done": "created {created}, overwritten {overwritten}, skipped {skipped}, failed {failed}",
+    "bulk.failureLine": "{title}: {reason}",
     // Composer pane (item-pane section): template picker + live preview + Generate.
     "composer.title": "Composer",
     "btn.generate": "Generate",
@@ -2145,17 +2158,292 @@ var ZON = {
     return noteItem;
   },
 
-  // Context-menu action: generate a Summary Note for each selected regular item.
+  // Standalone render→gate→resolve helper shared by the bulk generator. Renders
+  // `templateName` for `item` in preview mode, builds compose gate state, and —
+  // only if the template actually contains {% llm %} blocks — gathers
+  // annotations/fulltext context and runs them through the SAME BYOK runner
+  // composerRunLLM uses (ADR-0001: never write a note with an unresolved block).
+  // Returns:
+  //   { ok:true,  md }      — plain rendered md (no blocks) or the resolved
+  //                           static md (blocks all ran ok)
+  //   { ok:false, failure } — a human-readable, metadata-only reason (from
+  //                           describeLLMFailure); NEVER writes a note.
+  // No rec, no pane — purely functional over (win, item, templateName).
+  async resolveSummaryMdForItem(win, item, templateName) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let name = templateName || this.defaultNoteTemplate();
+
+    let md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+    let state = C.reconcileComposeState(null, md, { itemKey: item.key, templateName: name });
+
+    if (!state || !C.composeHasLLMBlocks(state)) {
+      return { ok: true, md };
+    }
+
+    // Guard: runner + gating exports present (graceful if an old bundle is cached).
+    if (!C.executeLLMBlocks || !C.applyLLMOutputs) {
+      return { ok: false, failure: this.t("err.llmCoreMissing") };
+    }
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    if (!C.isLLMConfigured(settings)) {
+      return { ok: false, failure: this.t("err.llmNotConfigured") };
+    }
+
+    // Gather PDF annotations so context="annotations" blocks can resolve.
+    let annotations = [];
+    try { annotations = this.gatherAnnotations(item, win); }
+    catch (e) { this.log("gatherAnnotations (bulk) failed: " + e); }
+
+    // Fetch full text only when a block asks for it (avoids needless I/O).
+    // LOGGING CONTRACT: never pass fulltext.text to this.log()/Zotero.debug —
+    // metadata (title, char count, missing reason) only.
+    let needFulltext = false;
+    try { needFulltext = state.blocks.some((b) => b.contexts && b.contexts.includes("fulltext")); }
+    catch (e) {}
+    let fulltext = null;
+    if (needFulltext) {
+      fulltext = await this.getPrimaryPDFFulltext(item, C);
+      if (fulltext && fulltext.ok) {
+        this.log("fulltext context (bulk): " + (fulltext.attachmentTitle || "(untitled)") + " (" + fulltext.text.length + " chars)");
+      } else if (fulltext) {
+        this.log("fulltext context missing (bulk): " + fulltext.reason);
+      }
+    }
+
+    // Build item data with parity to renderDocument so prompts can use any field.
+    let citekey = this.getCitekey(item);
+    let bibliography = await this.getBibliography(item);
+    let data = {};
+    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
+    catch (e) { this.log("buildItemData (bulk) failed: " + e); }
+
+    let fetchFn = async (url, headers, payload, timeoutSeconds) => {
+      let resp = await Zotero.HTTP.request("POST", url, {
+        headers, body: JSON.stringify(payload), responseType: "text",
+        timeout: timeoutSeconds * 1000,
+      });
+      return resp.responseText;
+    };
+    let result = await C.executeLLMBlocks(md, data, settings, fetchFn);
+
+    if (!result.ok) {
+      return { ok: false, failure: this.describeLLMFailure(result) };
+    }
+    // executeLLMBlocks already applied the outputs — result.md is the resolved
+    // static markdown, so there is nothing to substitute here.
+    return { ok: true, md: result.md };
+  },
+
+  // Bulk config dialog: an in-window modal overlay (plain DOM, no iframe —
+  // unlike openTemplateBuilder there's no editor needed here) gathering the
+  // inputs generateSummaryNotes needs: which template, what to do with items
+  // that already have a Summary Note, and a go/no-go on whether the LLM is
+  // configured for templates that need it. Resolves { templateName, policy }
+  // on Generate, or null on Cancel/backdrop/Esc.
+  async openBulkDialog(win, count, opts = {}) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let NS = "http://www.w3.org/1999/xhtml";
+    let h = (tag, cls) => {
+      let el = win.document.createElementNS(NS, tag);
+      if (cls) el.className = cls;
+      return el;
+    };
+    let dark = this.isDarkTheme(win);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let settle = (value) => {
+        if (settled) return;
+        settled = true;
+        try { overlay.remove(); } catch (e) {}
+        try { win.removeEventListener("keydown", onKeydown, true); } catch (e) {}
+        resolve(value);
+      };
+
+      let overlay = h("div");
+      overlay.id = "zon-bulk-overlay";
+      overlay.setAttribute("style",
+        "position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;"
+        + "justify-content:center;background:rgba(0,0,0,0.45);");
+      let panel = h("div");
+      panel.setAttribute("style",
+        "width:420px;max-width:92%;border-radius:10px;padding:18px 20px;"
+        + "box-shadow:0 10px 40px rgba(0,0,0,0.5);font-size:13px;line-height:1.45;"
+        + "background:" + (dark ? "#1e1e1e" : "#ffffff") + ";"
+        + "color:" + (dark ? "#e6e6e6" : "#1a1a1a") + ";");
+
+      let title = h("h2");
+      title.textContent = this.t("bulk.dialogTitle", { count });
+      title.setAttribute("style", "margin:0 0 12px;font-size:15px;");
+
+      // Template picker
+      let templateLabel = h("label");
+      templateLabel.textContent = this.t("bulk.templateLabel");
+      templateLabel.setAttribute("style", "display:block;font-weight:600;margin-bottom:4px;");
+      let templateSel = h("select");
+      templateSel.setAttribute("style", "width:100%;margin-bottom:14px;padding:4px;");
+      let names = this.orderedTemplateNames(win);
+      let preselect = (opts && opts.templateName && names.includes(opts.templateName))
+        ? opts.templateName : (names[0] || "");
+      names.forEach((n) => { let o = h("option"); o.value = n; o.textContent = n; templateSel.appendChild(o); });
+      templateSel.value = preselect;
+
+      // Existing-note policy radios
+      let policyWrap = h("div");
+      policyWrap.setAttribute("style", "margin-bottom:12px;");
+      let mkRadio = (value, labelText, checked) => {
+        let row = h("label");
+        row.setAttribute("style", "display:block;margin-bottom:4px;cursor:pointer;");
+        let input = h("input");
+        input.type = "radio"; input.name = "zon-bulk-policy"; input.value = value;
+        input.checked = !!checked;
+        row.append(input, win.document.createTextNode(" " + labelText));
+        return { row, input };
+      };
+      let skipR = mkRadio("skip", this.t("bulk.policySkip"), true);
+      let addR = mkRadio("additional", this.t("bulk.policyAdditional"), false);
+      let overR = mkRadio("overwrite", this.t("bulk.policyOverwrite"), false);
+      policyWrap.append(skipR.row, addR.row, overR.row);
+
+      // Live heads-up line (LLM call count / not-configured warning)
+      let headsUp = h("div");
+      headsUp.setAttribute("style", "font-size:12px;margin-bottom:14px;min-height:16px;");
+
+      // Buttons
+      let btnRow = h("div");
+      btnRow.setAttribute("style", "display:flex;justify-content:flex-end;gap:8px;");
+      let cancelBtn = h("button");
+      cancelBtn.textContent = this.t("bulk.cancel");
+      let generateBtn = h("button");
+      generateBtn.textContent = this.t("bulk.generate");
+      generateBtn.setAttribute("style", "font-weight:600;");
+      btnRow.append(cancelBtn, generateBtn);
+
+      panel.append(title, templateLabel, templateSel, policyWrap, headsUp, btnRow);
+      overlay.appendChild(panel);
+
+      // Heads-up + Generate-disable refresh: render the currently-selected
+      // template in preview mode and regex-check for {% llm %} — kept simple
+      // and non-blocking; a failed/slow render just leaves the heads-up blank
+      // rather than blocking the dialog. The authoritative per-item gate still
+      // happens in resolveSummaryMdForItem during the actual run.
+      let refreshHeadsUp = async () => {
+        let name = templateSel.value;
+        headsUp.textContent = "";
+        generateBtn.disabled = false;
+        let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+        let configured = C.isLLMConfigured(settings);
+        try {
+          let item0 = (this.selectedRegularItems(win) || [])[0];
+          let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
+          let hasLLM = /\{%\s*llm\b/.test(String(md || ""));
+          if (hasLLM) {
+            if (!configured) {
+              headsUp.textContent = this.t("bulk.llmNotConfigured");
+              headsUp.style.color = "var(--accent-red,#c0392b)";
+              generateBtn.disabled = true;
+            } else {
+              headsUp.textContent = this.t("bulk.llmHeadsUp", { n: count });
+              headsUp.style.color = "";
+            }
+          }
+        } catch (e) { this.log("bulk dialog heads-up render failed: " + e); }
+      };
+      templateSel.addEventListener("change", () => { refreshHeadsUp(); });
+      refreshHeadsUp();
+
+      cancelBtn.addEventListener("click", () => settle(null));
+      generateBtn.addEventListener("click", () => {
+        if (generateBtn.disabled) return;
+        let policy = skipR.input.checked ? "skip" : addR.input.checked ? "additional" : "overwrite";
+        settle({ templateName: templateSel.value, policy });
+      });
+      overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) settle(null); });
+      let onKeydown = (e) => { if (e.key === "Escape") settle(null); };
+      win.addEventListener("keydown", onKeydown, true);
+
+      win.document.documentElement.appendChild(overlay);
+    });
+  },
+
+  // Context-menu action: bulk AI summary generation across the current
+  // multi-item selection. Opens a config dialog (template + existing-note
+  // policy + LLM heads-up), plans each item's action via the pure
+  // win.ZONCore.planBulk, then runs sequentially: skip / render+resolve+create /
+  // render+resolve+overwrite. Continue-and-report (locked decision): a per-item
+  // failure — including an LLM run failure, per ADR-0001 — records {title,
+  // reason} and moves on; it NEVER writes a note with an unresolved {% llm %}
+  // block or a partial body. Cross-item work stays sequential; the existing
+  // intra-item llmConcurrency pref still parallelises block requests within a
+  // single item's run.
   async generateSummaryNotes(win) {
     let items = this.selectedRegularItems(win);
     if (!items.length) return;
+    if (!win.ZONCore) await this.injectCore(win);
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    let C = win.ZONCore;
+
+    let config = await this.openBulkDialog(win, items.length, { templateName: this.defaultNoteTemplate() });
+    if (!config) return;
+
+    // Pre-flight guard (defense in depth — the dialog already disables Generate
+    // in this case): never silently degrade to placeholder notes.
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    try {
+      let probe = await this.renderTemplateAsNote(win, items[0], config.templateName, { preview: true });
+      let needsLLM = /\{%\s*llm\b/.test(String(probe || ""));
+      if (needsLLM && !C.isLLMConfigured(settings)) {
+        this.popup(win, this.t("menu.title"), this.t("bulk.llmNotConfigured"));
+        return;
+      }
+    } catch (e) { this.log("generateSummaryNotes pre-flight probe failed: " + e); }
+
+    let descriptors = items.map((item) => ({
+      key: item.key,
+      hasExistingNote: this.existingSummaryNotes(item).length > 0,
+    }));
+    let plan = C.planBulk(descriptors, config.policy);
+    let planByKey = new Map(plan.map((p) => [p.key, p.action]));
+
     let pw = this.progress(win, this.t("summary.generatingTitle"));
-    let created = 0, failed = 0;
-    for (let item of items) {
-      try { await this.generateSummaryNote(win, item); created++; }
-      catch (e) { failed++; this.log("generateSummaryNote failed for " + (this.getCitekey(item) || item.key) + ": " + e); }
+    let created = 0, overwritten = 0, skipped = 0, failed = 0;
+    let failures = [];
+
+    for (let i = 0; i < items.length; i++) {
+      let item = items[i];
+      let action = planByKey.get(item.key) || "skip";
+      try { if (pw && pw.changeHeadline) pw.changeHeadline(this.t("bulk.progress", { i: i + 1, n: items.length })); } catch (e) {}
+
+      if (action === "skip") { skipped++; continue; }
+
+      try {
+        let r = await this.resolveSummaryMdForItem(win, item, config.templateName);
+        if (!r.ok) {
+          failed++;
+          failures.push({ title: item.getField("title") || "", reason: r.failure });
+          continue;
+        }
+        if (action === "overwrite") {
+          let target = this.newestNote(this.existingSummaryNotes(item));
+          await this.overwriteSummaryNote(win, item, target, config.templateName, { md: r.md });
+          overwritten++;
+        } else {
+          await this.generateSummaryNote(win, item, config.templateName, { md: r.md });
+          created++;
+        }
+      } catch (e) {
+        failed++;
+        failures.push({ title: item.getField("title") || "", reason: (e && e.message) ? e.message : String(e) });
+        this.log("generateSummaryNotes failed for " + (this.getCitekey(item) || item.key) + ": " + e);
+      }
     }
-    this.finishProgress(pw, this.t("summary.createdSummary", { created, failed }));
+
+    this.finishProgress(pw, C.summarizeBulkResults({ created, overwritten, skipped, failed }));
+    if (failures.length) {
+      this.log("bulk summary failures:\n" + C.formatBulkFailures(failures));
+    }
   },
 
   // ----------------------------------------------------------- Crossref DOI lookup
