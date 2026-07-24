@@ -455,7 +455,7 @@ var ZON = {
     "bulk.policySkip": "Skip papers that already have a Summary Note (default)",
     "bulk.policyAdditional": "Create an additional Summary Note for every paper",
     "bulk.policyOverwrite": "Overwrite the newest Summary Note (replaces its entire content — hand edits in Better Notes will be lost)",
-    "bulk.llmHeadsUp": "Runs the LLM — up to {n} model calls.",
+    "bulk.llmHeadsUp": "Runs the LLM for up to {n} papers.",
     "bulk.llmNotConfigured": "This template uses the LLM interpreter, which is not configured. Set base URL and model in preferences.",
     "bulk.generate": "Generate",
     "bulk.cancel": "Cancel",
@@ -2329,7 +2329,12 @@ var ZON = {
       // and non-blocking; a failed/slow render just leaves the heads-up blank
       // rather than blocking the dialog. The authoritative per-item gate still
       // happens in resolveSummaryMdForItem during the actual run.
+      // Sequence-guarded (like refreshPreview's previewSeq): rapid template
+      // changes can leave an earlier, slower render in flight, so only the
+      // latest call is allowed to mutate the heads-up / disabled state.
+      let headsUpSeq = 0;
       let refreshHeadsUp = async () => {
+        let seq = ++headsUpSeq;
         let name = templateSel.value;
         headsUp.textContent = "";
         generateBtn.disabled = false;
@@ -2338,6 +2343,7 @@ var ZON = {
         try {
           let item0 = (this.selectedRegularItems(win) || [])[0];
           let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
+          if (seq !== headsUpSeq) return; // a newer refresh superseded this one
           let hasLLM = /\{%\s*llm\b/.test(String(md || ""));
           if (hasLLM) {
             if (!configured) {
@@ -2435,14 +2441,22 @@ var ZON = {
         }
       } catch (e) {
         failed++;
-        failures.push({ title: item.getField("title") || "", reason: (e && e.message) ? e.message : String(e) });
-        this.log("generateSummaryNotes failed for " + (this.getCitekey(item) || item.key) + ": " + e);
+        // Sanitize like the Composer's Run-LLM path — a caught error may carry
+        // request/response detail; the bulk failure report is metadata-only.
+        let reason = C.sanitizeError ? C.sanitizeError(e) : ((e && e.message) ? e.message : String(e));
+        failures.push({ title: item.getField("title") || "", reason });
+        this.log("generateSummaryNotes failed for " + (this.getCitekey(item) || item.key) + ": " + reason);
       }
     }
 
-    this.finishProgress(pw, C.summarizeBulkResults({ created, overwritten, skipped, failed }));
+    // User-facing text goes through the central STRINGS table (this.t), same as
+    // the rest of the file — no hard-coded English in the pipeline.
+    this.finishProgress(pw, this.t("bulk.done", { created, overwritten, skipped, failed }));
     if (failures.length) {
-      this.log("bulk summary failures:\n" + C.formatBulkFailures(failures));
+      let lines = failures
+        .map((f) => this.t("bulk.failureLine", { title: f.title || "(untitled)", reason: f.reason }))
+        .join("\n");
+      this.log("bulk summary failures:\n" + lines);
     }
   },
 
