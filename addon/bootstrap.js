@@ -124,7 +124,8 @@ var ZON = {
     "snapshot": `%%! sync=off %%
 - [p.{{page}}]({{link}}) "{{text}}"{% if comment %} — *{{comment}}*{% endif %}
 `,
-    "research-questions": `## Research Questions
+    "research-questions": `%%! kind=section sync=on %%
+## Research Questions
 
 {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
 `,
@@ -617,6 +618,11 @@ var ZON = {
   // wrapped in a zon block on insert).
   templateKindOf(text) {
     let t = String(text || "");
+    // A leading `%%! ... %%` directive marks a template as a block explicitly,
+    // overriding content sniffing — lets a template that would otherwise sniff
+    // as "document" (e.g. it contains an {% llm %} block) declare itself a
+    // reusable building block instead (see the research-questions builtin).
+    if (/^\s*%%!\s*[^%]*?\s*%%\s*(\r?\n|$)/.test(t)) return "format";
     if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return "document";
     if (/%%\s*zon\b/.test(t)) return "document";
     if (/\{%\s*llm\b/.test(t)) return "document";   // mirrors hasLLMBlocks
@@ -707,28 +713,37 @@ var ZON = {
     return out;
   },
 
-  // Order the template names with the default note scaffold first, then the rest
-  // alphabetically — so the Create picker / dropdown opens on the user's default.
+  // Order the NOTE-TYPE (document-kind only) template names with the default
+  // note scaffold first, then the rest alphabetically — so the Composer picker
+  // opens on the user's default. Format-kind building blocks (per-annotation /
+  // field bodies) are deliberately excluded: they're not something you generate
+  // a whole note from, they're referenced by name from inside a note template
+  // via `format=` markers / `highlights(...)`, and remain reachable through the
+  // Template Builder's block configurator.
   orderedTemplateNames(win) {
-    let names = Object.keys(this.allTemplates(win));
-    if (!names.length) names = ["list", "quote", "callout", "compact"];
+    let all = this.allTemplates(win);
+    let names = Object.keys(all).filter((k) => all[k].kind === "document");
+    if (!names.length) names = ["note"];
     let def = this.defaultNoteTemplate();
     names.sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b)));
     return names;
   },
 
-  // Window-INDEPENDENT template-name list for the Settings "Default note template"
-  // dropdown. The prefs-pane script scope can't reliably enumerate the folder
-  // (IOUtils/PathUtils aren't dependable globals there — same class of issue as
-  // Services), so it asks the plugin instead: this reads `_templates` (already
-  // loaded in the privileged main-window scope) plus the static built-in formats.
+  // Window-INDEPENDENT NOTE-TYPE (document-kind only) name list for the Settings
+  // "Default note template" dropdown. The prefs-pane script scope can't reliably
+  // enumerate the folder (IOUtils/PathUtils aren't dependable globals there —
+  // same class of issue as Services), so it asks the plugin instead: this reads
+  // `_templates` (already loaded in the privileged main-window scope), filtered
+  // to whole-note scaffolds — format-kind building blocks are excluded, same as
+  // the Composer picker (orderedTemplateNames).
   prefsTemplateNames() {
-    let names = new Set(["note", "list", "quote", "callout", "compact"]);
+    let names = new Set(["note"]);
     for (let k of Object.keys(this._templates || {})) {
-      if (!/^(templates|readme)$/i.test(k)) names.add(k);
+      if (/^(templates|readme)$/i.test(k)) continue;
+      if (this._templates[k].kind === "document") names.add(k);
     }
     let def = this.defaultNoteTemplate();
-    if (def) names.add(def);
+    if (def && (!this._templates || !this._templates[def] || this._templates[def].kind === "document")) names.add(def);
     return [...names].sort();
   },
 

@@ -120,6 +120,20 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
+- **Composer note-type picker lists whole-note templates only.** The Composer's
+  template dropdown and Settings → *Default note template* used to list every
+  template — whole-note scaffolds (`note`, `note-*`, …) mixed in with
+  per-annotation/field building blocks (`abstract`, `critique`, `key-quote`,
+  `highlight`, `snapshot`, and the core `list`/`quote`/`callout`/`compact`
+  formats). Both pickers now show only whole-note scaffolds; building blocks
+  are unchanged and still reachable via `highlights(...)`, a `%% zon …
+  format=<name> %%` marker, and the Template Builder's block configurator. The
+  built-in `research-questions` template — a reusable "Research Questions"
+  section, not a note type — now carries a `%%! kind=section sync=on %%`
+  directive so it classifies as a block instead of a document (a template's
+  first-line `%%!` directive can force block classification even when its
+  content, e.g. an `{% llm %}` block, would otherwise sniff as a whole-note
+  scaffold — see `docs/TEMPLATES.md`).
 - **Cache-friendly LLM prompts: context first, task last.** The per-block user
   message is now `Context:\n<context>\n\nTask:\n<task>` (was task-first), so
   blocks sharing a context spec send byte-identical request prefixes — the

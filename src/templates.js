@@ -51,6 +51,11 @@ export function parseTemplateFile(text) {
 //     once PER highlight; Insert wraps it in a zon block automatically.
 export function templateKind(text) {
   const t = String(text || "");
+  // A leading `%%! ... %%` directive marks a template as a block explicitly,
+  // overriding content sniffing — lets a template that would otherwise sniff as
+  // "document" (e.g. it contains an {% llm %} block) declare itself a reusable
+  // building block instead (see the research-questions builtin).
+  if (DIRECTIVE_RE.test(t.split("\n")[0])) return "format";
   if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return "document";
   if (/%%\s*zon\b/.test(t)) return "document";
   if (hasLLMBlocks(t)) return "document";   // NEW — templates with LLM blocks are once-per-item

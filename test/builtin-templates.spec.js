@@ -61,13 +61,18 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     expect(templateKind(builtins["note"])).toBe("document");
     expect(templateKind(builtins["note-minimal"])).toBe("document");
     expect(templateKind(builtins["note-by-colour"])).toBe("document");
-    expect(templateKind(builtins["research-questions"])).toBe("document");
     for (const n of ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"]) {
       expect(templateKind(builtins[n])).toBe("document");
     }
-    for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot"]) {
+    for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot", "research-questions"]) {
       expect(templateKind(builtins[n])).toBe("format");
     }
+  });
+
+  it("a leading %%! directive forces format kind even over LLM/zon/frontmatter content", () => {
+    expect(templateKind(builtins["research-questions"])).toBe("format");
+    expect(templateKind("%%! kind=section %%\n---\nfoo: bar\n---\ntext")).toBe("format");
+    expect(templateKind("%%! kind=section %%\n%% zon kind=annotations %%\n%% /zon %%")).toBe("format");
   });
 
   it("the paper-type LLM templates carry an LLM block and the annotations block", () => {
@@ -77,9 +82,10 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     }
   });
 
-  it("research-questions ships the exact heading, context, and prompt", () => {
+  it("research-questions ships the exact directive, heading, context, and prompt", () => {
     expect(builtins["research-questions"]).toBe(
-      `## Research Questions
+      `%%! kind=section sync=on %%
+## Research Questions
 
 {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
 `

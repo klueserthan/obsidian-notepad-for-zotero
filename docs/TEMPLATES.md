@@ -2,22 +2,34 @@
 
 This is the reference for writing a **template** — the thing the Composer's
 template picker renders into a Summary Note. There are two kinds of file in
-your Templates folder, distinguished only by name:
+your Templates folder, distinguished by content (the naming convention below
+is just a mnemonic for the same split — see "How a template's kind is
+decided"):
 
 - **`note.md`** (and any **`note-*.md`**) — *whole-note scaffolds*. What the
   Composer renders by default (and what "Create note from template" used to
   call the same thing). Renders frontmatter, the citation, the abstract, and
   whatever sections you define. You can keep several (`note.md`, `note-book.md`,
   `note-minimal.md`, …); the **default** is set in
-  Settings → Paper Summarizer → *Default note template* (any template, not just
-  `note-*` — including a per-annotation/field template, in which case the
-  generated note is just that block), and the Composer's picker lets you choose
-  a different one per generate.
+  Settings → Paper Summarizer → *Default note template*, and the Composer's
+  picker lets you choose a different one per generate. Both dropdowns list
+  whole-note scaffolds only.
 - **Every other file** (`highlight.md`, `key-quote.md`, …) — a *block
-  template*: a per-annotation body. Selecting one directly in the Composer
-  generates a Summary Note that's just a filled annotations block; used inside
-  a `note.md` via `highlights(...)` (below), it routes a subset of highlights
-  into a section.
+  template*: a per-annotation or per-item-field body. It isn't a note type you
+  generate directly — it's used **inside** a whole-note template, either via a
+  `highlights(...)` call (below) that routes a subset of highlights into a
+  section, or via a `%% zon … format=<name> %%` marker inserted from the
+  Template Builder's block configurator.
+
+**How a template's kind is decided:** the plugin sniffs the template's
+content — YAML frontmatter, a `%% zon %%` block, an `{% llm %}` block, or a
+`highlights(...)` call all mark it a whole-note scaffold; anything else is a
+block. A leading `%%! … %%` directive (below) overrides this and forces the
+template to be treated as a block, even if its content would otherwise sniff
+as a whole-note scaffold — this is how the shipped `research-questions`
+template (a reusable "Research Questions" section built on an `{% llm %}`
+block) stays out of the note-type pickers while remaining available as a
+block.
 
 **Where the folder lives:** by default the plugin manages its own folder —
 `paper-summarizer/templates` under your Zotero data directory. It is created on
@@ -138,6 +150,11 @@ A block template *may* begin with one special line that pins its defaults:
 - `%%! … %%` is read by the plugin and **stripped** before rendering — it
   never appears in a Summary Note. (The `!` marks it as a directive, distinct
   from a `%% zon %%` block marker.)
+- A template that starts with `%%! … %%` is always classified as a **block**
+  template, regardless of what else its body contains — this overrides the
+  content sniffing above. Use this to write a reusable block whose body would
+  otherwise be mistaken for a whole-note scaffold (e.g. it contains an
+  `{% llm %}` block).
 - Keys:
   - **`colour`** — pin this template to one annotation colour (`yellow`, `red`,
     `green`, `blue`, `purple`, `magenta`, `orange`, `grey`, or `all`).
@@ -300,7 +317,10 @@ normal rendering.
   Interpreter (base URL + model).
 - A template containing an `{% llm %}` block is treated as a
   **once-per-item** (document) template — it is never rendered once per
-  annotation, even if it lives in a file named like a block template.
+  annotation, even if it lives in a file named like a block template. A
+  leading `%%! … %%` directive overrides this and keeps it a block (see
+  above) — this is how the shipped `research-questions` template stays a
+  reusable block despite its `{% llm %}` content.
 - The provider is OpenAI-compatible Chat Completions. Point it at any
   compatible endpoint — local Ollama (default,
   `http://localhost:11434/v1`), OpenAI, LM Studio, etc. The model name and

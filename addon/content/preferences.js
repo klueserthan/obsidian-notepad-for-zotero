@@ -107,13 +107,13 @@
     }
     if (sel._zonPopulated) return;
     const cur = (Zotero.Prefs.get(PREFIX + "defaultNoteTemplate", true) || "note");
-    // The default note template can be ANY template — a whole-note scaffold OR a
-    // per-annotation/field template (creating from one yields a note that's just
-    // that block; it links by its @<citekey>.md filename and its blocks still sync).
-    // Offer the built-in formats plus every file in the Templates folder, minus the
-    // reserved docs files.
+    // The default note template is a whole-note scaffold — building blocks
+    // (per-annotation/field templates) are excluded from this picker, same as
+    // the Composer's. `cur` is always kept so a pre-existing pref value (from
+    // before this restriction, or set some other way) never vanishes from the
+    // control.
     const RESERVED = new Set(["templates", "readme"]);
-    const names = new Set(["note", "list", "quote", "callout", "compact", cur]);
+    const names = new Set(["note", cur]);
     // Primary: ask the plugin (it loaded the folder in the main-window scope where
     // IOUtils works). This avoids the prefs-scope IO race that left the dropdown
     // stuck on built-ins-only until a Zotero restart.
