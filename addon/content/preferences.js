@@ -126,14 +126,32 @@
         gotFolder = true;
       }
     } catch (e) {}
-    // Fallback: enumerate the folder directly (older path; only if IO is available).
+    // Fallback: enumerate the folder directly (older path; only if IO is
+    // available) and classify each file the same way ZON.templateKindOf /
+    // src/templates.js templateKind do — document-kind only, with a leading
+    // `%%! ... %%` directive forcing "format". This is a THIRD mirror of that
+    // classification (bootstrap.js already mirrors src/templates.js); keep all
+    // three in sync if the rule changes.
+    const isDocumentKind = (text) => {
+      const t = String(text || "");
+      if (/^\s*%%!\s*[^%]*?\s*%%\s*(\r?\n|$)/.test(t)) return false;
+      if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return true;
+      if (/%%\s*zon\b/.test(t)) return true;
+      if (/\{%\s*llm\b/.test(t)) return true;
+      if (/\{\{\s*highlights\s*\(/.test(t)) return true;
+      return false;
+    };
     if (!gotFolder) {
       try {
         const dir = Zotero.Prefs.get(PREFIX + "templatesDir", true) || "";
         if (dir && _io && _pu) {
           for (const p of await _io.getChildren(dir)) {
             const m = _pu.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
-            if (m && !RESERVED.has(m[1].toLowerCase())) names.add(m[1]);
+            if (!m || RESERVED.has(m[1].toLowerCase())) continue;
+            try {
+              const text = await _io.readUTF8(p);
+              if (isDocumentKind(text)) names.add(m[1]);
+            } catch (e) {}
           }
           gotFolder = true;
         }
