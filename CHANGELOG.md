@@ -25,6 +25,21 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Bulk AI summary generation across a multi-item selection.** The existing
+  right-click *"Generate N summary notes…"* action now runs the full LLM
+  pipeline instead of the old no-LLM default-template render: pick multiple
+  papers, choose a template, an existing-note policy (skip already-summarized
+  — default — / create additional / overwrite newest), and get a heads-up when
+  the template will call the LLM (and a hard stop if it's not configured). Each
+  paper is resolved and written sequentially (continue-and-report: a per-paper
+  failure — bad context, HTTP error, empty response — is recorded and the batch
+  keeps going; a failed paper never gets a note with an unresolved `{% llm %}`
+  block, per ADR-0001) and the run ends with a created/overwritten/skipped/
+  failed summary. A new pure module `src/bulk.js` (`planBulk`,
+  `summarizeBulkResults`, `formatBulkFailures`) is re-exported through the core
+  bundle and unit-tested; a new `resolveSummaryMdForItem` helper in
+  `bootstrap.js` factors the render→gate→resolve sequence the Composer's Run
+  LLM already used, shared by both paths.
 - **Parallel Run-LLM requests (`llmConcurrency` pref).** A new "Parallel
   requests" preference (1–8, default 1) lets Run LLM execute several block
   requests at once against hosted OpenAI-compatible APIs, through a bounded

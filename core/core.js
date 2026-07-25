@@ -26,3 +26,4 @@ export { SUPPORTED_CONTEXTS, parseLLMContext, hasLLMBlocks, parseLLMBlocks, vali
 export { resolvePrimaryPDFFulltext, renderFulltextContext } from "../src/fulltext.js";
 export { GROUNDING_SYSTEM_PROMPT, RUNNABLE_CONTEXTS, LLM_RUN_ERRORS, buildLLMMessages, normalizeLLMOutput, classifyLLMOutput, prepareLLMRun, applyLLMOutputs, decideLLMAction, executeLLMBlocks } from "../src/llm-runner.js";
 export { summaryNoteStaleness } from "../src/staleness.js";
+export { planBulk } from "../src/bulk.js";
