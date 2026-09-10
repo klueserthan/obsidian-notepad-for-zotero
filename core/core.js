@@ -7,7 +7,7 @@ export { buildItemData, filenameFields, zoteroSelectURI, ensureZoteroLink } from
 export { renderAnnotationsSection, renderAnnotationsContext, mapZoteroAnnotation } from "../src/annotations.js";
 export { syncBlocks, makeBlock, parseBlocks } from "../src/blocks.js";
 export { DEFAULT_FORMATS, FIELD_FORMATS } from "../src/formats.js";
-export { parseTemplateFile, templateKind, templateUserOwnedKeys } from "../src/templates.js";
+export { parseTemplateFile, templateKind, templateUserOwnedKeys, frontmatterFieldValue, paperTypeDeclaration, paperTypeCandidates } from "../src/templates.js";
 export { previewTemplate, cleanPreview, stripForPreview, paletteContextAt, BLOCK_VARIABLES, ITEM_VARIABLES, FRONTMATTER_FIELDS, FIELD_BLOCKS, ANNOTATION_BLOCKS, STARTER_NOTE, STARTER_FORMAT, SAMPLE_ITEM, SAMPLE_ANNOTATIONS, blockConfigAt, annotationMarkerOpen, annotationBlockText, BLOCK_COLOURS, BLOCK_TYPES, BLOCK_STYLES, BLOCK_PARTS, NAMED_FORMATS, FRONTMATTER_VALUES, frontmatterFieldText, frontmatterFieldKeys, addFrontmatterField, removeFrontmatterField, FIELD_VARS, fieldBlockVarText, colourRouteText, UPDATABLE_FIELDS, fieldBlockMarkerOpen, fieldBlockTextFor, fieldOptionId } from "../src/builder.js";
 export { parseManifest, hasManifest, applyManifest, setManifestEntry, removeManifestEntry, buildManifestFromScaffold, writeManifest, MANIFEST_KEY, getTagField, setTagField, getAttachmentFolder, setAttachmentFolder } from "../src/manifest.js";
 export { findMarkerRanges, rangeRevealed } from "../src/markers.js";
@@ -26,4 +26,5 @@ export { SUPPORTED_CONTEXTS, parseLLMContext, hasLLMBlocks, parseLLMBlocks, vali
 export { resolvePrimaryPDFFulltext, renderFulltextContext } from "../src/fulltext.js";
 export { GROUNDING_SYSTEM_PROMPT, RUNNABLE_CONTEXTS, LLM_RUN_ERRORS, buildLLMMessages, normalizeLLMOutput, classifyLLMOutput, prepareLLMRun, applyLLMOutputs, decideLLMAction, executeLLMBlocks } from "../src/llm-runner.js";
 export { summaryNoteStaleness } from "../src/staleness.js";
-export { planBulk } from "../src/bulk.js";
+export { planBulk, bulkGate, plannedTemplateNames } from "../src/bulk.js";
+export { DETECT_REASONS, DETECT_SYSTEM_PROMPT, buildDetectMessages, parseDetectAnswer, detectPaperTypes } from "../src/paper-type.js";

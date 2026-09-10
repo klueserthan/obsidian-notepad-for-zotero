@@ -13,22 +13,33 @@
 
 // Plan one item's action from the batch's existing-note policy. `hasExistingNote`
 // is whether the item already carries a Summary Note (recognised by Marker Tag —
-// the caller determines this via existingSummaryNotes(item).length > 0).
+// the caller determines this via existingSummaryNotes(item).length > 0). Rows
+// also carry `templateName` (the per-row picker's choice, passed through
+// unchanged for the dialog and bulkGate below) and `included` (the row's
+// include toggle; absent/undefined means included, matching today's behaviour
+// for callers that don't yet track it).
 //
 // policy:
 //   "skip"       — an item with an existing note is left untouched (default)
 //   "additional" — every item gets a fresh, additional Summary Note
 //   "overwrite"  — an item with an existing note has its NEWEST one replaced
 //
-// Returns [{ key, action }] aligned 1:1 with `items`, action one of
-// "skip" | "create" | "overwrite".
+// An excluded row always plans as "skip", regardless of policy — Generate
+// must never touch a row the user unticked.
+//
+// Returns [{ key, action, templateName }] aligned 1:1 with `items`, action one
+// of "skip" | "create" | "overwrite".
 export function planBulk(items, policy) {
   const list = Array.isArray(items) ? items : [];
   return list.map((it) => {
     const key = it && it.key != null ? it.key : "";
     const hasExisting = !!(it && it.hasExistingNote);
+    const included = !(it && it.included === false);
+    const templateName = it && it.templateName;
     let action;
-    if (policy === "additional") {
+    if (!included) {
+      action = "skip";
+    } else if (policy === "additional") {
       action = "create";
     } else if (policy === "overwrite") {
       action = hasExisting ? "overwrite" : "create";
@@ -37,6 +48,50 @@ export function planBulk(items, policy) {
       // toward NOT touching an existing note rather than toward overwriting.
       action = hasExisting ? "skip" : "create";
     }
-    return { key, action };
+    // Only carry templateName when the row supplied one, so legacy rows keep
+    // the plain { key, action } shape.
+    return templateName == null ? { key, action } : { key, action, templateName };
   });
+}
+
+// Gate Generate for the bulk dialog's review list. A row needs a template
+// only if it's included AND the existing-note policy would actually render
+// it (planBulk's action isn't "skip") — a row the policy will skip anyway is
+// exempt from the assignment gate (session-settled, see the plan's Key
+// Decisions: demanding a template for a row that never renders is noise).
+//
+// Returns { canGenerate, unassigned, included, plan }:
+//   included    — count of ticked (included) rows
+//   unassigned  — count of included, policy-rendered rows with no templateName
+//   canGenerate — false when included is 0 or unassigned is > 0
+//   plan        — the planBulk(rows, policy) result callers would otherwise
+//                 have to recompute
+export function bulkGate(rows, policy) {
+  const list = Array.isArray(rows) ? rows : [];
+  const plan = planBulk(list, policy);
+  let included = 0;
+  let unassigned = 0;
+  list.forEach((row, i) => {
+    const isIncluded = !(row && row.included === false);
+    if (isIncluded) included++;
+    const willRender = plan[i].action !== "skip";
+    const hasTemplate = !!(row && row.templateName);
+    if (isIncluded && willRender && !hasTemplate) unassigned++;
+  });
+  return { canGenerate: included > 0 && unassigned === 0, unassigned, included, plan };
+}
+
+// Deduped, order-preserving list of templateNames of plan entries that will
+// actually render (action !== "skip"). Shared by the bulk dialog's heads-up
+// and generateSummaryNotes' pre-flight probe — both need the same distinct
+// set of templates to check for {% llm %} blocks.
+export function plannedTemplateNames(plan) {
+  const list = Array.isArray(plan) ? plan : [];
+  const names = [];
+  for (const p of list) {
+    if (p && p.action !== "skip" && p.templateName && !names.includes(p.templateName)) {
+      names.push(p.templateName);
+    }
+  }
+  return names;
 }
