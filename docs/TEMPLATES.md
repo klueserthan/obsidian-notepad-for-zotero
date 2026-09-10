@@ -310,9 +310,10 @@ paperTypeDescription: Empirical study with numeric data, statistics, or experime
 
 `paperType` is a short label and `paperTypeDescription` a one-line description
 of the papers it fits — that's the only role these two keys play (they never
-appear in the rendered note; frontmatter is stripped as always). Only
-templates declaring both keys are offered as detection candidates when
-generating for a batch of items; undeclared templates stay pickable by hand.
+appear in the rendered note; frontmatter is stripped as always). Any
+template declaring `paperType` is offered as a detection candidate when
+generating for a batch of items (`paperTypeDescription` is optional but
+helps the model choose); undeclared templates stay pickable by hand.
 If you copy one of the four to make your own variant, carry the `paperType`/
 `paperTypeDescription` keys over (and adjust them) if you want your copy to
 take part in detection too — a copy with no declaration simply won't be

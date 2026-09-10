@@ -138,3 +138,12 @@ describe("paperTypeCandidates", () => {
     expect(paperTypeCandidates(templates)).toEqual([]);
   });
 });
+
+describe("frontmatter declarations with CRLF line endings", () => {
+  it("reads a paperType that is not the last field when lines end in \\r\\n", () => {
+    const text = "---\r\npaperType: qualitative\r\npaperTypeDescription: Interview study\r\n---\r\n# Body\r\n";
+    expect(frontmatterFieldValue(text, "paperType")).toBe("qualitative");
+    expect(paperTypeDeclaration(text)).toEqual({ label: "qualitative", description: "Interview study" });
+    expect(paperTypeCandidates([{ name: "crlf", text }])).toEqual([{ name: "crlf", label: "qualitative", description: "Interview study" }]);
+  });
+});
