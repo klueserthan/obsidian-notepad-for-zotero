@@ -154,5 +154,7 @@ the item's annotations) — it never triggers a write.
 
 `docs/agents/` holds conventions the skills consume: `domain.md` (read
 `CONTEXT.md` / `docs/adr/` before exploring), `issue-tracker.md` (issues live
-on GitHub, use `gh`), and `triage-labels.md`. `.opencode/AGENTS.md` describes
-the OpenCode agent setup and is not binding on Claude Code.
+on GitHub, use `gh`), and `triage-labels.md`.
+
+## Relevant skills
+- use the `/ponytail`skill to ensure high quality and minimalistic code generation.
