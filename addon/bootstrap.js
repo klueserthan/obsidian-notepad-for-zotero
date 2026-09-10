@@ -2383,15 +2383,21 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       toolbar.append(setAllLabel, setAllSel, setAllBtn, detectBtn);
 
       // Visible reason when Detect can't run at all (R13).
-      let settings0 = C.sanitizeLLMSettings(this.getLLMSettings());
-      let detectDisabledReason = !C.isLLMConfigured(settings0)
-        ? this.t("bulk.detectNoLLM")
-        : (!candidates.length ? this.t("bulk.detectNoCandidates") : "");
-      detectBtn.disabled = !!detectDisabledReason;
+      // Re-derived on every refresh and before each run, not snapshotted at
+      // open: prefs can change in a Preferences window while this overlay is up.
       let detectNote = h("div");
       detectNote.setAttribute("style", "font-size:12px;margin-bottom:8px;min-height:0;");
-      detectNote.textContent = detectDisabledReason;
-      if (detectDisabledReason) detectNote.style.color = red;
+      let detectDisabledReason = "";
+      let refreshDetectAvailability = () => {
+        let s = C.sanitizeLLMSettings(this.getLLMSettings());
+        detectDisabledReason = !C.isLLMConfigured(s)
+          ? this.t("bulk.detectNoLLM")
+          : (!candidates.length ? this.t("bulk.detectNoCandidates") : "");
+        detectBtn.disabled = !!detectDisabledReason;
+        detectNote.textContent = detectDisabledReason;
+        detectNote.style.color = detectDisabledReason ? red : "";
+      };
+      refreshDetectAvailability();
 
       // Review list — plain scrollable rows, no virtualization (KTD7).
       let listWrap = h("div");
@@ -2542,6 +2548,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
       // Single handler behind every picker / checkbox / Set all / policy change.
       let refresh = () => {
+        if (!busy) refreshDetectAvailability();
         let policy = currentPolicy();
         let descs = rows.map(toDesc);
         let gate = C.bulkGate(descs, policy);
@@ -2581,6 +2588,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let detectSeq = 0;
       detectBtn.addEventListener("click", async () => {
         if (detectBtn.disabled) return;
+        refreshDetectAvailability();
+        if (detectDisabledReason) return;
         let seq = ++detectSeq;
         cancellers.length = 0; // a prior run's cancellers are stale once it's done
         busy = true;
@@ -2615,7 +2624,6 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         } catch (e) { this.log("bulk detect run failed: " + e); }
         if (stopped || seq !== detectSeq) return;
         busy = false;
-        detectBtn.disabled = !!detectDisabledReason;
         setAllBtn.disabled = false;
         refresh();
       });
