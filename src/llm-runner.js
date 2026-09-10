@@ -6,6 +6,7 @@ import { renderAnnotationsContext } from "./annotations.js";
 import { renderFulltextContext } from "./fulltext.js";
 import { LLM_DEFAULTS } from "./llm.js";
 import { render } from "./render.js";
+import { runBounded } from "./llm-pool.js";
 import {
   canAutoRun,
   sanitizeLLMSettings,
@@ -239,7 +240,6 @@ export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProg
   const headers = buildLLMHeaders(s);
   const { tasks, blocks } = prepared;
   const n = tasks.length;
-  const outputs = new Array(n);
 
   const progress = (done) => {
     if (typeof onProgress === "function") {
@@ -248,47 +248,44 @@ export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProg
   };
   progress(0);
 
-  // Bounded worker pool. Blocks are independent, so up to `concurrency` requests
-  // run at once; outputs land at their block index, keeping document order.
-  // All-or-nothing: the first failure stops workers from claiming further blocks,
-  // in-flight requests are awaited (Zotero.HTTP cannot abort) and discarded, and
-  // the failure with the smallest block index is reported deterministically.
-  let next = 0;
+  // Bounded worker pool (src/llm-pool.js). Blocks are independent, so up to
+  // `concurrency` requests run at once; outputs land at their block index,
+  // keeping document order. All-or-nothing: the pool stops claiming further
+  // blocks after the first rejection, in-flight requests are awaited (Zotero.HTTP
+  // cannot abort) and discarded, and the failure with the smallest block index
+  // is reported deterministically (results are scanned in ascending order below).
   let done = 0;
-  let failure = null;
 
-  const worker = async () => {
-    while (failure === null && next < n) {
-      const i = next++;
-      const payload = buildChatCompletionsPayload(s, tasks[i].messages);
-      let content;
-      try {
-        content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
-      } catch (e) {
-        if (failure === null || i < failure.blockIndex) {
-          failure = { ok: false, code: LLM_RUN_ERRORS.HTTP_FAILED, error: e, blockIndex: i, n };
-        }
-        return;
-      }
-      const res = classifyLLMOutput(content);
-      if (!res.ok) {
-        if (failure === null || i < failure.blockIndex) {
-          failure = { ok: false, code: LLM_RUN_ERRORS.EMPTY_RESPONSE, blockIndex: i, n };
-        }
-        return;
-      }
-      outputs[i] = res.output;
-      done += 1;
-      progress(done);
+  const task = async (i) => {
+    const payload = buildChatCompletionsPayload(s, tasks[i].messages);
+    const content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
+    const res = classifyLLMOutput(content);
+    if (!res.ok) {
+      // Tagged so the pool's stop-on-failure semantics cover an empty response
+      // exactly like an HTTP rejection, while letting the mapping below tell
+      // the two apart.
+      const err = new Error("empty LLM response");
+      err.code = LLM_RUN_ERRORS.EMPTY_RESPONSE;
+      throw err;
     }
+    done += 1;
+    progress(done);
+    return res.output;
   };
 
-  const workers = [];
-  for (let w = 0; w < Math.min(s.concurrency, n); w++) workers.push(worker());
-  await Promise.all(workers);
+  const results = await runBounded(n, s.concurrency, task, { stopOnFailure: true });
 
-  if (failure !== null) return failure;
+  for (let i = 0; i < n; i++) {
+    const r = results[i];
+    if (r && !r.ok) {
+      if (r.error && r.error.code === LLM_RUN_ERRORS.EMPTY_RESPONSE) {
+        return { ok: false, code: LLM_RUN_ERRORS.EMPTY_RESPONSE, blockIndex: i, n };
+      }
+      return { ok: false, code: LLM_RUN_ERRORS.HTTP_FAILED, error: r.error, blockIndex: i, n };
+    }
+  }
 
+  const outputs = results.map((r) => r.value);
   const md = applyLLMOutputs(text, blocks, outputs);
   return { ok: true, md, blocks, outputs };
 }
