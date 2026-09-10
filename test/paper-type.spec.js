@@ -36,6 +36,8 @@ const rows = [
 describe("parseDetectAnswer", () => {
   it("reply '0' names no candidate", () => {
     expect(parseDetectAnswer("0", 4)).toEqual({ none: true });
+    expect(parseDetectAnswer("-1", 4)).toEqual({ invalid: true });
+    expect(parseDetectAnswer("+1", 4)).toEqual({ invalid: true });
   });
 
   it("reply '7' with four candidates is invalid (out of range)", () => {

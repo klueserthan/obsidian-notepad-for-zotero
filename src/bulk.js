@@ -48,7 +48,9 @@ export function planBulk(items, policy) {
       // toward NOT touching an existing note rather than toward overwriting.
       action = hasExisting ? "skip" : "create";
     }
-    return { key, action, templateName };
+    // Only carry templateName when the row supplied one, so legacy rows keep
+    // the plain { key, action } shape.
+    return templateName == null ? { key, action } : { key, action, templateName };
   });
 }
 

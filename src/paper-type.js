@@ -61,8 +61,11 @@ export function buildDetectMessages(candidates, { title, abstractNote } = {}) {
 // in 0..n is the answer (0 means "none fits"); no integer, more than one, or
 // one out of range names no candidate per R12 and is reported as invalid.
 export function parseDetectAnswer(text, n) {
-  const matches = String(text ?? "").match(/\d+/g);
+  // Signed tokens ("-1", "+2") are rejected outright: a model signalling
+  // "no match" with a negative number must not become candidate 1.
+  const matches = String(text ?? "").match(/[-+]?\d+/g);
   if (!matches || matches.length !== 1) return { invalid: true };
+  if (/^[-+]/.test(matches[0])) return { invalid: true };
   const value = Number(matches[0]);
   if (value === 0) return { none: true };
   if (value >= 1 && value <= n) return { index: value };
