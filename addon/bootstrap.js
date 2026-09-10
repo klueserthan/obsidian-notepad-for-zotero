@@ -467,7 +467,21 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "summary.createdSummary": "Summary notes — created {created}, failed {failed}.",
     // Bulk AI summary generation (right-click on a multi-item selection).
     "bulk.dialogTitle": "Generate summary notes for {count} paper(s)",
-    "bulk.templateLabel": "Template",
+    "bulk.untitled": "(untitled)",
+    "bulk.unassignedOption": "— no template —",
+    "bulk.setAllLabel": "Set all to…",
+    "bulk.setAllApply": "Apply",
+    "bulk.detect": "Detect types",
+    "bulk.detecting": "detecting…",
+    "bulk.detected": "detected: {label}",
+    "bulk.detectNoLLM": "Detect types needs the LLM interpreter, which is not configured. Set base URL and model in preferences.",
+    "bulk.detectNoCandidates": "Detect types is unavailable: no template declares a paper type.",
+    "bulk.reasonNoAbstract": "No abstract — pick a template by hand.",
+    "bulk.reasonNoCandidate": "No candidate template matched this paper.",
+    "bulk.reasonInvalidAnswer": "The model's answer named no candidate.",
+    "bulk.reasonHttpFailed": "Detection request failed: {detail}",
+    "bulk.unassignedCount": "{n} row(s) still need a template.",
+    "bulk.noneIncluded": "No item selected — tick at least one row.",
     "bulk.policySkip": "Skip papers that already have a Summary Note (default)",
     "bulk.policyAdditional": "Create an additional Summary Note for every paper",
     "bulk.policyOverwrite": "Overwrite the newest Summary Note (replaces its entire content — hand edits in Better Notes will be lost)",
@@ -2253,11 +2267,17 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
   // Bulk config dialog: an in-window modal overlay (plain DOM, no iframe —
   // unlike openTemplateBuilder there's no editor needed here) gathering the
-  // inputs generateSummaryNotes needs: which template, what to do with items
-  // that already have a Summary Note, and a go/no-go on whether the LLM is
-  // configured for templates that need it. Resolves { templateName, policy }
-  // on Generate, or null on Cancel/backdrop/Esc.
-  async openBulkDialog(win, count, opts = {}) {
+  // inputs generateSummaryNotes needs. Since bulk paper-type detection it is a
+  // per-item REVIEW LIST (one row per selected item: include toggle, title,
+  // template picker, status slot) rather than a single template picker, plus a
+  // "Set all to…" shortcut, an explicit "Detect types" action (ADR-0001: the
+  // ONLY place a classification call is issued), the existing-note policy, and
+  // the LLM heads-up. Row planning/gating stay pure (win.ZONCore.bulkGate /
+  // planBulk); detection is pure too (win.ZONCore.detectPaperTypes) — this
+  // function only owns DOM, the run token, and the cancel path.
+  // Resolves { rows: [{ key, templateName, included }], policy } on Generate,
+  // or null on Cancel/backdrop/Esc.
+  async openBulkDialog(win, items, opts = {}) {
     if (!win.ZONCore) await this.injectCore(win);
     let C = win.ZONCore;
     let NS = "http://www.w3.org/1999/xhtml";
@@ -2267,12 +2287,50 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       return el;
     };
     let dark = this.isDarkTheme(win);
+    let red = "var(--accent-red,#c0392b)";
+    let itemList = Array.isArray(items) ? items : [];
+    let count = itemList.length;
+    let field = (item, name) => { try { return item.getField(name) || ""; } catch (e) { return ""; } };
+
+    // Row model, selection order. `hasExistingNote` is computed once here (the
+    // policy gate needs it and it never changes while the dialog is open).
+    let rows = itemList.map((item) => ({
+      key: item.key,
+      item,
+      title: field(item, "title"),
+      hasExistingNote: this.existingSummaryNotes(item).length > 0,
+      templateName: null,
+      included: true,
+      touched: false,
+    }));
+    let byKey = new Map(rows.map((r) => [r.key, r]));
+    let toDesc = (r) => ({
+      key: r.key, hasExistingNote: r.hasExistingNote,
+      templateName: r.templateName, included: r.included,
+    });
+
+    // Pickers list every document template (undeclared ones included, R3);
+    // detection candidates are only the ones declaring a paperType (KTD4).
+    let templateNames = this.orderedTemplateNames(win);
+    let all = this.allTemplates(win) || {};
+    let candidates = [];
+    try {
+      candidates = C.paperTypeCandidates
+        ? C.paperTypeCandidates(templateNames.map((n) => ({ name: n, text: (all[n] && all[n].text) || "" })))
+        : [];
+    } catch (e) { this.log("paperTypeCandidates failed: " + e); }
 
     return new Promise((resolve) => {
       let settled = false;
+      let stopped = false;
+      let cancellers = [];
       let settle = (value) => {
         if (settled) return;
         settled = true;
+        // KTD5: closing the dialog is the only mid-run cancel path — stop the
+        // pool claiming further rows AND abort whatever is already in flight.
+        stopped = true;
+        cancellers.splice(0).forEach((cancel) => { try { cancel(); } catch (e) {} });
         try { overlay.remove(); } catch (e) {}
         try { win.removeEventListener("keydown", onKeydown, true); } catch (e) {}
         resolve(value);
@@ -2285,7 +2343,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         + "justify-content:center;background:rgba(0,0,0,0.45);");
       let panel = h("div");
       panel.setAttribute("style",
-        "width:420px;max-width:92%;border-radius:10px;padding:18px 20px;"
+        "width:640px;max-width:94%;border-radius:10px;padding:18px 20px;"
         + "box-shadow:0 10px 40px rgba(0,0,0,0.5);font-size:13px;line-height:1.45;"
         + "background:" + (dark ? "#1e1e1e" : "#ffffff") + ";"
         + "color:" + (dark ? "#e6e6e6" : "#1a1a1a") + ";");
@@ -2294,34 +2352,115 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       title.textContent = this.t("bulk.dialogTitle", { count });
       title.setAttribute("style", "margin:0 0 12px;font-size:15px;");
 
-      // Template picker
-      let templateLabel = h("label");
-      templateLabel.textContent = this.t("bulk.templateLabel");
-      templateLabel.setAttribute("style", "display:block;font-weight:600;margin-bottom:4px;");
-      let templateSel = h("select");
-      templateSel.setAttribute("style", "width:100%;margin-bottom:14px;padding:4px;");
-      let names = this.orderedTemplateNames(win);
-      let preselect = (opts && opts.templateName && names.includes(opts.templateName))
-        ? opts.templateName : (names[0] || "");
-      names.forEach((n) => { let o = h("option"); o.value = n; o.textContent = n; templateSel.appendChild(o); });
-      templateSel.value = preselect;
+      // Toolbar: Set all to… + Detect types
+      let toolbar = h("div");
+      toolbar.setAttribute("style", "display:flex;align-items:center;gap:6px;margin-bottom:8px;");
+      let setAllLabel = h("span");
+      setAllLabel.textContent = this.t("bulk.setAllLabel");
+      let setAllSel = h("select");
+      setAllSel.setAttribute("style", "flex:1 1 auto;min-width:0;padding:3px;");
+      templateNames.forEach((n) => { let o = h("option"); o.value = n; o.textContent = n; setAllSel.appendChild(o); });
+      if (opts && opts.templateName && templateNames.includes(opts.templateName)) setAllSel.value = opts.templateName;
+      let setAllBtn = h("button");
+      setAllBtn.textContent = this.t("bulk.setAllApply");
+      let detectBtn = h("button");
+      detectBtn.textContent = this.t("bulk.detect");
+      toolbar.append(setAllLabel, setAllSel, setAllBtn, detectBtn);
+
+      // Visible reason when Detect can't run at all (R13).
+      let settings0 = C.sanitizeLLMSettings(this.getLLMSettings());
+      let detectDisabledReason = !C.isLLMConfigured(settings0)
+        ? this.t("bulk.detectNoLLM")
+        : (!candidates.length ? this.t("bulk.detectNoCandidates") : "");
+      detectBtn.disabled = !!detectDisabledReason;
+      let detectNote = h("div");
+      detectNote.setAttribute("style", "font-size:12px;margin-bottom:8px;min-height:0;");
+      detectNote.textContent = detectDisabledReason;
+      if (detectDisabledReason) detectNote.style.color = red;
+
+      // Review list — plain scrollable rows, no virtualization (KTD7).
+      let listWrap = h("div");
+      listWrap.setAttribute("style",
+        "max-height:300px;overflow-y:auto;padding:2px 4px;margin-bottom:10px;border-radius:6px;"
+        + "border:1px solid " + (dark ? "#3a3a3a" : "#d5d5d5") + ";");
+
+      let busy = false;
+      // A row the user edits WHILE a detect run is in flight keeps the user's
+      // state: it stops accepting that run's answer and drops its status text.
+      let markTouched = (row) => {
+        if (!busy) return;
+        row.touched = true;
+        row.status.textContent = "";
+        row.status.style.color = "";
+      };
+
+      rows.forEach((row) => {
+        let rowEl = h("div");
+        rowEl.setAttribute("style",
+          "display:flex;align-items:flex-start;gap:8px;padding:5px 2px;"
+          + "border-bottom:1px solid " + (dark ? "#2c2c2c" : "#ededed") + ";");
+        let chk = h("input");
+        chk.type = "checkbox";
+        chk.checked = true;
+        chk.setAttribute("style", "margin-top:3px;flex:0 0 auto;");
+        let mid = h("div");
+        mid.setAttribute("style", "flex:1 1 auto;min-width:0;");
+        let titleEl = h("div");
+        titleEl.textContent = row.title || this.t("bulk.untitled");
+        titleEl.setAttribute("style", "overflow-wrap:anywhere;");
+        // Status slot: detecting / detected label / failure reason. Wraps to as
+        // many lines as it needs so a long reason is readable without hover.
+        let status = h("div");
+        status.setAttribute("style", "font-size:11px;overflow-wrap:anywhere;white-space:normal;opacity:0.85;");
+        mid.append(titleEl, status);
+        let sel = h("select");
+        sel.setAttribute("style", "flex:0 0 170px;max-width:170px;padding:2px;");
+        let blank = h("option");
+        blank.value = "";
+        blank.textContent = this.t("bulk.unassignedOption");
+        sel.appendChild(blank);
+        templateNames.forEach((n) => { let o = h("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
+        sel.value = "";
+        rowEl.append(chk, mid, sel);
+        listWrap.appendChild(rowEl);
+        row.chk = chk; row.sel = sel; row.status = status;
+
+        chk.addEventListener("change", () => {
+          row.included = chk.checked;
+          sel.disabled = !chk.checked; // value is kept across exclude/re-include (R5)
+          markTouched(row);
+          refresh();
+        });
+        sel.addEventListener("change", () => {
+          row.templateName = sel.value || null;
+          if (!busy) { row.status.textContent = ""; row.status.style.color = ""; }
+          markTouched(row);
+          refresh();
+        });
+      });
+
+      // Gate line: unassigned count, or the no-row-included state (R7).
+      let gateLine = h("div");
+      gateLine.setAttribute("style", "font-size:12px;min-height:16px;margin-bottom:8px;");
 
       // Existing-note policy radios
       let policyWrap = h("div");
       policyWrap.setAttribute("style", "margin-bottom:12px;");
       let mkRadio = (value, labelText, checked) => {
-        let row = h("label");
-        row.setAttribute("style", "display:block;margin-bottom:4px;cursor:pointer;");
+        let rowEl = h("label");
+        rowEl.setAttribute("style", "display:block;margin-bottom:4px;cursor:pointer;");
         let input = h("input");
         input.type = "radio"; input.name = "zon-bulk-policy"; input.value = value;
         input.checked = !!checked;
-        row.append(input, win.document.createTextNode(" " + labelText));
-        return { row, input };
+        rowEl.append(input, win.document.createTextNode(" " + labelText));
+        return { row: rowEl, input };
       };
       let skipR = mkRadio("skip", this.t("bulk.policySkip"), true);
       let addR = mkRadio("additional", this.t("bulk.policyAdditional"), false);
       let overR = mkRadio("overwrite", this.t("bulk.policyOverwrite"), false);
       policyWrap.append(skipR.row, addR.row, overR.row);
+      let currentPolicy = () => (skipR.input.checked ? "skip" : addR.input.checked ? "additional" : "overwrite");
+      [skipR, addR, overR].forEach((r) => r.input.addEventListener("change", () => refresh()));
 
       // Live heads-up line (LLM call count / not-configured warning)
       let headsUp = h("div");
@@ -2337,56 +2476,167 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       generateBtn.setAttribute("style", "font-weight:600;");
       btnRow.append(cancelBtn, generateBtn);
 
-      panel.append(title, templateLabel, templateSel, policyWrap, headsUp, btnRow);
+      panel.append(title, toolbar, detectNote, listWrap, gateLine, policyWrap, headsUp, btnRow);
       overlay.appendChild(panel);
 
-      // Heads-up + Generate-disable refresh: render the currently-selected
-      // template in preview mode and regex-check for {% llm %} — kept simple
-      // and non-blocking; a failed/slow render just leaves the heads-up blank
-      // rather than blocking the dialog. The authoritative per-item gate still
-      // happens in resolveSummaryMdForItem during the actual run.
-      // Sequence-guarded (like refreshPreview's previewSeq): rapid template
-      // changes can leave an earlier, slower render in flight, so only the
-      // latest call is allowed to mutate the heads-up / disabled state.
+      // Heads-up + Generate-disable refresh: renders each DISTINCT template the
+      // gate counts (included, and not planned as "skip" under the current
+      // policy) once for the first item in preview mode and regex-checks for
+      // {% llm %} — kept simple and non-blocking; a failed/slow render just
+      // leaves the heads-up blank rather than blocking the dialog. The
+      // authoritative per-item gate still happens in resolveSummaryMdForItem
+      // during the actual run.
+      // Sequence-guarded (like refreshPreview's previewSeq): rapid edits can
+      // leave an earlier, slower render in flight, so only the latest call is
+      // allowed to mutate the heads-up / disabled state. It only ever DISABLES
+      // Generate — re-enabling is the gate's job, which runs first.
       let headsUpSeq = 0;
-      let refreshHeadsUp = async () => {
+      let refreshHeadsUp = async (plan) => {
         let seq = ++headsUpSeq;
-        let name = templateSel.value;
         headsUp.textContent = "";
-        generateBtn.disabled = false;
+        let names = [];
+        let n = 0;
+        plan.forEach((p) => {
+          if (p.action === "skip") return;
+          n++;
+          if (p.templateName && !names.includes(p.templateName)) names.push(p.templateName);
+        });
+        if (!names.length) return;
         let settings = C.sanitizeLLMSettings(this.getLLMSettings());
         let configured = C.isLLMConfigured(settings);
         try {
-          let item0 = (this.selectedRegularItems(win) || [])[0];
-          let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
-          if (seq !== headsUpSeq) return; // a newer refresh superseded this one
-          let hasLLM = /\{%\s*llm\b/.test(String(md || ""));
+          let item0 = itemList[0];
+          let hasLLM = false;
+          for (let name of names) {
+            let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
+            if (seq !== headsUpSeq) return; // a newer refresh superseded this one
+            if (/\{%\s*llm\b/.test(String(md || ""))) { hasLLM = true; break; }
+          }
           if (hasLLM) {
             if (!configured) {
               headsUp.textContent = this.t("bulk.llmNotConfigured");
-              headsUp.style.color = "var(--accent-red,#c0392b)";
+              headsUp.style.color = red;
               generateBtn.disabled = true;
             } else {
-              headsUp.textContent = this.t("bulk.llmHeadsUp", { n: count });
+              headsUp.textContent = this.t("bulk.llmHeadsUp", { n });
               headsUp.style.color = "";
             }
           }
         } catch (e) { this.log("bulk dialog heads-up render failed: " + e); }
       };
-      templateSel.addEventListener("change", () => { refreshHeadsUp(); });
-      refreshHeadsUp();
+
+      // Single handler behind every picker / checkbox / Set all / policy change.
+      let refresh = () => {
+        let policy = currentPolicy();
+        let descs = rows.map(toDesc);
+        let gate = C.bulkGate(descs, policy);
+        if (gate.included === 0) {
+          gateLine.textContent = this.t("bulk.noneIncluded");
+          gateLine.style.color = red;
+        } else if (gate.unassigned > 0) {
+          gateLine.textContent = this.t("bulk.unassignedCount", { n: gate.unassigned });
+          gateLine.style.color = red;
+        } else {
+          gateLine.textContent = "";
+          gateLine.style.color = "";
+        }
+        generateBtn.disabled = busy || !gate.canGenerate;
+        refreshHeadsUp(C.planBulk(descs, policy));
+      };
+
+      let reasonText = (res) => {
+        let codes = C.DETECT_REASONS || {};
+        let reason = res && res.reason;
+        if (reason === codes.NO_ABSTRACT) return this.t("bulk.reasonNoAbstract");
+        if (reason === codes.NO_CANDIDATE) return this.t("bulk.reasonNoCandidate");
+        if (reason === codes.INVALID_ANSWER) return this.t("bulk.reasonInvalidAnswer");
+        if (reason === codes.HTTP_FAILED) return this.t("bulk.reasonHttpFailed", { detail: (res && res.detail) || "" });
+        return String(reason || "");
+      };
+
+      // Detect types (R9): the one place a classification call is issued.
+      // errorDelayMax:0 keeps R14's no-retry rule (otherwise Zotero retries a
+      // 5xx for up to an hour); cancellerReceiver collects the abort handles
+      // settle() invokes when the dialog closes mid-run (KTD5).
+      let detectFetchFn = async (url, headers, payload, timeoutSeconds) => {
+        let resp = await Zotero.HTTP.request("POST", url, {
+          headers, body: JSON.stringify(payload), responseType: "text",
+          timeout: timeoutSeconds * 1000,
+          errorDelayMax: 0,
+          cancellerReceiver: (cancel) => { try { cancellers.push(cancel); } catch (e) {} },
+        });
+        return resp.responseText;
+      };
+
+      let detectSeq = 0;
+      detectBtn.addEventListener("click", async () => {
+        if (detectBtn.disabled) return;
+        let seq = ++detectSeq;
+        busy = true;
+        detectBtn.disabled = true;
+        setAllBtn.disabled = true;
+        generateBtn.disabled = true;
+        let targets = rows.filter((r) => r.included);
+        targets.forEach((r) => {
+          r.touched = false;
+          r.status.textContent = this.t("bulk.detecting");
+          r.status.style.color = "";
+        });
+        let payload = targets.map((r) => ({ key: r.key, title: r.title, abstractNote: field(r.item, "abstractNote") }));
+        let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+        try {
+          await C.detectPaperTypes(payload, candidates, settings, detectFetchFn, (key, res) => {
+            if (seq !== detectSeq || stopped) return;
+            let row = byKey.get(key);
+            if (!row || row.touched) return;
+            if (res && res.templateName) {
+              row.templateName = res.templateName;
+              row.sel.value = res.templateName;
+              row.status.textContent = this.t("bulk.detected", { label: res.label || "" });
+              row.status.style.color = "";
+            } else {
+              row.templateName = null;
+              row.sel.value = "";
+              row.status.textContent = reasonText(res);
+              row.status.style.color = red;
+            }
+          }, { shouldStop: () => stopped || seq !== detectSeq });
+        } catch (e) { this.log("bulk detect run failed: " + e); }
+        if (stopped || seq !== detectSeq) return;
+        busy = false;
+        detectBtn.disabled = !!detectDisabledReason;
+        setAllBtn.disabled = false;
+        refresh();
+      });
+
+      setAllBtn.addEventListener("click", () => {
+        if (setAllBtn.disabled) return;
+        let name = setAllSel.value;
+        if (!name) return;
+        rows.forEach((r) => {
+          if (!r.included) return;
+          r.templateName = name;
+          r.sel.value = name;
+          r.status.textContent = "";
+          r.status.style.color = "";
+        });
+        refresh();
+      });
 
       cancelBtn.addEventListener("click", () => settle(null));
       generateBtn.addEventListener("click", () => {
         if (generateBtn.disabled) return;
-        let policy = skipR.input.checked ? "skip" : addR.input.checked ? "additional" : "overwrite";
-        settle({ templateName: templateSel.value, policy });
+        settle({
+          rows: rows.map((r) => ({ key: r.key, templateName: r.templateName, included: r.included })),
+          policy: currentPolicy(),
+        });
       });
       overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) settle(null); });
       let onKeydown = (e) => { if (e.key === "Escape") settle(null); };
       win.addEventListener("keydown", onKeydown, true);
 
       win.document.documentElement.appendChild(overlay);
+      refresh();
     });
   },
 
@@ -2407,27 +2657,44 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     let C = win.ZONCore;
 
-    let config = await this.openBulkDialog(win, items.length, { templateName: this.defaultNoteTemplate() });
+    let config = await this.openBulkDialog(win, items, { templateName: this.defaultNoteTemplate() });
     if (!config) return;
 
+    // Per-row descriptors from the dialog's review list: each row carries its
+    // own template (detected or hand-picked) and its include toggle.
+    let rowByKey = new Map((config.rows || []).map((r) => [r.key, r]));
+    let descriptors = items.map((item) => {
+      let row = rowByKey.get(item.key) || {};
+      return {
+        key: item.key,
+        hasExistingNote: this.existingSummaryNotes(item).length > 0,
+        templateName: row.templateName || null,
+        included: row.included !== false,
+      };
+    });
+    let plan = C.planBulk(descriptors, config.policy);
+    let planByKey = new Map(plan.map((p) => [p.key, p]));
+
     // Pre-flight guard (defense in depth — the dialog already disables Generate
-    // in this case): never silently degrade to placeholder notes.
+    // in this case): never silently degrade to placeholder notes. Probes each
+    // DISTINCT template the plan will actually render, same set the dialog's
+    // heads-up checks.
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     try {
-      let probe = await this.renderTemplateAsNote(win, items[0], config.templateName, { preview: true });
-      let needsLLM = /\{%\s*llm\b/.test(String(probe || ""));
+      let names = [];
+      plan.forEach((p) => {
+        if (p.action !== "skip" && p.templateName && !names.includes(p.templateName)) names.push(p.templateName);
+      });
+      let needsLLM = false;
+      for (let name of names) {
+        let probe = await this.renderTemplateAsNote(win, items[0], name, { preview: true });
+        if (/\{%\s*llm\b/.test(String(probe || ""))) { needsLLM = true; break; }
+      }
       if (needsLLM && !C.isLLMConfigured(settings)) {
         this.popup(win, this.t("menu.title"), this.t("bulk.llmNotConfigured"));
         return;
       }
     } catch (e) { this.log("generateSummaryNotes pre-flight probe failed: " + e); }
-
-    let descriptors = items.map((item) => ({
-      key: item.key,
-      hasExistingNote: this.existingSummaryNotes(item).length > 0,
-    }));
-    let plan = C.planBulk(descriptors, config.policy);
-    let planByKey = new Map(plan.map((p) => [p.key, p.action]));
 
     let pw = this.progress(win, this.t("summary.generatingTitle"));
     let created = 0, overwritten = 0, skipped = 0, failed = 0;
@@ -2435,13 +2702,15 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
     for (let i = 0; i < items.length; i++) {
       let item = items[i];
-      let action = planByKey.get(item.key) || "skip";
+      let entry = planByKey.get(item.key);
+      let action = (entry && entry.action) || "skip";
+      let templateName = entry && entry.templateName;
       try { if (pw && pw.changeHeadline) pw.changeHeadline(this.t("bulk.progress", { i: i + 1, n: items.length })); } catch (e) {}
 
       if (action === "skip") { skipped++; continue; }
 
       try {
-        let r = await this.resolveSummaryMdForItem(win, item, config.templateName);
+        let r = await this.resolveSummaryMdForItem(win, item, templateName);
         if (!r.ok) {
           failed++;
           failures.push({ title: item.getField("title") || "", reason: r.failure });
@@ -2449,10 +2718,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         }
         if (action === "overwrite") {
           let target = this.newestNote(this.existingSummaryNotes(item));
-          await this.overwriteSummaryNote(win, item, target, config.templateName, { md: r.md });
+          await this.overwriteSummaryNote(win, item, target, templateName, { md: r.md });
           overwritten++;
         } else {
-          await this.generateSummaryNote(win, item, config.templateName, { md: r.md });
+          await this.generateSummaryNote(win, item, templateName, { md: r.md });
           created++;
         }
       } catch (e) {

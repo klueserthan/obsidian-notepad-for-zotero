@@ -25,6 +25,25 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Per-item paper-type detection in the bulk dialog.** The right-click
+  *"Generate N summary notes…"* dialog is now a review list: one row per
+  selected paper with an include toggle, its title, its own template picker,
+  and a status slot. A **"Detect types"** button asks the configured LLM to
+  pick, for every included row, the best-fitting template from those whose
+  frontmatter declares a `paperType` (the four paper-type starters ship
+  declared) using that paper's title and abstract only — one request per row,
+  no retry, results shown as a label beside the row so a miss is visible at a
+  glance. A row the model can't place (no abstract, no candidate matched,
+  unusable answer, failed request) stays unassigned with the reason on the row,
+  and Generate stays unavailable until every row the existing-note policy would
+  actually render has a template — or is unticked. Nothing runs on open, on a
+  picker change, or on selection change (ADR-0001): a user who knows the batch
+  is one type can still "Set all to…" one template and Generate without a
+  single detection call. Detection is never persisted on the item; closing the
+  dialog mid-run aborts the requests in flight. New pure modules `src/paper-type.js`
+  and `src/llm-pool.js` (the bounded worker pool, now shared with the block
+  runner) plus `bulkGate`/per-row `planBulk` in `src/bulk.js` carry the logic
+  and are unit-tested.
 - **Bulk AI summary generation across a multi-item selection.** The existing
   right-click *"Generate N summary notes…"* action now runs the full LLM
   pipeline instead of the old no-LLM default-template render: pick multiple
