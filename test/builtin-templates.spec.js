@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { render } from "../src/render.js";
-import { templateKind, parseTemplateFile } from "../src/templates.js";
+import { templateKind, parseTemplateFile, paperTypeDeclaration } from "../src/templates.js";
+import { stripFrontmatter } from "../src/strip-markers.js";
+
+// The four LLM summary templates declare a paper type (KTD4) via a leading
+// frontmatter block, so they're exempt from the "no leading frontmatter"
+// Obsidian-residue check below.
+const PAPER_TYPE_TEMPLATES = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
 
 // The starter templates ship as a literal in addon/bootstrap.js (privileged
 // scope, can't be imported here). Extract the BUILTIN_TEMPLATES object literal
@@ -112,11 +118,41 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
 
   it("no builtin carries Obsidian residue (frontmatter, wikilinks, callouts, H1)", () => {
     for (const [name, text] of Object.entries(builtins)) {
-      expect(text, `${name} starts with a frontmatter fence`).not.toMatch(/^---\r?\n/);
+      // The four paper-type templates carry a leading frontmatter block on
+      // purpose (KTD4: paperType/paperTypeDescription) — checked separately below.
+      if (!PAPER_TYPE_TEMPLATES.includes(name)) {
+        expect(text, `${name} starts with a frontmatter fence`).not.toMatch(/^---\r?\n/);
+      }
       expect(text, `${name} contains a wikilink`).not.toContain("[[");
       expect(text, `${name} contains an Obsidian callout`).not.toMatch(/>\s*\[!/);
       // The pipeline prepends `# Summary: <title>` — templates must not add their own H1.
       expect(text, `${name} opens with an H1`).not.toMatch(/^#\s/);
+    }
+  });
+
+  it("each paper-type template declares its label and description (AE5)", () => {
+    const expected = {
+      "note-quantitative": "quantitative",
+      "note-qualitative": "qualitative",
+      "note-theoretical": "theoretical",
+      "note-review": "review",
+    };
+    for (const [name, label] of Object.entries(expected)) {
+      const decl = paperTypeDeclaration(builtins[name]);
+      expect(decl, `${name} declaration`).not.toBeNull();
+      expect(decl.label, `${name} label`).toBe(label);
+      expect(decl.description, `${name} description`).toEqual(expect.any(String));
+      expect(decl.description.length, `${name} description non-empty`).toBeGreaterThan(0);
+      expect(templateKind(builtins[name]), `${name} still classifies as document`).toBe("document");
+    }
+  });
+
+  it("stripping frontmatter leaves no trace of the paper-type declaration (AE9)", () => {
+    for (const name of PAPER_TYPE_TEMPLATES) {
+      const rendered = render(builtins[name], SAMPLE);
+      const stripped = stripFrontmatter(rendered);
+      expect(stripped, `${name} rendered+stripped`).not.toContain("paperType");
+      expect(stripped, `${name} rendered+stripped`).not.toMatch(/^---/);
     }
   });
 });

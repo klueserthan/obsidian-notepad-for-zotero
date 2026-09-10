@@ -129,7 +129,11 @@ var ZON = {
 
 {% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
 `,
-    "note-quantitative": `**Citation:** {{bibliography}}
+    "note-quantitative": `---
+paperType: quantitative
+paperTypeDescription: Empirical study with numeric data, statistics, or experiments
+---
+**Citation:** {{bibliography}}
 
 [Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 
@@ -164,7 +168,11 @@ var ZON = {
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
-    "note-qualitative": `**Citation:** {{bibliography}}
+    "note-qualitative": `---
+paperType: qualitative
+paperTypeDescription: Interview, ethnographic, or interpretive study analyzing non-numeric data
+---
+**Citation:** {{bibliography}}
 
 [Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 
@@ -196,7 +204,11 @@ var ZON = {
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
-    "note-theoretical": `**Citation:** {{bibliography}}
+    "note-theoretical": `---
+paperType: theoretical
+paperTypeDescription: Conceptual or theory-building paper proposing constructs, propositions, or a model
+---
+**Citation:** {{bibliography}}
 
 [Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 
@@ -228,7 +240,11 @@ var ZON = {
 %% zon kind=annotations colour=all sync=on format=list %%
 %% /zon %%
 `,
-    "note-review": `**Citation:** {{bibliography}}
+    "note-review": `---
+paperType: review
+paperTypeDescription: Literature review or meta-analysis synthesizing existing research
+---
+**Citation:** {{bibliography}}
 
 [Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
 

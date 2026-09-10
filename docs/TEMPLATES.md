@@ -298,6 +298,26 @@ scratch area and a `## Annotations` block for your highlights.
 - **`note-review.md`** — scope & questions, corpus & method, organizing
   framework, key findings/debates, identified gaps, future research agenda.
 
+Each of these four opens with a small frontmatter block declaring its paper
+type, for bulk-generation's auto-detection:
+
+```yaml
+---
+paperType: quantitative
+paperTypeDescription: Empirical study with numeric data, statistics, or experiments
+---
+```
+
+`paperType` is a short label and `paperTypeDescription` a one-line description
+of the papers it fits — that's the only role these two keys play (they never
+appear in the rendered note; frontmatter is stripped as always). Only
+templates declaring both keys are offered as detection candidates when
+generating for a batch of items; undeclared templates stay pickable by hand.
+If you copy one of the four to make your own variant, carry the `paperType`/
+`paperTypeDescription` keys over (and adjust them) if you want your copy to
+take part in detection too — a copy with no declaration simply won't be
+offered automatically.
+
 Copy any of these to make your own. Rename freely — the filename is the label.
 The built-in formats `list`, `quote`, `callout`, `compact` are always present
 even if the Templates folder is empty or unset.
