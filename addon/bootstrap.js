@@ -868,6 +868,21 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       autoRun: this.llmAutoRunPref(),
     };
   },
+  // Shared LLM POST wrapper (Zotero.HTTP.request → the fetchFn shape the pure
+  // runner/detector expect: (url, headers, payload, timeoutSeconds) => text).
+  // `extra` merges into the Zotero.HTTP.request options — e.g. the dialog's
+  // detect run adds errorDelayMax/cancellerReceiver; the two other call sites
+  // pass none, so their requests stay byte-identical to before.
+  makeLLMFetchFn(extra = {}) {
+    return async (url, headers, payload, timeoutSeconds) => {
+      let resp = await Zotero.HTTP.request("POST", url, {
+        headers, body: JSON.stringify(payload), responseType: "text",
+        timeout: timeoutSeconds * 1000,
+        ...extra,
+      });
+      return resp.responseText;
+    };
+  },
   llmAutoRun() {
     let autoRun = this.llmAutoRunPref();
     if (autoRun && !this.llmConfigured()) {
@@ -1623,13 +1638,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       // resolve context + render prompts) happens before any HTTP and aborts
       // loudly; block requests then run through a bounded worker pool
       // (settings.concurrency), all-or-nothing.
-      let fetchFn = async (url, headers, payload, timeoutSeconds) => {
-        let resp = await Zotero.HTTP.request("POST", url, {
-          headers, body: JSON.stringify(payload), responseType: "text",
-          timeout: timeoutSeconds * 1000,
-        });
-        return resp.responseText;
-      };
+      let fetchFn = this.makeLLMFetchFn();
       let onProgress = (done, n) => this.setStatus(rec, this.t("status.llmRunning", { i: done, n }));
       let result = await C.executeLLMBlocks(md, data, settings, fetchFn, onProgress);
 
@@ -2248,13 +2257,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
     catch (e) { this.log("buildItemData (bulk) failed: " + e); }
 
-    let fetchFn = async (url, headers, payload, timeoutSeconds) => {
-      let resp = await Zotero.HTTP.request("POST", url, {
-        headers, body: JSON.stringify(payload), responseType: "text",
-        timeout: timeoutSeconds * 1000,
-      });
-      return resp.responseText;
-    };
+    let fetchFn = this.makeLLMFetchFn();
     let result = await C.executeLLMBlocks(md, data, settings, fetchFn);
 
     if (!result.ok) {
@@ -2324,6 +2327,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let settled = false;
       let stopped = false;
       let cancellers = [];
+      // Per-template hasLLM memo: renderTemplateAsNote runs at most once per
+      // template name for the dialog's life (heads-up re-derives it on every
+      // refresh() call otherwise).
+      let hasLLMCache = new Map();
       let settle = (value) => {
         if (settled) return;
         settled = true;
@@ -2385,13 +2392,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         + "border:1px solid " + (dark ? "#3a3a3a" : "#d5d5d5") + ";");
 
       let busy = false;
+      let clearStatus = (row) => { row.status.textContent = ""; row.status.style.color = ""; };
       // A row the user edits WHILE a detect run is in flight keeps the user's
       // state: it stops accepting that run's answer and drops its status text.
       let markTouched = (row) => {
         if (!busy) return;
         row.touched = true;
-        row.status.textContent = "";
-        row.status.style.color = "";
+        clearStatus(row);
       };
 
       rows.forEach((row) => {
@@ -2433,7 +2440,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         });
         sel.addEventListener("change", () => {
           row.templateName = sel.value || null;
-          if (!busy) { row.status.textContent = ""; row.status.style.color = ""; }
+          if (!busy) clearStatus(row);
           markTouched(row);
           refresh();
         });
@@ -2494,23 +2501,23 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let refreshHeadsUp = async (plan) => {
         let seq = ++headsUpSeq;
         headsUp.textContent = "";
-        let names = [];
-        let n = 0;
-        plan.forEach((p) => {
-          if (p.action === "skip") return;
-          n++;
-          if (p.templateName && !names.includes(p.templateName)) names.push(p.templateName);
-        });
+        let names = C.plannedTemplateNames(plan);
         if (!names.length) return;
+        let n = plan.filter((p) => p.action !== "skip").length;
         let settings = C.sanitizeLLMSettings(this.getLLMSettings());
         let configured = C.isLLMConfigured(settings);
         try {
           let item0 = itemList[0];
           let hasLLM = false;
           for (let name of names) {
-            let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
-            if (seq !== headsUpSeq) return; // a newer refresh superseded this one
-            if (/\{%\s*llm\b/.test(String(md || ""))) { hasLLM = true; break; }
+            let hasBlock = hasLLMCache.get(name);
+            if (hasBlock === undefined) {
+              let md = item0 ? await this.renderTemplateAsNote(win, item0, name, { preview: true }) : "";
+              if (seq !== headsUpSeq) return; // a newer refresh superseded this one
+              hasBlock = /\{%\s*llm\b/.test(String(md || ""));
+              hasLLMCache.set(name, hasBlock);
+            }
+            if (hasBlock) { hasLLM = true; break; }
           }
           if (hasLLM) {
             if (!configured) {
@@ -2541,7 +2548,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           gateLine.style.color = "";
         }
         generateBtn.disabled = busy || !gate.canGenerate;
-        refreshHeadsUp(C.planBulk(descs, policy));
+        refreshHeadsUp(gate.plan);
       };
 
       let reasonText = (res) => {
@@ -2558,20 +2565,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       // errorDelayMax:0 keeps R14's no-retry rule (otherwise Zotero retries a
       // 5xx for up to an hour); cancellerReceiver collects the abort handles
       // settle() invokes when the dialog closes mid-run (KTD5).
-      let detectFetchFn = async (url, headers, payload, timeoutSeconds) => {
-        let resp = await Zotero.HTTP.request("POST", url, {
-          headers, body: JSON.stringify(payload), responseType: "text",
-          timeout: timeoutSeconds * 1000,
-          errorDelayMax: 0,
-          cancellerReceiver: (cancel) => { try { cancellers.push(cancel); } catch (e) {} },
-        });
-        return resp.responseText;
-      };
+      let detectFetchFn = this.makeLLMFetchFn({
+        errorDelayMax: 0,
+        cancellerReceiver: (cancel) => { try { cancellers.push(cancel); } catch (e) {} },
+      });
 
       let detectSeq = 0;
       detectBtn.addEventListener("click", async () => {
         if (detectBtn.disabled) return;
         let seq = ++detectSeq;
+        cancellers.length = 0; // a prior run's cancellers are stale once it's done
         busy = true;
         detectBtn.disabled = true;
         setAllBtn.disabled = true;
@@ -2617,8 +2620,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           if (!r.included) return;
           r.templateName = name;
           r.sel.value = name;
-          r.status.textContent = "";
-          r.status.style.color = "";
+          clearStatus(r);
         });
         refresh();
       });
@@ -2627,7 +2629,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       generateBtn.addEventListener("click", () => {
         if (generateBtn.disabled) return;
         settle({
-          rows: rows.map((r) => ({ key: r.key, templateName: r.templateName, included: r.included })),
+          rows: rows.map((r) => ({
+            key: r.key, templateName: r.templateName, included: r.included,
+            hasExistingNote: r.hasExistingNote,
+          })),
           policy: currentPolicy(),
         });
       });
@@ -2667,7 +2672,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let row = rowByKey.get(item.key) || {};
       return {
         key: item.key,
-        hasExistingNote: this.existingSummaryNotes(item).length > 0,
+        hasExistingNote: row.hasExistingNote || false,
         templateName: row.templateName || null,
         included: row.included !== false,
       };
@@ -2681,10 +2686,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // heads-up checks.
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     try {
-      let names = [];
-      plan.forEach((p) => {
-        if (p.action !== "skip" && p.templateName && !names.includes(p.templateName)) names.push(p.templateName);
-      });
+      let names = C.plannedTemplateNames(plan);
       let needsLLM = false;
       for (let name of names) {
         let probe = await this.renderTemplateAsNote(win, items[0], name, { preview: true });

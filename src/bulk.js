@@ -58,21 +58,38 @@ export function planBulk(items, policy) {
 // exempt from the assignment gate (session-settled, see the plan's Key
 // Decisions: demanding a template for a row that never renders is noise).
 //
-// Returns { canGenerate, unassigned, included }:
+// Returns { canGenerate, unassigned, included, plan }:
 //   included    — count of ticked (included) rows
 //   unassigned  — count of included, policy-rendered rows with no templateName
 //   canGenerate — false when included is 0 or unassigned is > 0
+//   plan        — the planBulk(rows, policy) result callers would otherwise
+//                 have to recompute
 export function bulkGate(rows, policy) {
   const list = Array.isArray(rows) ? rows : [];
-  const plans = planBulk(list, policy);
+  const plan = planBulk(list, policy);
   let included = 0;
   let unassigned = 0;
   list.forEach((row, i) => {
     const isIncluded = !(row && row.included === false);
     if (isIncluded) included++;
-    const willRender = plans[i].action !== "skip";
+    const willRender = plan[i].action !== "skip";
     const hasTemplate = !!(row && row.templateName);
     if (isIncluded && willRender && !hasTemplate) unassigned++;
   });
-  return { canGenerate: included > 0 && unassigned === 0, unassigned, included };
+  return { canGenerate: included > 0 && unassigned === 0, unassigned, included, plan };
+}
+
+// Deduped, order-preserving list of templateNames of plan entries that will
+// actually render (action !== "skip"). Shared by the bulk dialog's heads-up
+// and generateSummaryNotes' pre-flight probe — both need the same distinct
+// set of templates to check for {% llm %} blocks.
+export function plannedTemplateNames(plan) {
+  const list = Array.isArray(plan) ? plan : [];
+  const names = [];
+  for (const p of list) {
+    if (p && p.action !== "skip" && p.templateName && !names.includes(p.templateName)) {
+      names.push(p.templateName);
+    }
+  }
+  return names;
 }
