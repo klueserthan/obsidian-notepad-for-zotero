@@ -2348,6 +2348,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         cancellers.splice(0).forEach((cancel) => { try { cancel(); } catch (e) {} });
         try { overlay.remove(); } catch (e) {}
         try { win.removeEventListener("keydown", onKeydown, true); } catch (e) {}
+        try { win.removeEventListener("focus", onFocus, true); } catch (e) {}
         resolve(value);
       };
 
@@ -2655,6 +2656,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) settle(null); });
       let onKeydown = (e) => { if (e.key === "Escape") settle(null); };
       win.addEventListener("keydown", onKeydown, true);
+      // Coming back from a Preferences window: re-derive Detect availability
+      // without requiring an incidental row or policy interaction.
+      let onFocus = () => { if (!busy) refreshDetectAvailability(); };
+      win.addEventListener("focus", onFocus, true);
 
       win.document.documentElement.appendChild(overlay);
       refresh();
