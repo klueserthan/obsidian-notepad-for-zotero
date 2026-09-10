@@ -13,22 +13,33 @@
 
 // Plan one item's action from the batch's existing-note policy. `hasExistingNote`
 // is whether the item already carries a Summary Note (recognised by Marker Tag —
-// the caller determines this via existingSummaryNotes(item).length > 0).
+// the caller determines this via existingSummaryNotes(item).length > 0). Rows
+// also carry `templateName` (the per-row picker's choice, passed through
+// unchanged for the dialog and bulkGate below) and `included` (the row's
+// include toggle; absent/undefined means included, matching today's behaviour
+// for callers that don't yet track it).
 //
 // policy:
 //   "skip"       — an item with an existing note is left untouched (default)
 //   "additional" — every item gets a fresh, additional Summary Note
 //   "overwrite"  — an item with an existing note has its NEWEST one replaced
 //
-// Returns [{ key, action }] aligned 1:1 with `items`, action one of
-// "skip" | "create" | "overwrite".
+// An excluded row always plans as "skip", regardless of policy — Generate
+// must never touch a row the user unticked.
+//
+// Returns [{ key, action, templateName }] aligned 1:1 with `items`, action one
+// of "skip" | "create" | "overwrite".
 export function planBulk(items, policy) {
   const list = Array.isArray(items) ? items : [];
   return list.map((it) => {
     const key = it && it.key != null ? it.key : "";
     const hasExisting = !!(it && it.hasExistingNote);
+    const included = !(it && it.included === false);
+    const templateName = it && it.templateName;
     let action;
-    if (policy === "additional") {
+    if (!included) {
+      action = "skip";
+    } else if (policy === "additional") {
       action = "create";
     } else if (policy === "overwrite") {
       action = hasExisting ? "overwrite" : "create";
@@ -37,6 +48,31 @@ export function planBulk(items, policy) {
       // toward NOT touching an existing note rather than toward overwriting.
       action = hasExisting ? "skip" : "create";
     }
-    return { key, action };
+    return { key, action, templateName };
   });
+}
+
+// Gate Generate for the bulk dialog's review list. A row needs a template
+// only if it's included AND the existing-note policy would actually render
+// it (planBulk's action isn't "skip") — a row the policy will skip anyway is
+// exempt from the assignment gate (session-settled, see the plan's Key
+// Decisions: demanding a template for a row that never renders is noise).
+//
+// Returns { canGenerate, unassigned, included }:
+//   included    — count of ticked (included) rows
+//   unassigned  — count of included, policy-rendered rows with no templateName
+//   canGenerate — false when included is 0 or unassigned is > 0
+export function bulkGate(rows, policy) {
+  const list = Array.isArray(rows) ? rows : [];
+  const plans = planBulk(list, policy);
+  let included = 0;
+  let unassigned = 0;
+  list.forEach((row, i) => {
+    const isIncluded = !(row && row.included === false);
+    if (isIncluded) included++;
+    const willRender = plans[i].action !== "skip";
+    const hasTemplate = !!(row && row.templateName);
+    if (isIncluded && willRender && !hasTemplate) unassigned++;
+  });
+  return { canGenerate: included > 0 && unassigned === 0, unassigned, included };
 }
