@@ -27,3 +27,4 @@ export { resolvePrimaryPDFFulltext, renderFulltextContext } from "../src/fulltex
 export { GROUNDING_SYSTEM_PROMPT, RUNNABLE_CONTEXTS, LLM_RUN_ERRORS, buildLLMMessages, normalizeLLMOutput, classifyLLMOutput, prepareLLMRun, applyLLMOutputs, decideLLMAction, executeLLMBlocks } from "../src/llm-runner.js";
 export { summaryNoteStaleness } from "../src/staleness.js";
 export { planBulk, bulkGate } from "../src/bulk.js";
+export { DETECT_REASONS, DETECT_SYSTEM_PROMPT, buildDetectMessages, parseDetectAnswer, detectPaperTypes } from "../src/paper-type.js";
