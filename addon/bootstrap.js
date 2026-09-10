@@ -2318,8 +2318,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let all = this.allTemplates(win) || {};
     let candidates = [];
     try {
+      // A seeded or hand-copied starter that predates the paperType keys
+      // shadows the shipped built-in of the same name; treat it as still that
+      // starter's paper type so an upgrade doesn't disable Detect (rename the
+      // copy to opt out).
       candidates = C.paperTypeCandidates
-        ? C.paperTypeCandidates(templateNames.map((n) => ({ name: n, text: (all[n] && all[n].text) || "" })))
+        ? C.paperTypeCandidates(templateNames.map((n) => {
+            let text = (all[n] && all[n].text) || "";
+            if (!C.paperTypeDeclaration(text) && this.BUILTIN_TEMPLATES[n]) text = this.BUILTIN_TEMPLATES[n];
+            return { name: n, text };
+          }))
         : [];
     } catch (e) { this.log("paperTypeCandidates failed: " + e); }
 

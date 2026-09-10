@@ -314,10 +314,12 @@ appear in the rendered note; frontmatter is stripped as always). Any
 template declaring `paperType` is offered as a detection candidate when
 generating for a batch of items (`paperTypeDescription` is optional but
 helps the model choose); undeclared templates stay pickable by hand.
-If you copy one of the four to make your own variant, carry the `paperType`/
-`paperTypeDescription` keys over (and adjust them) if you want your copy to
-take part in detection too — a copy with no declaration simply won't be
-offered automatically.
+A copy of one of the four starters that keeps the starter's file name and has
+no declaration (for example, a Templates-folder copy seeded before these keys
+existed) is treated as that starter's paper type. If you copy a starter under a
+new name to make your own variant, carry the `paperType`/`paperTypeDescription`
+keys over (and adjust them) if you want your copy to take part in detection
+too — a renamed copy with no declaration simply won't be offered automatically.
 
 Copy any of these to make your own. Rename freely — the filename is the label.
 The built-in formats `list`, `quote`, `callout`, `compact` are always present
