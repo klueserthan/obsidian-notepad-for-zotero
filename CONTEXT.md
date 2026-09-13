@@ -21,7 +21,13 @@ hand edits made in Better Notes are never silently touched.
 
 **Template**:
 A Nunjucks template (with optional `{% llm %}` blocks) that defines a Summary Note's
-content. Authored/previewed via the upstream Template Builder.
+content. Authored/previewed via the Template Builder, now a note-type editor.
+
+**Note Type**:
+A template that declares one unique paper type (a short label plus a one-line
+description) — the only kind of template offered for generating a Summary Note. A
+template without a paper type stays editor-only until it declares one.
+_Avoid_: block template, general template
 
 **Composer**:
 The plugin's item-pane section: template picker, live rendered preview for the

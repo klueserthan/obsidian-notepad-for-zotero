@@ -1,50 +1,63 @@
 # Paper Summarizer for Zotero — Templates
 
-This is the reference for writing a **template** — the thing the Composer's
-template picker renders into a Summary Note. There are two kinds of file in
-your Templates folder, distinguished by content (the naming convention below
-is just a mnemonic for the same split — see "How a template's kind is
-decided"):
+This is the reference for writing a **note type** — a template in your
+Templates folder that the Composer's picker renders into a Summary Note.
+Every note type is a whole-note scaffold that declares a **paper type** in its
+YAML frontmatter:
 
-- **`note.md`** (and any **`note-*.md`**) — *whole-note scaffolds*. What the
-  Composer renders by default (and what "Create note from template" used to
-  call the same thing). Renders frontmatter, the citation, the abstract, and
-  whatever sections you define. You can keep several (`note.md`, `note-book.md`,
-  `note-minimal.md`, …); the **default** is set in
-  Settings → Paper Summarizer → *Default note template*, and the Composer's
-  picker lets you choose a different one per generate. Both dropdowns list
-  whole-note scaffolds only.
-- **Every other file** (`highlight.md`, `key-quote.md`, …) — a *block
-  template*: a per-annotation or per-item-field body. It isn't a note type you
-  generate directly — it's used **inside** a whole-note template, either via a
-  `highlights(...)` call (below) that routes a subset of highlights into a
-  section, or via a `%% zon … format=<name> %%` marker inserted from the
-  Template Builder's block configurator.
+```yaml
+---
+paperType: quantitative
+paperTypeDescription: Empirical study with numeric data, statistics, or experiments
+---
+```
 
-**How a template's kind is decided:** the plugin sniffs the template's
-content — YAML frontmatter, a `%% zon %%` block, an `{% llm %}` block, or a
-`highlights(...)` call all mark it a whole-note scaffold; anything else is a
-block. A leading `%%! … %%` directive (below) overrides this and forces the
-template to be treated as a block, even if its content would otherwise sniff
-as a whole-note scaffold — this is how the shipped `research-questions`
-template (a reusable "Research Questions" section built on an `{% llm %}`
-block) stays out of the note-type pickers while remaining available as a
-block.
+`paperType` is a short, unique label and `paperTypeDescription` a one-line
+description of the papers it fits (they never appear in the rendered note;
+frontmatter is stripped as always). A file without both keys is **not** a
+note type: it never appears in the Composer picker, the Settings →
+*Default note template* dropdown, or the bulk summary-note dialog, and bulk
+auto-detection can't choose it — it only shows up in the Template Builder's
+note-type list, flagged as needing a paper type. Fill in the label and
+description there (or by hand) and it becomes a real note type.
+
+A file named after one of the four shipped note types (below) that carries no
+declaration of its own inherits the shipped one, so a Templates-folder copy
+seeded before paper types existed keeps working without edits.
+
+No two note types may share a paper type label — bulk detection maps one
+label to exactly one note type, so saving a duplicate label is refused.
 
 **Where the folder lives:** by default the plugin manages its own folder —
-`paper-summarizer/templates` under your Zotero data directory. It is created on
-startup and **seeded** with the starter templates (each written only if its file
-is missing, so your edits are never overwritten; deleting a seeded file restores
-the pristine version on the next start). The starters are Obsidian-free: no YAML
-frontmatter, no `[[wikilinks]]`, no `> [!callout]` syntax. You can point the
+`paper-summarizer/templates` under your Zotero data directory. It is created
+on startup and **seeded** with the starter note types. Seeding remembers,
+per folder, which shipped note types it has already created there, so
+deleting or renaming one of them is remembered — it is not re-created on the
+next start (your edits to an existing file are never overwritten either way).
+The starters are Obsidian-free: no YAML frontmatter beyond the paper-type
+keys, no `[[wikilinks]]`, no `> [!callout]` syntax. You can point the
 *Templates folder* preference somewhere else if you want to relocate it.
 
-Add or edit a file in the Templates folder on disk (there's no in-app editor
-for the raw file — use the **Template Builder** for a live-preview authoring
-UI instead, opened from the Composer). Templates are cached in memory and
-reloaded when the Template Builder opens (it also reloads and re-selects a
-template right after you save one there); if you hand-edit a template file
-directly, open the Builder once (or restart Zotero) to pick it up.
+**Retired templates are archived, not deleted.** The first time the plugin
+starts after an update that retires a shipped template, any of those old
+files still sitting in your Templates folder are moved into an `archive`
+subfolder that no picker or editor reads — nothing is ever deleted. Move a
+file back out of `archive` by hand to restore it; it's then treated like any
+other file (add a paper type to make it a note type again).
+
+Add or edit a file in the Templates folder on disk, or use the **Template
+Builder** (opened from the Composer) as a note-type editor: markdown source
+beside a live rendered preview for the selected item, with required fields
+for the note type's name, paper type label, and description, an Insert menu
+for common snippets (an `{% llm %}` prompt, an annotations section, the
+citation, the abstract), and New, Duplicate, Rename, Delete, and Reset to
+built-in actions. Delete moves a note type's file into the archive subfolder
+after confirmation rather than deleting it, and is refused for the last
+remaining note type; Reset to built-in is offered only for the four shipped
+note types. Templates are cached in memory and reloaded when the Template
+Builder opens (it also reloads and re-selects a note type right after you
+save one there); if you hand-edit a template file directly, open the Builder
+once (or restart Zotero) to pick it up.
 
 ---
 
@@ -53,7 +66,12 @@ directly, open the Builder once (or restart Zotero) to pick it up.
 Templates are written in **Nunjucks**. You have `{{ variable }}`,
 `{% if %}` / `{% for %}`, and filters like `{{ date | format("YYYY") }}`.
 
-### Variables available in a *block* template (per annotation)
+### Variables available inside an annotations section (per highlight)
+
+These are the variables the built-in per-annotation formats (`list`, `quote`,
+`callout`, `compact`) render with, one highlight at a time. You don't author
+format bodies yourself — pick one by name with `format=` — but knowing these
+matters for the `tag=`/`colour=`/`type=` filters below.
 
 | Variable        | Meaning                                                |
 |-----------------|--------------------------------------------------------|
@@ -69,11 +87,11 @@ Templates are written in **Nunjucks**. You have `{{ variable }}`,
 | `{{tagList}}`   | the same tags as a comma-joined string                 |
 
 `{{tags}}` is the annotation's *own* tags (the ones you add to a highlight in
-the Zotero reader), distinct from the item-level `{{allTags}}` in a note
-template. Use it to carry per-highlight role markers — tag highlights
-`method` / `finding` / `quote` and filter a block on them (see `tag=` below).
+the Zotero reader), distinct from the item-level `{{allTags}}` in a note type.
+Use it to carry per-highlight role markers — tag highlights `method` /
+`finding` / `quote` and filter a section on them (see `tag=` below).
 
-### Variables in `note.md` and in a `kind=field` element (whole-item)
+### Variables in a note type and in a `kind=field` element (whole-item)
 
 `{{citekey}}`, `{{title}}`, `{{date}}`, `{{dateAdded}}`, `{{dateModified}}`,
 `{{itemType}}`, `{{publicationTitle}}`, `{{abstractNote}}`, `{{bibliography}}`,
@@ -94,16 +112,17 @@ The **`hashify`** filter lowercases a tag, turns spaces into underscores, and
 strips punctuation. There's also a ready-made `related` field format —
 `%% zon kind=field format=related %%` — that renders the related-items links.
 
-(These whole-item variables work in `note.md` and `kind=field` elements, **not**
-inside a per-annotation block, whose context is the highlight, not the item.)
+(These whole-item variables work in a note type's own markdown and in
+`kind=field` elements, **not** inside an annotations section, whose context is
+the highlight, not the item.)
 
 ---
 
-## Routing highlights by colour in a *note* template
+## Routing highlights by colour in a note type
 
-A whole-note template can place annotation blocks wherever you want, so blue
+A note type can place annotation sections wherever you want, so blue
 highlights land in one section and yellow in another. Use the
-`highlights(...)` helper: each call drops in a block that's filled with the
+`highlights(...)` helper: each call drops in a section that's filled with the
 matching highlights when the note is rendered.
 
 ```nunjucks
@@ -123,8 +142,7 @@ Year: "{{date | format("YYYY")}}"
 ```
 
 When the Composer renders this template, each `highlights(...)` expands into a
-block filled with just that colour's highlights, in place. (The shipped
-**`note-by-colour`** starter template is exactly this.)
+section filled with just that colour's highlights, in place.
 
 `highlights(...)` options (all optional):
 
@@ -132,55 +150,19 @@ block filled with just that colour's highlights, in place. (The shipped
 | --- | --- | --- |
 | `colour`  | `highlights(colour="blue")` or `highlights("blue")` | Only this colour (`yellow`/`red`/`green`/`blue`/`purple`/`magenta`/`orange`/`grey`). Omit for **all** colours. |
 | `type`    | `type="image"` | Only this annotation type. Omit for all. |
-| `format`  | `format="quote"` | Which per-annotation format to render with (`list`, `quote`, `callout`, `compact`, or your own). Defaults to `list`. |
+| `format`  | `format="quote"` | Which built-in per-annotation format to render with (`list`, `quote`, `callout`, `compact`). Defaults to `list`. |
 | `sync`    | `sync="off"` | See "`sync` in the generate pipeline" below. |
-
----
-
-## The optional first-line directive: `%%! … %%`
-
-A block template *may* begin with one special line that pins its defaults:
-
-```
-%%! colour=yellow sync=on sep=blank %%
-> {{text}}
-> — [p.{{page}}]({{link}})
-```
-
-- `%%! … %%` is read by the plugin and **stripped** before rendering — it
-  never appears in a Summary Note. (The `!` marks it as a directive, distinct
-  from a `%% zon %%` block marker.)
-- A template that starts with `%%! … %%` is always classified as a **block**
-  template, regardless of what else its body contains — this overrides the
-  content sniffing above. Use this to write a reusable block whose body would
-  otherwise be mistaken for a whole-note scaffold (e.g. it contains an
-  `{% llm %}` block).
-- Keys:
-  - **`colour`** — pin this template to one annotation colour (`yellow`, `red`,
-    `green`, `blue`, `purple`, `magenta`, `orange`, `grey`, or `all`).
-  - **`sync`** — see below.
-  - **`sep`** — how rendered annotations are joined: `blank` (blank line
-    between) or `newline`. If omitted it's inferred (multi-line bodies get a
-    blank line).
-  - **`kind`** — what *kind* of element this template inserts:
-    - omitted / `annotations` (default) — a live annotations block: the body
-      is rendered once **per highlight**, filtered by colour.
-    - `field` / `section` / `custom` — a **metadata element**: the body is
-      rendered **once over the item's data** (title, abstract, citation, …).
-      Uses the *whole-item* variables above, not the per-annotation ones, and
-      ignores `colour`.
 
 ---
 
 ## `%% zon … %%` blocks — the authoring model
 
-When a whole-note template is rendered, each `highlights(...)` call (or a
-directly-selected block template) is wrapped in a pair of invisible-in-Obsidian
-comment markers — inherited unchanged from the file-based upstream plugin's
-authoring syntax:
+When a note type is rendered, each `highlights(...)` call is wrapped in a
+pair of invisible-in-Obsidian comment markers — inherited unchanged from the
+file-based upstream plugin's authoring syntax:
 
 ```
-%% zon kind=annotations colour=yellow type=highlight sync=on format=key-quote %%
+%% zon kind=annotations colour=yellow type=highlight sync=on format=quote %%
 > "A highlighted sentence." %% ann:ABCD1234 %%
 > — [p.12](zotero://open-pdf/library/items/KEY?page=12&annotation=ABCD1234)
 %% /zon %%
@@ -200,8 +182,8 @@ settings as `key=value` attributes:
 | `type` | `all`, `highlight`, `underline`, `image`, `ink`, `note` | Only pull annotations of this type. Omitted = all types. |
 | `tag` | a tag name, or a comma list (`tag=method` / `tag=method,finding`) | Only pull highlights carrying one of these **annotation tags** (OR semantics). Combines with `colour`/`type` (AND across filters). `tags=` is an alias. |
 | `sync` | `on` (default), `off` | See below. |
-| `format` | a template name (`list`, `quote`, `callout`, `compact`, or your own file) | Which per-annotation template renders the body. |
-| `style` | `list`, `quote`, `callout` | Compose a body from a base style + `parts` instead of a named `format` (the Template Builder's "Compose" mode). Takes precedence over `format`. |
+| `format` | `list`, `quote`, `callout`, `compact` | Which built-in per-annotation format renders the body. |
+| `style` | `list`, `quote`, `callout` | Compose a body from a base style plus `parts` instead of a named `format`. Takes precedence over `format`. |
 | `parts` | a comma list of `page`, `comment`, `tags` | Which extra pieces a composed (`style=…`) body includes; the highlight text is always shown. |
 | `order` | `comment-first` | On a composed block (`style=…` with `comment` in `parts`), put **your comment first** and the quote underneath as support. Omit for quote-first. |
 
@@ -269,18 +251,7 @@ if you don't want that text in your notes.
 
 ---
 
-## Example templates in this folder
-
-- **`highlight.md`** — plain list, colour chosen when selected directly.
-- **`key-quote.md`** — blockquote, pinned to `yellow` (`%%! colour=yellow %%`).
-- **`critique.md`** — bold-labelled blockquote, pinned to `red`.
-- **`snapshot.md`** — a block set `sync=off` (renders empty — see above).
-- **`abstract.md`** — a `kind=field` element: the item's abstract as a
-  labelled blockquote.
-- **`note-by-colour.md`** — a whole-note scaffold that routes each highlight
-  colour into its own section with `highlights(colour="…")`.
-
-### LLM summary templates (one per paper type)
+## The shipped note types (one per paper type)
 
 Whole-note scaffolds that fill each section from the paper's full text with
 `{% llm context="fulltext" %}` blocks. Pick the one that fits the paper in the
@@ -298,32 +269,24 @@ scratch area and a `## Annotations` block for your highlights.
 - **`note-review.md`** — scope & questions, corpus & method, organizing
   framework, key findings/debates, identified gaps, future research agenda.
 
-Each of these four opens with a small frontmatter block declaring its paper
-type, for bulk-generation's auto-detection:
+Each of these four opens with the frontmatter block described at the top of
+this document, declaring its paper type. That declaration is what makes it a
+note type at all: it's how it reaches the Composer picker, the Settings
+default, and the bulk dialog, and how bulk auto-detection picks a candidate
+for a paper (`paperTypeDescription` helps the model choose).
 
-```yaml
----
-paperType: quantitative
-paperTypeDescription: Empirical study with numeric data, statistics, or experiments
----
-```
-
-`paperType` is a short label and `paperTypeDescription` a one-line description
-of the papers it fits — that's the only role these two keys play (they never
-appear in the rendered note; frontmatter is stripped as always). Any
-template declaring `paperType` is offered as a detection candidate when
-generating for a batch of items (`paperTypeDescription` is optional but
-helps the model choose); undeclared templates stay pickable by hand.
 A copy of one of the four starters that keeps the starter's file name and has
-no declaration (for example, a Templates-folder copy seeded before these keys
-existed) is treated as that starter's paper type. If you copy a starter under a
-new name to make your own variant, carry the `paperType`/`paperTypeDescription`
-keys over (and adjust them) if you want your copy to take part in detection
-too — a renamed copy with no declaration simply won't be offered automatically.
+no declaration of its own (for example, a Templates-folder copy seeded before
+these keys existed) is treated as that starter's paper type. If you copy a
+starter under a new name to make your own variant, carry the
+`paperType`/`paperTypeDescription` keys over (and adjust them) — a renamed
+copy with no declaration is not offered for generation until it has one.
 
-Copy any of these to make your own. Rename freely — the filename is the label.
-The built-in formats `list`, `quote`, `callout`, `compact` are always present
-even if the Templates folder is empty or unset.
+Copy any of these on disk to start a variant, or use New / Duplicate in the
+note-type editor. Save is refused, with the reason shown, while the name,
+paper type label, or description is empty, or the label is already used by
+another note type. The built-in formats `list`, `quote`, `callout`, `compact`
+are always present even if the Templates folder is empty or unset.
 
 ---
 
@@ -338,12 +301,8 @@ normal rendering.
 **Requirements:**
 - An LLM provider must be configured in Settings → Paper Summarizer → LLM
   Interpreter (base URL + model).
-- A template containing an `{% llm %}` block is treated as a
-  **once-per-item** (document) template — it is never rendered once per
-  annotation, even if it lives in a file named like a block template. A
-  leading `%%! … %%` directive overrides this and keeps it a block (see
-  above) — this is how the shipped `research-questions` template stays a
-  reusable block despite its `{% llm %}` content.
+- A template containing an `{% llm %}` block is a note type's whole-note
+  render — it runs once **per item**, never once per annotation.
 - The provider is OpenAI-compatible Chat Completions. Point it at any
   compatible endpoint — local Ollama (default,
   `http://localhost:11434/v1`), OpenAI, LM Studio, etc. The model name and
