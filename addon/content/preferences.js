@@ -32,73 +32,28 @@
 
   const PREFIX = "extensions.zotero-obsidian-notes.";
 
-  // Wire the Browse… buttons. Guarded so a failure here can never block the
-  // Default-note-template population below.
-
-  // `Services` is not a reliable global in the Zotero prefs scope, so prefer
-  // Zotero's own alert helper; fall back through other options just in case.
-  function notify(msg) {
-    try { if (Zotero && Zotero.alert) { Zotero.alert(window, "Note templates", msg); return; } } catch (e) {}
-    try { if (typeof Services !== "undefined") { Services.prompt.alert(window, "Note templates", msg); return; } } catch (e) {}
-    try { window.alert(msg); } catch (e) {}
-  }
-  function pickFolderAsync() {
-    return new Promise((resolve) => {
-      let fp;
-      try { fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker); }
-      catch (e) { return resolve(""); }
-      fp.init(window.browsingContext || window, "Choose or create a folder for your note templates", fp.modeGetFolder);
-      fp.open((rv) => resolve(rv === Ci.nsIFilePicker.returnOK && fp.file ? fp.file.path : ""));
-    });
-  }
-
-  // Wire the Browse… buttons + "Install starter templates…". The pane's XHTML can
-  // be inserted a tick AFTER this script runs (same race as the dropdown below),
-  // so retry until the controls exist instead of bailing once — otherwise the
-  // listeners silently never attach. Each button is flagged so retries don't
-  // double-bind.
+  // Wire the Browse… button. The pane's XHTML can be inserted a tick AFTER
+  // this script runs (same race as the dropdown below), so retry until the
+  // control exists instead of bailing once — otherwise the listener silently
+  // never attaches. Flagged so retries don't double-bind.
   function wireControls(tries) {
-    const instBtn = document.getElementById("zon-templates-install");
-    if (!instBtn) {
+    const btn = document.getElementById("zon-templates-browse");
+    if (!btn) {
       if ((tries || 0) < 40) window.setTimeout(() => wireControls((tries || 0) + 1), 50);
       return;
     }
-    const wire = (el, fn) => { if (el && !el._zonWired) { el._zonWired = true; el.addEventListener("click", fn); } };
-    const map = [
-      ["zon-templates-browse", "zon-templates", PREFIX + "templatesDir"],
-    ];
-    for (const [btnId, inputId, prefKey] of map) {
-      wire(document.getElementById(btnId), () => browse(inputId, prefKey));
-    }
-    wire(instBtn, async () => {
-      const ZON = Zotero.ZON;
-      if (!ZON || !ZON.installBuiltinTemplates) { notify("Plugin not ready — try reopening Settings."); return; }
-      const input = document.getElementById("zon-templates");
-      let dir = (input && input.value) || Zotero.Prefs.get(PREFIX + "templatesDir", true) || "";
-      if (!dir) {
-        dir = await pickFolderAsync();
-        if (!dir) return;
-        try { Zotero.Prefs.set(PREFIX + "templatesDir", dir, true); } catch (e) {}
-        if (input) { input.value = dir; input.dispatchEvent(new Event("change", { bubbles: true })); }
-      }
-      let n = 0;
-      try { n = await ZON.installBuiltinTemplates(dir); } catch (e) {}
-      try { await ZON.loadTemplates(); } catch (e) {}
-      // Refresh the Default-note dropdown to include any newly added scaffolds.
-      try { const sel = document.getElementById("zon-default-note"); if (sel) { sel._zonPopulated = false; populateDefaultNote(); } } catch (e) {}
-      notify(n > 0 ? ("Added " + n + " template file(s) to:\n" + dir)
-                   : ("No new files — templates already present in:\n" + dir));
-    });
+    if (!btn._zonWired) { btn._zonWired = true; btn.addEventListener("click", () => browse("zon-templates", PREFIX + "templatesDir")); }
   }
   wireControls();
 
-  // Populate the "Default note template" dropdown from the note scaffolds
-  // (note.md / note-*.md) in the Templates folder. Always includes "note" and
-  // the current value so the control is never empty if the folder can't be read.
-  // The pane's XHTML can be inserted a tick after the script runs, so retry until
-  // the <select> exists rather than bailing once (which left it blank — bug b).
-  const _io = (typeof IOUtils !== "undefined" && IOUtils) || (window && window.IOUtils);
-  const _pu = (typeof PathUtils !== "undefined" && PathUtils) || (window && window.PathUtils);
+  // Populate the "Default note template" dropdown from the declared note types
+  // (Zotero.ZON.prefsTemplateNames(), each declaring a unique paper type) and
+  // select the resolved default (Zotero.ZON.defaultNoteTemplate()). The pane's
+  // XHTML can be inserted a tick after the script runs, so retry until the
+  // <select> exists rather than bailing once (which left it blank — bug b).
+  // Go through ZON rather than enumerating the Templates folder directly —
+  // IOUtils in the prefs-window scope raced the folder load and left the
+  // dropdown stuck on built-ins-only until a Zotero restart.
   async function populateDefaultNote(tries) {
     const sel = document.getElementById("zon-default-note");
     if (!sel) {
@@ -106,71 +61,32 @@
       return;
     }
     if (sel._zonPopulated) return;
-    const cur = (Zotero.Prefs.get(PREFIX + "defaultNoteTemplate", true) || "note");
-    // The default note template is a whole-note scaffold — building blocks
-    // (per-annotation/field templates) are excluded from this picker, same as
-    // the Composer's. `cur` is always kept so a pre-existing pref value (from
-    // before this restriction, or set some other way) never vanishes from the
-    // control.
-    const RESERVED = new Set(["templates", "readme"]);
-    const names = new Set(["note", cur]);
-    // Primary: ask the plugin (it loaded the folder in the main-window scope where
-    // IOUtils works). This avoids the prefs-scope IO race that left the dropdown
-    // stuck on built-ins-only until a Zotero restart.
-    let gotFolder = false;
-    try {
-      const ZON = Zotero.ZON;
-      if (ZON && ZON.prefsTemplateNames) {
-        try { await ZON.loadTemplates(); } catch (e) {}
-        for (const n of ZON.prefsTemplateNames()) names.add(n);
-        gotFolder = true;
-      }
-    } catch (e) {}
-    // Fallback: enumerate the folder directly (older path; only if IO is
-    // available) and classify each file the same way ZON.templateKindOf /
-    // src/templates.js templateKind do — document-kind only, with a leading
-    // `%%! ... %%` directive forcing "format". This is a THIRD mirror of that
-    // classification (bootstrap.js already mirrors src/templates.js); keep all
-    // three in sync if the rule changes.
-    const isDocumentKind = (text) => {
-      const t = String(text || "");
-      if (/^\s*%%!\s*[^%]*?\s*%%\s*(\r?\n|$)/.test(t)) return false;
-      if (/^---\r?\n[\s\S]*?\r?\n---/.test(t)) return true;
-      if (/%%\s*zon\b/.test(t)) return true;
-      if (/\{%\s*llm\b/.test(t)) return true;
-      if (/\{\{\s*highlights\s*\(/.test(t)) return true;
-      return false;
-    };
-    if (!gotFolder) {
-      try {
-        const dir = Zotero.Prefs.get(PREFIX + "templatesDir", true) || "";
-        if (dir && _io && _pu) {
-          for (const p of await _io.getChildren(dir)) {
-            const m = _pu.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
-            if (!m || RESERVED.has(m[1].toLowerCase())) continue;
-            try {
-              const text = await _io.readUTF8(p);
-              if (isDocumentKind(text)) names.add(m[1]);
-            } catch (e) {}
-          }
-          gotFolder = true;
-        }
-      } catch (e) {}
-    }
-    // Don't lock the dropdown in until we actually have the folder's templates —
-    // otherwise an early run (plugin not ready yet) would freeze it on built-ins.
-    if (!gotFolder && (tries || 0) < 40) {
-      window.setTimeout(() => populateDefaultNote((tries || 0) + 1), 50);
+    const ZON = Zotero.ZON;
+    if (!ZON || !ZON.prefsTemplateNames) {
+      if ((tries || 0) < 40) window.setTimeout(() => populateDefaultNote((tries || 0) + 1), 50);
       return;
     }
+    try { await ZON.loadTemplates(); } catch (e) {}
+    let names = [];
+    let def = "";
+    try { names = ZON.prefsTemplateNames() || []; } catch (e) {}
+    try { def = ZON.defaultNoteTemplate() || ""; } catch (e) {}
     sel._zonPopulated = true;
     sel.textContent = "";
-    for (const n of [...names].sort()) {
+    if (names.length === 0) {
+      const o = document.createElementNS("http://www.w3.org/1999/xhtml", "option");
+      o.value = ""; o.textContent = "No note types — add one in the Template Builder";
+      o.disabled = true;
+      sel.appendChild(o);
+      sel.value = "";
+      return;
+    }
+    for (const n of names) {
       const o = document.createElementNS("http://www.w3.org/1999/xhtml", "option");
       o.value = n; o.textContent = n;
       sel.appendChild(o);
     }
-    sel.value = cur;
+    sel.value = def;
     sel.addEventListener("change", () => {
       try { Zotero.Prefs.set(PREFIX + "defaultNoteTemplate", sel.value, true); } catch (e) {}
     });
