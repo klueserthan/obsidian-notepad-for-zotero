@@ -25,6 +25,23 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Opt-in automatic Summary Notes for tagged items.** A new Settings group,
+  *Automatic Summary Notes* (off by default), runs the same render → resolve
+  → create pipeline as Generate with no click: while desktop Zotero is open,
+  a sweep at startup and every 5 minutes finds personal-library items
+  carrying a trigger tag (default `zps:summarize`), waits for the primary
+  PDF's full text (asking Zotero's own indexer once per session for a
+  synced PDF that has none yet), detects the paper type — falling back to
+  the Settings default note type when detection can't decide — and creates
+  the Summary Note. The tag records the outcome: removed on success,
+  swapped for a "no full text" or "failed" tag when generation doesn't
+  succeed (re-adding the trigger tag retries), and a provider failure
+  pauses the mode for an hour instead of retrying silently. Failure reasons
+  go to the Error Console as a reason code and HTTP status only, never the
+  provider's response body or the item's full text. A repeating timer
+  drives the sweep — no `Zotero.Notifier` observer — and ADR-0002's
+  create-once rule is unchanged. See
+  `docs/adr/0004-opt-in-automatic-summary-notes.md`.
 - **Per-item paper-type detection in the bulk dialog.** The right-click
   *"Generate N summary notes…"* dialog is now a review list: one row per
   selected paper with an include toggle, its title, its own template picker,

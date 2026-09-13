@@ -14,7 +14,8 @@ live preview, optionally run the LLM, click Generate. Built with
 This is a hard fork of Acatechnic/obsidian-notepad-for-zotero with the entire
 Obsidian vault/file/sync layer torn out — see `CONTEXT.md` for the domain
 vocabulary and `docs/adr/` for the decisions (0001: LLM gating, 0002: the
-Zotero-native note model, 0003: the fork itself).
+Zotero-native note model, 0003: the fork itself, 0004: the opt-in automatic
+mode).
 
 ## Commands
 
@@ -143,7 +144,11 @@ the item's annotations) — it never triggers a write.
   the Composer's explicit **Run LLM** action on `{% llm context="..." %}`
   blocks, get replaced with static markdown, and must **fail loudly** rather
   than fall back to weaker context. Never wire an LLM call into rendering,
-  preview, template switching, or item switching.
+  preview, template switching, or item switching — the one exception is the
+  opt-in **Automatic Mode**
+  (`docs/adr/0004-opt-in-automatic-summary-notes.md`), off by default, which
+  runs this same resolve step unattended on a periodic sweep for items
+  carrying the trigger tag.
 - **Changelog**: add entries under `## [Unreleased]` (Keep a Changelog format);
   `scripts/stamp-changelog.mjs` dates and stamps them at release.
 - **Release** is cut locally (`npm run release`), not from CI. `bumpp`'s `execute`

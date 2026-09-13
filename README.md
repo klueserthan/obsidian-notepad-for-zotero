@@ -50,6 +50,9 @@ support, no file editor, and no annotation sync; none of that is coming back.
   saves note types only; it no longer reads or writes an item's note.
 - **Find DOI (Crossref)** — a small item-menu action to look up a missing DOI
   for one or more selected items.
+- **Automatic mode (opt-in)** — a Settings toggle, off by default, that runs
+  the same pipeline as Generate unattended on a periodic sweep for items
+  carrying a trigger tag. See [Automatic mode](#automatic-mode-opt-in) below.
 
 ## How a Summary Note is made
 
@@ -104,6 +107,42 @@ gear icon → Install Plugin From File…** and choose it.
    whether to overwrite the newest one or create an additional one.
 5. Open the created note in **Better Notes** to read or hand-edit it — the
    plugin will never touch it again.
+
+## Automatic mode (opt-in)
+
+Settings → Paper Summarizer has an **Automatic Summary Notes** toggle, off
+by default. Switch it on and, while desktop Zotero is running, a sweep at
+startup and every few minutes finds personal-library items carrying the
+**trigger tag** (default `zps:summarize`) and runs them through the same
+pipeline as Generate — no click, no review — using paper-type detection to
+pick a note type (falling back to your default note template when it can't
+decide).
+
+**This sends the full text of every tagged paper to your configured LLM
+unattended**, including the whole backlog of already-tagged items the
+moment you switch the mode on. Treat the trigger tag like your API key:
+anyone who can write tags to your library (a Web API key with write scope,
+another signed-in device) can trigger a paid run by adding it, in any
+number — this mode adds no cap. The resulting notes are unreviewed model
+output over an unvetted PDF; nothing checks them before they sync to the
+iPad, the same trust boundary as clicking Generate yourself.
+
+An item without full text yet keeps waiting. Zotero only gets full text for
+a PDF it downloaded and indexed itself, so this relies on the default sync
+setting (download files at sync time) staying on — with on-demand download
+instead, an agent-added PDF never gets indexed and every tagged item times
+out. Once the **full-text wait** (default 24 hours, also in Settings) passes
+with still no full text, the trigger tag is replaced by a "no full text"
+failure tag; any other failure gets a different failure tag. Re-adding the
+trigger tag retries. A paper whose full text is larger than your configured
+max-context setting fails and stays failed until you raise that limit —
+re-tagging alone won't fix it.
+
+The mode runs only while desktop Zotero's main window is open on this
+machine; it does nothing while Zotero is closed, and only one desktop
+should run it per synced library, or two machines can each create a note
+for the same tag before either syncs. See
+[docs/adr/0004-opt-in-automatic-summary-notes.md](docs/adr/0004-opt-in-automatic-summary-notes.md).
 
 ## Templates
 
