@@ -155,6 +155,7 @@ the item's annotations) — it never triggers a write.
 `docs/agents/` holds conventions the skills consume: `domain.md` (read
 `CONTEXT.md` / `docs/adr/` before exploring), `issue-tracker.md` (issues live
 on GitHub, use `gh`), and `triage-labels.md`.
+`docs/solutions/` holds documented learnings from past work (bugs, patterns, conventions), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`); relevant when implementing or debugging in a documented area.
 
 ## Relevant skills
 - use the `/ponytail`skill to ensure high quality and minimalistic code generation.
