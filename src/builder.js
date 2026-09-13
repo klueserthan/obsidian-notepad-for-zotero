@@ -343,6 +343,30 @@ Title: "{{title}}"
 export const STARTER_FORMAT = `> {{text}}
 > — [p.{{page}}]({{link}})`;
 
+// ------------------------------------------- note-type editor: Insert menu (R12)
+//
+// The note-type editor's Insert menu pastes one of these snippets at the cursor
+// (via the editor's own insertAtCursor) — no configurator, no palette. Order
+// matches the menu.
+export const INSERT_SNIPPETS = [
+  { id: "llm", label: "LLM prompt", text: '{% llm context="fulltext" %}\nWrite the prompt here.\n{% endllm %}' },
+  { id: "annotations", label: "Annotations", text: "%% zon kind=annotations colour=all sync=on format=quote %%\n%% /zon %%" },
+  { id: "citation", label: "Citation", text: "%% zon kind=field format=citation sync=on %%\n%% /zon %%" },
+  { id: "abstract", label: "Abstract", text: "%% zon kind=field format=abstract sync=on %%\n%% /zon %%" },
+];
+
+// New (R13): a minimal scaffold with no frontmatter — the paper type lives in
+// the editor's own name/label/description fields (KTD7), not in the body.
+// Distinct from STARTER_NOTE above, which still backs the retired block-palette
+// builder until a later unit removes it.
+export const NEW_NOTE_TYPE_SCAFFOLD = `## Notes
+
+## Highlights
+
+%% zon kind=annotations colour=all sync=on format=quote %%
+%% /zon %%
+`;
+
 // ---------------------------------------------------------------- preview
 
 // Strip `%% … %%` Obsidian comments (block markers + ann: anchors) and collapse

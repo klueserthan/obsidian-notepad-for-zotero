@@ -8,6 +8,7 @@ import {
   addFrontmatterField, removeFrontmatterField,
   FIELD_VARS, fieldBlockVarText, colourRouteText,
   UPDATABLE_FIELDS, fieldBlockMarkerOpen, fieldBlockTextFor, fieldOptionId,
+  INSERT_SNIPPETS, NEW_NOTE_TYPE_SCAFFOLD,
 } from "../src/builder.js";
 import { templateKind } from "../src/templates.js";
 import { composeFormat } from "../src/formats.js";
@@ -453,5 +454,26 @@ describe("palette catalogs + starters are well-formed", () => {
     expect(previewTemplate(STARTER_NOTE, ctx).error).toBeFalsy();
     expect(templateKind(STARTER_FORMAT)).toBe("format");
     expect(previewTemplate(STARTER_FORMAT, ctx).raw).toContain("Coproduction reshapes");
+  });
+});
+
+describe("note-type editor: Insert menu snippets and New scaffold (R12, R13)", () => {
+  it("has exactly the four required snippets: LLM prompt, annotations, citation, abstract", () => {
+    const ids = INSERT_SNIPPETS.map((s) => s.id);
+    expect(ids).toEqual(["llm", "annotations", "citation", "abstract"]);
+    for (const s of INSERT_SNIPPETS) { expect(s.label).toBeTruthy(); expect(s.text.length).toBeGreaterThan(0); }
+  });
+
+  it("every Insert snippet renders through previewTemplate without a template error", () => {
+    for (const s of INSERT_SNIPPETS) {
+      const out = previewTemplate(s.text, ctx);
+      expect(out.error, s.id + ": " + out.raw).toBeFalsy();
+    }
+  });
+
+  it("the New scaffold has no frontmatter (paper type lives in the editor's own fields) and renders", () => {
+    expect(NEW_NOTE_TYPE_SCAFFOLD).not.toMatch(/^---/);
+    const out = previewTemplate(NEW_NOTE_TYPE_SCAFFOLD, ctx);
+    expect(out.error).toBeFalsy();
   });
 });
