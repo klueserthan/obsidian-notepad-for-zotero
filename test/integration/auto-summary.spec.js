@@ -143,3 +143,76 @@ describe("auto summary: headless pipeline hooks (U3)", function () {
     }
   });
 });
+
+// Covers U2 (settings and prefs, R1/R3/R8, KTD4): the four PREF_*/DEFAULT_*
+// pairs, their getters (which delegate validation to src/auto-summary.js via
+// C = win.ZONCore), and the first-seen-map setter. No sweep/timer/tag-writing
+// logic lives here — that's U4.
+describe("auto summary: settings and prefs (U2)", function () {
+  let win, C;
+  let prevEnabled, prevTag, prevWait, prevFirstSeen;
+
+  before(async function () {
+    win = Zotero.getMainWindow();
+    await Zotero.ZON.injectCore(win);
+    C = win.ZONCore;
+    prevEnabled = Zotero.Prefs.get(Z().PREF_AUTO_SUMMARY_ENABLED, true);
+    prevTag = Zotero.Prefs.get(Z().PREF_AUTO_SUMMARY_TRIGGER_TAG, true);
+    prevWait = Zotero.Prefs.get(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, true);
+    prevFirstSeen = Zotero.Prefs.get(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, true);
+  });
+
+  beforeEach(function () {
+    // Unset all four prefs before every scenario so each starts from an
+    // undefined ("fresh profile") value; each test then sets only what it needs.
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_ENABLED, true); } catch (e) {}
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_TRIGGER_TAG, true); } catch (e) {}
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, true); } catch (e) {}
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, true); } catch (e) {}
+  });
+
+  after(function () {
+    let restore = (pref, value) => {
+      try {
+        if (value === undefined) Zotero.Prefs.clear(pref, true);
+        else Zotero.Prefs.set(pref, value, true);
+      } catch (e) {}
+    };
+    restore(Z().PREF_AUTO_SUMMARY_ENABLED, prevEnabled);
+    restore(Z().PREF_AUTO_SUMMARY_TRIGGER_TAG, prevTag);
+    restore(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, prevWait);
+    restore(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, prevFirstSeen);
+  });
+
+  it("a fresh profile (no stored prefs) reads the mode off, the trigger tag as the default, and the wait as 24 hours", function () {
+    assert.isFalse(Z().autoSummaryEnabled());
+    assert.equal(Z().autoSummaryTriggerTag(C), C.AUTO_SUMMARY_DEFAULTS.TRIGGER_TAG);
+    assert.equal(Z().autoSummaryWaitHours(C), 24);
+  });
+
+  it("a non-numeric wait pref reads as 24 hours", function () {
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, "not-a-number", true);
+    assert.equal(Z().autoSummaryWaitHours(C), 24);
+  });
+
+  it("a negative wait pref reads as 24 hours", function () {
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, -5, true);
+    assert.equal(Z().autoSummaryWaitHours(C), 24);
+  });
+
+  it("a trigger-tag pref equal to the Summary Note marker tag (zps:summary-note) reads as invalid", function () {
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_TRIGGER_TAG, "zps:summary-note", true);
+    assert.equal(Z().autoSummaryTriggerTag(C), "");
+  });
+
+  it("a corrupt first-seen pref reads as an empty map", function () {
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, "{not json", true);
+    assert.deepEqual(Z().autoSummaryFirstSeenMap(C), {});
+  });
+
+  it("setAutoSummaryFirstSeenMap round-trips a map through autoSummaryFirstSeenMap", function () {
+    let map = { "1/ABCD1234": 1700000000000 };
+    Z().setAutoSummaryFirstSeenMap(map);
+    assert.deepEqual(Z().autoSummaryFirstSeenMap(C), map);
+  });
+});

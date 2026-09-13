@@ -33,6 +33,13 @@ var ZON = {
   // One-time migration flag: set after the vault-era templatesDir pref has been
   // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
   PREF_TEMPLATES_MIGRATED: "extensions.zotero-obsidian-notes.templatesMigrated",
+  // Automatic Summary Notes (ADR-0004, U2): opt-in sweep settings. The sweep
+  // itself (timer, Zotero.Search, tag writes) is U4 — this unit only exposes
+  // the prefs and validated getters src/auto-summary.js's rules consume.
+  PREF_AUTO_SUMMARY_ENABLED: "extensions.zotero-obsidian-notes.autoSummaryEnabled",
+  PREF_AUTO_SUMMARY_TRIGGER_TAG: "extensions.zotero-obsidian-notes.autoSummaryTriggerTag",
+  PREF_AUTO_SUMMARY_WAIT_HOURS: "extensions.zotero-obsidian-notes.autoSummaryWaitHours",
+  PREF_AUTO_SUMMARY_FIRST_SEEN: "extensions.zotero-obsidian-notes.autoSummaryFirstSeen",
   // Templates folder: one `<name>.md` file per note type. The pref default is
   // intentionally empty — empty means "use the addon-owned folder" (defaultTemplatesDir()).
   DEFAULT_TEMPLATES_DIR: "",
@@ -54,6 +61,12 @@ var ZON = {
   DEFAULT_LLM_CONCURRENCY: 1, // parallel Run-LLM requests; keep 1 for a local serial Ollama
   DEFAULT_LLM_AUTORUN: false,
   DEFAULT_TEMPLATES_MIGRATED: false,
+  // Mirrors AUTO_SUMMARY_DEFAULTS in src/auto-summary.js (literal here since
+  // this object literal loads before ZONCore is injected).
+  DEFAULT_AUTO_SUMMARY_ENABLED: false,
+  DEFAULT_AUTO_SUMMARY_TRIGGER_TAG: "zps:summarize",
+  DEFAULT_AUTO_SUMMARY_WAIT_HOURS: 24,
+  DEFAULT_AUTO_SUMMARY_FIRST_SEEN: "{}",
   _templates: null,
 
   // Templates the plugin no longer ships (R5). archiveRetiredTemplates() moves
@@ -818,6 +831,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     seed(this.PREF_LLM_CONCURRENCY, this.DEFAULT_LLM_CONCURRENCY);
     seed(this.PREF_LLM_AUTORUN, this.DEFAULT_LLM_AUTORUN);
     seed(this.PREF_TEMPLATES_MIGRATED, this.DEFAULT_TEMPLATES_MIGRATED);
+    seed(this.PREF_AUTO_SUMMARY_ENABLED, this.DEFAULT_AUTO_SUMMARY_ENABLED);
+    seed(this.PREF_AUTO_SUMMARY_TRIGGER_TAG, this.DEFAULT_AUTO_SUMMARY_TRIGGER_TAG);
+    seed(this.PREF_AUTO_SUMMARY_WAIT_HOURS, this.DEFAULT_AUTO_SUMMARY_WAIT_HOURS);
+    seed(this.PREF_AUTO_SUMMARY_FIRST_SEEN, this.DEFAULT_AUTO_SUMMARY_FIRST_SEEN);
   },
 
   sectionCollapsed() {
@@ -860,6 +877,41 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   llmAutoRunPref() {
     try { let v = Zotero.Prefs.get(this.PREF_LLM_AUTORUN, true); return v === undefined ? this.DEFAULT_LLM_AUTORUN : !!v; }
     catch (e) { return this.DEFAULT_LLM_AUTORUN; }
+  },
+  // ---- Automatic Summary Notes prefs (ADR-0004, U2). Getters take the core
+  // object C (win.ZONCore) so they reuse U1's pure validators in
+  // src/auto-summary.js instead of duplicating the rules here.
+  autoSummaryEnabled() {
+    try { let v = Zotero.Prefs.get(this.PREF_AUTO_SUMMARY_ENABLED, true); return v === undefined ? this.DEFAULT_AUTO_SUMMARY_ENABLED : !!v; }
+    catch (e) { return this.DEFAULT_AUTO_SUMMARY_ENABLED; }
+  },
+  autoSummaryTriggerTag(C) {
+    let raw;
+    try { raw = Zotero.Prefs.get(this.PREF_AUTO_SUMMARY_TRIGGER_TAG, true); }
+    catch (e) { raw = undefined; }
+    if (raw === undefined) raw = this.DEFAULT_AUTO_SUMMARY_TRIGGER_TAG;
+    return C.sanitizeTriggerTag(raw, {
+      failureTags: [C.AUTO_SUMMARY_DEFAULTS.FAILURE_TAG, C.AUTO_SUMMARY_DEFAULTS.NO_FULLTEXT_TAG],
+      markerTag: this.MARKER_TAG,
+    });
+  },
+  autoSummaryWaitHours(C) {
+    let raw;
+    try { raw = Zotero.Prefs.get(this.PREF_AUTO_SUMMARY_WAIT_HOURS, true); }
+    catch (e) { raw = undefined; }
+    if (raw === undefined) raw = this.DEFAULT_AUTO_SUMMARY_WAIT_HOURS;
+    return C.sanitizeWaitHours(raw);
+  },
+  autoSummaryFirstSeenMap(C) {
+    let raw;
+    try { raw = Zotero.Prefs.get(this.PREF_AUTO_SUMMARY_FIRST_SEEN, true); }
+    catch (e) { raw = undefined; }
+    if (raw === undefined) raw = this.DEFAULT_AUTO_SUMMARY_FIRST_SEEN;
+    return C.parseFirstSeenMap(raw);
+  },
+  setAutoSummaryFirstSeenMap(map) {
+    try { Zotero.Prefs.set(this.PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify(map || {}), true); }
+    catch (e) {}
   },
   llmConfigured() {
     return !!(this.llmBaseURL().trim() && this.llmModel().trim());
