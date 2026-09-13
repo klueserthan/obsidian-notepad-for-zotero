@@ -28,3 +28,4 @@ export { GROUNDING_SYSTEM_PROMPT, RUNNABLE_CONTEXTS, LLM_RUN_ERRORS, buildLLMMes
 export { summaryNoteStaleness } from "../src/staleness.js";
 export { planBulk, bulkGate, plannedTemplateNames } from "../src/bulk.js";
 export { DETECT_REASONS, DETECT_SYSTEM_PROMPT, buildDetectMessages, parseDetectAnswer, detectPaperTypes } from "../src/paper-type.js";
+export { AUTO_SUMMARY_DEFAULTS, parseFirstSeenMap, updateFirstSeenMap, sanitizeWaitHours, planItemAction, chooseNoteType, classifyFailure, sanitizeTriggerTag, tagChangesForOutcome } from "../src/auto-summary.js";
