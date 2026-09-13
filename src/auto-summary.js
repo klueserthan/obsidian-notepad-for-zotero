@@ -4,6 +4,9 @@
 // WHAT the sweep should do, given plain values it's handed. Mirrors src/bulk.js's
 // division of labor (bootstrap acts, src/ decides) and its table-driven tests.
 
+import { DETECT_REASONS } from "./paper-type.js";
+import { LLM_RUN_ERRORS } from "./llm-runner.js";
+
 export const AUTO_SUMMARY_DEFAULTS = {
   TRIGGER_TAG: "zps:summarize",
   FAILURE_TAG: "zps:summarize-failed",
@@ -33,7 +36,7 @@ export function updateFirstSeenMap(storedMap, taggedKeys, nowMs) {
   const keys = Array.isArray(taggedKeys) ? taggedKeys : [];
   const next = {};
   for (const key of keys) {
-    next[key] = Object.prototype.hasOwnProperty.call(stored, key) ? stored[key] : nowMs;
+    next[key] = Object.hasOwn(stored, key) ? stored[key] : nowMs;
   }
   return next;
 }
@@ -64,8 +67,8 @@ export function planItemAction({ hasSummaryNote, fulltextReady, firstSeen, now, 
 // network blip can't fix the wrong note type into a create-once note.
 export function chooseNoteType(detectionResult, defaultName) {
   const reason = detectionResult && detectionResult.reason;
-  if (reason === "http-failed") return { providerFailure: true };
-  if (reason === "no-abstract" || reason === "no-candidate" || reason === "invalid-answer") {
+  if (reason === DETECT_REASONS.HTTP_FAILED) return { providerFailure: true };
+  if (reason === DETECT_REASONS.NO_ABSTRACT || reason === DETECT_REASONS.NO_CANDIDATE || reason === DETECT_REASONS.INVALID_ANSWER) {
     return { templateName: defaultName };
   }
   if (detectionResult && detectionResult.templateName) return { templateName: detectionResult.templateName };
@@ -82,7 +85,7 @@ export function classifyFailure({ code, status }) {
     return "abort";
   }
   if (code === "resolve.renderFailed") return "item";
-  if (code === "llm.run.httpFailed") {
+  if (code === LLM_RUN_ERRORS.HTTP_FAILED) {
     const isProviderStatus = status == null || PROVIDER_HTTP_STATUSES.has(status) || (status >= 500 && status <= 599);
     return isProviderStatus ? "provider" : "item";
   }

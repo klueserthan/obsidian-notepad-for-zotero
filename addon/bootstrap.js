@@ -931,8 +931,12 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return C.parseFirstSeenMap(raw);
   },
   setAutoSummaryFirstSeenMap(map) {
-    try { Zotero.Prefs.set(this.PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify(map || {}), true); }
-    catch (e) {}
+    let json = JSON.stringify(map || {});
+    try {
+      // Most sweeps leave the map unchanged; skip the identical pref write.
+      if (Zotero.Prefs.get(this.PREF_AUTO_SUMMARY_FIRST_SEEN, true) === json) return;
+      Zotero.Prefs.set(this.PREF_AUTO_SUMMARY_FIRST_SEEN, json, true);
+    } catch (e) {}
   },
   llmConfigured() {
     return !!(this.llmBaseURL().trim() && this.llmModel().trim());
