@@ -280,3 +280,262 @@ describe("note types: startup archive and seeding memory", function () {
     assert.isFalse(await exists(at("note-review.md")), "seeded once");
   });
 });
+
+// Editor bridge actions and Composer propagation (KTD3, KTD6, KTD8, KTD10):
+// drives the privileged actions directly against a throwaway Templates folder,
+// with the confirmation helper stubbed to record and accept.
+describe("note types: editor bridge actions and Composer propagation", function () {
+  const Z = () => Zotero.ZON;
+  const XHTML = "http://www.w3.org/1999/xhtml";
+  let dir, prevDir, prevDefault, win, realConfirm, confirms, pane;
+
+  const file = (name, ext = ".md") => PathUtils.join(dir, name + ext);
+  const write = (name, text, ext) => IOUtils.writeUTF8(file(name, ext), text);
+  const read = (name, ext) => IOUtils.readUTF8(file(name, ext));
+  const exists = (path) => IOUtils.exists(path);
+  const builtin = (name) => Z().BUILTIN_TEMPLATES[name];
+  const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
+  const declared = (label, body = "## Notes\n") => `---\npaperType: ${label}\npaperTypeDescription: ${label} papers\n---\n${body}`;
+  const entry = (res, name) => res.templates.find((t) => t.name === name);
+  const archived = async () => (await IOUtils.getChildren(PathUtils.join(dir, "archive"))).map((p) => PathUtils.filename(p)).sort();
+  const folder = async () => (await IOUtils.getChildren(dir)).map((p) => PathUtils.filename(p)).filter((f) => !f.startsWith(".")).sort();
+  const setDefault = (name) => Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, name, true);
+  const getDefault = () => Zotero.Prefs.get(Z().PREF_DEFAULT_NOTE, true);
+  const settle = () => new Promise((resolve) => win.setTimeout(resolve, 150)); // let the 30 ms preview timer run
+
+  // A minimal open Composer pane: openRecs() finds any `.zon-content` wrap
+  // carrying a rec, so propagation runs through the real picker/preview code.
+  async function openPane(selected) {
+    const doc = win.document;
+    const wrap = doc.createElementNS(XHTML, "div");
+    wrap.className = "zon-content";
+    const rec = {
+      wrap, templateSel: doc.createElementNS(XHTML, "select"), host: doc.createElementNS(XHTML, "div"),
+      statusEl: doc.createElementNS(XHTML, "span"), item: null, previewTimer: null, previewSeq: 0, composeMd: "", composeState: null,
+    };
+    wrap.append(rec.templateSel, rec.host, rec.statusEl);
+    wrap._zon = rec;
+    doc.documentElement.appendChild(wrap);
+    pane = wrap;
+    await Z().populateComposerTemplates(rec);
+    rec.templateSel.value = selected;
+    assert.equal(rec.templateSel.value, selected);
+    await settle();
+    return rec;
+  }
+
+  before(async function () {
+    win = Zotero.getMainWindow();
+    await Z().injectCore(win);
+    prevDir = Zotero.Prefs.get(Z().PREF_TEMPLATES_DIR, true);
+    prevDefault = Zotero.Prefs.get(Z().PREF_DEFAULT_NOTE, true);
+    realConfirm = Z().confirmNoteTypeAction;
+  });
+
+  beforeEach(async function () {
+    dir = PathUtils.join(PathUtils.tempDir, "zon-editor-" + Date.now() + "-" + Math.floor(Math.random() * 1e6));
+    await IOUtils.makeDirectory(dir, { createAncestors: true });
+    Zotero.Prefs.set(Z().PREF_TEMPLATES_DIR, dir, true);
+    setDefault("");
+    confirms = [];
+    Z().confirmNoteTypeAction = (w, message) => { confirms.push(message); return true; };
+  });
+
+  afterEach(async function () {
+    Z().confirmNoteTypeAction = realConfirm;
+    if (pane) { pane.remove(); pane = null; }
+    await IOUtils.remove(dir, { recursive: true, ignoreAbsent: true });
+  });
+
+  after(async function () {
+    Zotero.Prefs.set(Z().PREF_TEMPLATES_DIR, prevDir || "", true);
+    setDefault(prevDefault || "");
+    await Z().loadTemplates();
+  });
+
+  it("a new note type with a taken label is refused naming the holder; a free label writes both keys and lists it (AE3)", async function () {
+    await write("note-qualitative", builtin("note-qualitative"));
+    const body = win.ZONCore.splitDeclaration(builtin("note-qualitative")).body; // Duplicate
+    let res = await Z().saveNoteType(win, { isNew: true, name: "mixed", label: "Qualitative ", description: "Both kinds", body });
+    assert.isFalse(res.ok);
+    assert.include(res.message, "note-qualitative");
+    assert.isFalse(await exists(file("mixed")));
+    res = await Z().saveNoteType(win, { isNew: true, name: "mixed", label: "mixed-methods", description: "", body });
+    assert.isFalse(res.ok, "description is required (R11)");
+    res = await Z().saveNoteType(win, { isNew: true, name: "NOTE-QUALITATIVE", label: "mixed-methods", description: "Both kinds", body });
+    assert.isFalse(res.ok, "New refuses an existing name in any case (KTD9)");
+    assert.equal(await read("note-qualitative"), builtin("note-qualitative"));
+
+    res = await Z().saveNoteType(win, { isNew: true, name: "mixed", label: "mixed-methods", description: "Qualitative and quantitative together", body });
+    assert.isTrue(res.ok, res.message);
+    assert.equal(res.name, "mixed");
+    const decl = Z().paperTypeDeclarationOf(await read("mixed"));
+    assert.deepEqual(decl, { label: "mixed-methods", description: "Qualitative and quantitative together" });
+    assert.include(Z().orderedTemplateNames(), "mixed");
+    assert.include(entry(res, "mixed"), { label: "mixed-methods", needsPaperType: false, inherited: false, shipped: false });
+  });
+
+  it("renaming the default note-quantitative moves the file, the default follows, and seeding doesn't recreate it (AE4)", async function () {
+    await write("note-quantitative", builtin("note-quantitative"));
+    await write("note-review", builtin("note-review"));
+    setDefault("note-quantitative");
+    const res = await Z().renameNoteType(win, "note-quantitative", "note-quant");
+    assert.isTrue(res.ok, res.message);
+    assert.equal(res.name, "note-quant");
+    assert.isFalse(await exists(file("note-quantitative")));
+    assert.equal(await read("note-quant"), builtin("note-quantitative"));
+    assert.equal(getDefault(), "note-quant");
+    assert.equal(Z().defaultNoteTemplate(), "note-quant");
+    await Z().seedTemplatesFolder();
+    assert.isFalse(await exists(file("note-quantitative")), "a renamed shipped note type is not re-seeded (KTD3)");
+  });
+
+  it("renaming onto an existing name in any letter case is refused and moves nothing; a case-only rename works", async function () {
+    await write("note-review", builtin("note-review"));
+    await write("mine", declared("mine"));
+    for (const target of ["note-review", "Note-Review", "NOTE-REVIEW"]) {
+      const res = await Z().renameNoteType(win, "mine", target);
+      assert.isFalse(res.ok, target);
+      assert.include(res.message, "note-review");
+    }
+    assert.deepEqual(await folder(), ["mine.md", "note-review.md"]);
+    assert.equal(await read("note-review"), builtin("note-review"));
+    const res = await Z().renameNoteType(win, "mine", "Mine");
+    assert.isTrue(res.ok, res.message);
+    assert.deepEqual(await folder(), ["Mine.md", "note-review.md"]);
+    assert.include(Z().noteTypeNames(), "Mine");
+  });
+
+  it("renaming an upgraded note-quantitative copy without its own declaration keeps it listed under quantitative", async function () {
+    const text = withoutFrontmatter(builtin("note-quantitative"));
+    await write("note-quantitative", text);
+    await write("note-review", builtin("note-review"));
+    setDefault("note-quantitative");
+    await Z().loadTemplates();
+    assert.isTrue(entry({ templates: Z().noteTypeList() }, "note-quantitative").inherited);
+    const res = await Z().renameNoteType(win, "note-quantitative", "note-quant");
+    assert.isTrue(res.ok, res.message);
+    assert.include(entry(res, "note-quant"), { label: "quantitative", inherited: false, needsPaperType: false });
+    assert.include(Z().noteTypeNames(), "note-quant");
+    const written = await read("note-quant");
+    assert.equal(Z().paperTypeDeclarationOf(written).label, "quantitative");
+    assert.include(written, text.replace(/^\n+/, ""), "the body is kept");
+    assert.equal(getDefault(), "note-quant");
+  });
+
+  it("Delete refuses the last declared note type, archives one of two after confirmation, and always allows an undeclared file (AE6)", async function () {
+    await write("note-review", builtin("note-review"));
+    await write("my-notes", "## Mine\n");
+    let res = await Z().deleteNoteType(win, "note-review");
+    assert.isFalse(res.ok);
+    assert.include(res.message, "note-review");
+    assert.lengthOf(confirms, 0, "refused before asking");
+    assert.isTrue(await exists(file("note-review")));
+
+    res = await Z().deleteNoteType(win, "my-notes");
+    assert.isTrue(res.ok, res.message);
+    assert.deepEqual(await archived(), ["my-notes.md"]);
+
+    await write("note-theoretical", builtin("note-theoretical"));
+    Z().confirmNoteTypeAction = () => false;
+    res = await Z().deleteNoteType(win, "note-theoretical");
+    assert.isFalse(res.ok, "cancelled");
+    assert.isTrue(await exists(file("note-theoretical")));
+    Z().confirmNoteTypeAction = (w, message) => { confirms.push(message); return true; };
+
+    setDefault("note-theoretical");
+    res = await Z().deleteNoteType(win, "note-theoretical");
+    assert.isTrue(res.ok, res.message);
+    assert.lengthOf(confirms, 2);
+    assert.deepEqual(await archived(), ["my-notes.md", "note-theoretical.md"]);
+    assert.notInclude(Z().orderedTemplateNames(), "note-theoretical");
+    assert.isUndefined(entry(res, "note-theoretical"));
+    assert.equal(getDefault(), "note-review", "a default pointing at the deleted type falls back (KTD6)");
+    await Z().seedTemplatesFolder();
+    assert.isFalse(await exists(file("note-theoretical")), "a deleted shipped note type is not re-seeded (R16)");
+  });
+
+  it("Reset restores an edited note-qualitative to the built-in text, and is refused while another note type holds its label (AE5)", async function () {
+    await write("note-qualitative", "---\npaperType: qualitative\npaperTypeDescription: edited\n---\n## Mine\n");
+    await write("interviews", declared("interviews"));
+    let res = await Z().resetNoteType(win, "interviews");
+    assert.isFalse(res.ok, "only shipped names");
+    res = await Z().resetNoteType(win, "note-review");
+    assert.isFalse(res.ok, "only shipped names present in the folder");
+    res = await Z().resetNoteType(win, "note-qualitative");
+    assert.isTrue(res.ok, res.message);
+    assert.lengthOf(confirms, 1);
+    assert.equal(await read("note-qualitative"), builtin("note-qualitative"));
+
+    await write("note-qualitative", declared("qual-edited"));
+    await write("ethnography", declared("Qualitative"));
+    res = await Z().resetNoteType(win, "note-qualitative");
+    assert.isFalse(res.ok);
+    assert.include(res.message, "ethnography");
+    assert.lengthOf(confirms, 1, "refused before asking");
+    assert.equal(await read("note-qualitative"), declared("qual-edited"));
+  });
+
+  it("saving a label and description onto undeclared my-notes.md lists it in the pickers and detection candidates (AE2)", async function () {
+    await write("note-review", builtin("note-review"));
+    const body = "## My notes\n\n{{ title }}\n";
+    await write("my-notes", body);
+    await Z().loadTemplates();
+    assert.include(entry({ templates: Z().noteTypeList() }, "my-notes"), { needsPaperType: true, label: "" });
+    assert.notInclude(Z().orderedTemplateNames(), "my-notes");
+    let res = await Z().saveNoteType(win, { name: "my-notes", label: "", description: "One case in depth", body });
+    assert.isFalse(res.ok, "label is required (R11)");
+    res = await Z().saveNoteType(win, { name: "missing", label: "x", description: "y", body });
+    assert.isFalse(res.ok, "updating an unknown note type is refused");
+
+    res = await Z().saveNoteType(win, { name: "my-notes", label: "case-study", description: "One case in depth", body });
+    assert.isTrue(res.ok, res.message);
+    assert.include(entry(res, "my-notes"), { needsPaperType: false, label: "case-study" });
+    assert.include(Z().orderedTemplateNames(), "my-notes");
+    const loaded = Z()._templates;
+    const candidates = win.ZONCore.paperTypeCandidates(Object.keys(loaded).map((name) => ({ name, text: loaded[name].text })));
+    assert.include(candidates.map((c) => c.name), "my-notes");
+    assert.include(await read("my-notes"), body);
+    assert.deepEqual(await folder(), ["my-notes.md", "note-review.md"]);
+  });
+
+  it("saving an existing .njk note type updates that file and creates no .md sibling; rename keeps the extension", async function () {
+    await write("lab", declared("experiment"), ".njk");
+    let res = await Z().saveNoteType(win, { name: "lab", label: "experiment", description: "Lab studies", body: "## Changed\n" });
+    assert.isTrue(res.ok, res.message);
+    assert.include(await read("lab", ".njk"), "## Changed");
+    assert.isFalse(await exists(file("lab")));
+    assert.equal(entry(res, "lab").path, file("lab", ".njk"));
+    res = await Z().renameNoteType(win, "lab", "lab-work");
+    assert.isTrue(res.ok, res.message);
+    assert.deepEqual(await folder(), ["lab-work.njk"]);
+  });
+
+  it("an open Composer pane follows a rename, re-renders on a content change, and falls back per KTD6 after a delete (KTD10)", async function () {
+    for (const n of ["note-review", "note-quantitative", "note-qualitative"]) await write(n, builtin(n));
+    await Z().loadTemplates();
+    const rec = await openPane("note-quantitative");
+
+    let res = await Z().renameNoteType(win, "note-quantitative", "note-quant");
+    assert.isTrue(res.ok, res.message);
+    assert.equal(rec.templateSel.value, "note-quant");
+    await settle();
+    assert.include(rec.statusEl.textContent, "note-quant");
+
+    let seq = rec.previewSeq;
+    await Z().refreshTemplates();
+    await settle();
+    assert.equal(rec.previewSeq, seq, "nothing changed → no re-render");
+    res = await Z().saveNoteType(win, { name: "note-quant", label: "quantitative", description: "Numbers", body: "## Edited\n" });
+    assert.isTrue(res.ok, res.message);
+    await settle();
+    assert.isAbove(rec.previewSeq, seq, "a changed note type re-renders");
+
+    res = await Z().deleteNoteType(win, "note-quant");
+    assert.isTrue(res.ok, res.message);
+    assert.equal(rec.templateSel.value, Z().defaultNoteTemplate());
+    assert.equal(rec.templateSel.value, "note-qualitative");
+    await settle();
+    assert.include(rec.statusEl.textContent, "note-quant", "the pane says its note type is gone");
+  });
+});

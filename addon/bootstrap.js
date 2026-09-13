@@ -336,21 +336,24 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("watchWindowFocus failed: " + e); }
   },
 
-  // Re-read the templates folder so edits/additions made in another app show up
-  // without restarting Zotero. Called on window focus (the natural moment: you
-  // edit a template file elsewhere, then switch back to Zotero). Content edits
-  // are picked up silently — the next Insert resolves from the refreshed set;
-  // when the listed note types change (added/renamed/removed/(un)declared) the open
-  // pickers are repopulated too, so the dropdown stays current. Repopulating
-  // only on a name change avoids resetting a manually-chosen colour/sync on
-  // every alt-tab (populating re-applies the template's default colour/sync).
-  async refreshTemplates() {
-    let before = this.noteTypeNames().join("\n");
+  // Re-read the templates folder so edits made in another app or in the editor
+  // reach every open Composer (KTD10). Called on window focus and after each
+  // editor action. When the declared note types change — added, removed,
+  // renamed, (un)declared, or their text edited — every open pane repopulates
+  // and re-renders its preview; nothing changed → no pane is touched, so an
+  // alt-tab never re-renders. `rename` ({ from, to }) carries a pane's
+  // selection across a rename; a pane whose note type vanished falls back to the
+  // default (KTD6) and says so.
+  async refreshTemplates(rename = null) {
+    let snapshot = () => JSON.stringify(this.noteTypeNames().map((n) => [n, this._templates[n].text, this._templates[n].paperType]));
+    let before = snapshot();
     try { await this.loadTemplates(); } catch (e) { return; }
-    let after = this.noteTypeNames().join("\n");
-    if (before === after) return;
+    if (before === snapshot()) return;
     for (let rec of this.openRecs()) {
-      try { await this.populateComposerTemplates(rec); } catch (e) {}
+      let prev = rec.templateSel && rec.templateSel.value;
+      if (rename && prev === rename.from) rec.notice = this.t("composer.noteTypeRenamed", { name: prev, to: rename.to });
+      else if (prev && !this.noteTypeNames().includes(prev)) rec.notice = this.t("composer.noteTypeGone", { name: prev });
+      try { await this.populateComposerTemplates(rec, rename); } catch (e) {}
     }
   },
 
@@ -404,6 +407,22 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "tip.builder": "Author a template with a live preview, then save it to your Templates folder — the Composer uses it to generate the note",
     "status.templateSaved": "Saved template ‘{name}’ to your Templates folder",
     "msg.builderOverwrite": "A template named ‘{name}.md’ already exists. Overwrite it?",
+    // Note-type editor actions (bridge calls, KTD8)
+    "noteTypes.saved": "Saved note type ‘{name}’.",
+    "noteTypes.renamed": "Renamed ‘{name}’ to ‘{to}’.",
+    "noteTypes.deleted": "Moved ‘{name}’ to the archive folder.",
+    "noteTypes.reset": "Reset ‘{name}’ to the built-in version.",
+    "noteTypes.cancelled": "Cancelled.",
+    "noteTypes.failed": "Couldn't complete the action: {error}",
+    "noteTypes.labelRequired": "Paper type label is required.",
+    "noteTypes.descriptionRequired": "A one-line paper type description is required.",
+    "noteTypes.labelTaken": "The paper type label ‘{label}’ is already used by ‘{name}’.",
+    "noteTypes.lastDeclared": "‘{name}’ is the last note type with a paper type, so it can't be deleted.",
+    "noteTypes.notShipped": "‘{name}’ isn't a built-in note type in your Templates folder.",
+    "noteTypes.confirmDelete": "Move note type ‘{name}’ to the archive folder? You can restore it by moving the file back into the Templates folder.",
+    "noteTypes.confirmReset": "Replace ‘{name}’ with the built-in version? Your changes to this note type will be lost.",
+    "composer.noteTypeRenamed": "Note type ‘{name}’ was renamed to ‘{to}’.",
+    "composer.noteTypeGone": "Note type ‘{name}’ no longer exists — showing the default note type.",
     "label.autoSync": "Auto-sync",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
     "menu.title": "Obsidian Notepad",
@@ -715,7 +734,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           || (Object.hasOwn(this.BUILTIN_TEMPLATES, name) ? this.paperTypeDeclarationOf(this.BUILTIN_TEMPLATES[name]) : null);
         out[name] = this.templateKindOf(text) === "document"
           ? { kind: "document", path: p, paperType, text }
-          : Object.assign({ kind: "format", path: p, paperType }, this.parseTemplateText(text));
+          : Object.assign({ kind: "format", path: p, paperType, text }, this.parseTemplateText(text));
       } catch (e) {}
     }
     this._templates = out;
@@ -1333,14 +1352,14 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
   // (Re)fill the Composer picker from the declared note types once loadTemplates
   // + ZONCore are ready. Default note type first; preserves any selection.
-  async populateComposerTemplates(rec) {
+  async populateComposerTemplates(rec, rename = null) {
     let sel = rec.templateSel;
     if (!sel) return;
     let win = rec.wrap.ownerDocument.defaultView;
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
     let names = this.orderedTemplateNames();
-    let prev = sel.value;
+    let prev = rename && sel.value === rename.from ? rename.to : sel.value;
     let doc = sel.ownerDocument;
     sel.textContent = "";
     for (let n of names) {
@@ -1377,13 +1396,15 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let win = rec.wrap.ownerDocument.defaultView;
     let item = rec.item;
     let seq = ++rec.previewSeq;
+    let notice = rec.notice || ""; // set by refreshTemplates; shown once instead of a blank status
+    rec.notice = "";
     let host = rec.host;
     if (!item) {
       host.textContent = "";
       rec.composeMd = ""; rec.composeState = null;
       this.clearLLMError(rec);
       this.updateComposerButtons(rec);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
@@ -1399,7 +1420,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-empty";
       d.textContent = this.t("composer.noNoteTypes");
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
     this.setStatus(rec, this.t("composer.rendering"));
@@ -1427,7 +1448,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-error";
       d.textContent = this.t("composer.previewFailed", { error: err });
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1461,7 +1482,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-error";
       d.textContent = this.t("composer.previewFailed", { error: err });
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1471,7 +1492,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-empty";
       d.textContent = this.t("composer.previewEmpty");
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1490,7 +1511,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       host.textContent = "";
       this.log("preview render failed: " + e);
     }
-    this.setStatus(rec, "");
+    this.setStatus(rec, notice);
   },
 
   // Turn the compose's raw md + gate state into preview HTML. When every {% llm %}
@@ -3138,9 +3159,17 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
     let self = this;
     let bridge = {
-      // Templates only — the Builder never writes an item note file. Saving hands
-      // off to the Composer (rec) so it selects the just-saved template.
-      save: (name, text, setDefault) => self.builderSaveTemplate(win, rec, name, text, setDefault),
+      // Note-type editor actions (KTD8): each re-validates, writes, refreshes once,
+      // and resolves { ok, message, name?, templates }. A string first argument to
+      // save is the legacy builder UI (name, text, setDefault) until U6 replaces it.
+      list: () => self.noteTypeList(),
+      save: (draft, ...legacy) => typeof draft === "string"
+        ? self.builderSaveTemplate(win, rec, draft, ...legacy)
+        : self.saveNoteType(win, draft),
+      rename: (name, newName) => self.renameNoteType(win, name, newName),
+      delete: (name) => self.deleteNoteType(win, name),
+      reset: (name) => self.resetNoteType(win, name),
+      confirm: (message) => self.confirmNoteTypeAction(win, message),
       close: () => self.closeTemplateBuilder(win),
     };
     // The Builder is a pure template-authoring surface. Seed the editor with the
@@ -3286,6 +3315,171 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // just-saved template and refresh the preview.
     try { await this.selectComposerTemplate(rec, safe); } catch (e) { this.log("builder handoff failed: " + e); }
     return this.t("status.templateSaved", { name: safe }) + (setDefault ? " — set as default" : "");
+  },
+
+  // ------------------------------------------------ note-type editor actions
+  // The editor's list (R13): every loaded file, alphabetical, including
+  // undeclared ones. `label`/`description` are the effective declaration (own or
+  // inherited from a shipped built-in, KTD2); `inherited` when the file itself
+  // declares none; `shipped` for the four built-in names (Reset is offered only
+  // for those); `needsPaperType` when no picker lists it (R3); `duplicateLabel`
+  // when another note type declares the same label (KTD13).
+  noteTypeList() {
+    let all = this._templates || {}, listed = this.noteTypeNames();
+    let norm = (t) => t.paperType ? t.paperType.label.trim().toLowerCase() : null;
+    let counts = new Map();
+    for (let n in all) if (norm(all[n])) counts.set(norm(all[n]), (counts.get(norm(all[n])) || 0) + 1);
+    return Object.keys(all).sort((a, b) => a.localeCompare(b)).map((name) => {
+      let t = all[name];
+      return {
+        name, path: t.path, text: t.text,
+        label: t.paperType ? t.paperType.label : "",
+        description: (t.paperType && t.paperType.description) || "",
+        inherited: !!t.paperType && !this.paperTypeDeclarationOf(t.text),
+        shipped: Object.hasOwn(this.BUILTIN_TEMPLATES, name),
+        needsPaperType: !listed.includes(name),
+        duplicateLabel: !!norm(t) && counts.get(norm(t)) > 1,
+      };
+    });
+  },
+
+  // Shared by every editor action: ZONCore for the pure rules (KTD9) and a fresh
+  // load, so validation never runs against a stale folder.
+  async noteTypeCore(win) {
+    if (!win.ZONCore) await this.injectCore(win);
+    await this.refreshTemplates();
+    return win.ZONCore;
+  },
+  noteTypeResult(ok, message, name) {
+    return Object.assign({ ok, message, templates: this.noteTypeList() }, ok && name ? { name } : {});
+  },
+  // A file operation threw part-way: reload what is actually on disk, report it.
+  async noteTypeFailed(e) {
+    await this.refreshTemplates();
+    return this.noteTypeResult(false, this.t("noteTypes.failed", { error: (e && e.message) || e }));
+  },
+  // The label a note type may not take: another note type's effective
+  // declaration, an inherited one read from the built-in's text.
+  labelClash(C, label, currentName) {
+    let sources = this.noteTypeList().map((e) => ({ name: e.name, text: e.inherited ? this.BUILTIN_TEMPLATES[e.name] : e.text }));
+    return C.findLabelClash(label, sources, currentName);
+  },
+  // A shipped name leaving the folder by Rename/Delete stays recorded as seeded,
+  // so the next start doesn't re-create it (KTD3, R16).
+  async rememberSeeded(name) {
+    if (!Object.hasOwn(this.BUILTIN_TEMPLATES, name)) return;
+    try {
+      let dir = this.templatesDir(), seeded = (await this.templatesState(dir)).seeded || [];
+      if (!seeded.includes(name)) await this.saveTemplatesState(dir, { seeded: seeded.concat(name) });
+    } catch (e) { this.log("rememberSeeded failed for " + name + ": " + e); }
+  },
+  confirmNoteTypeAction(win, message) {
+    return Services.prompt.confirm(win, this.t("menu.title"), message);
+  },
+
+  // Save (KTD7, KTD8): `draft` = { name, isNew, label, description, body }, where
+  // body is the markdown without the declaration. isNew creates `<name>.md` and
+  // refuses any existing name; otherwise the existing note type is updated in
+  // place at its recorded path (.md/.njk/.txt) — Save never renames.
+  async saveNoteType(win, draft) {
+    let C = await this.noteTypeCore(win);
+    let d = draft || {}, all = this._templates || {};
+    let label = String(d.label || "").trim(), description = String(d.description || "").trim();
+    let name = String(d.name || "");
+    if (d.isNew) {
+      let v = C.validateTemplateName(name, Object.keys(all));
+      if (!v.valid) return this.noteTypeResult(false, v.reason);
+      name = v.name;
+    } else if (!Object.hasOwn(all, name)) {
+      return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
+    }
+    if (!label) return this.noteTypeResult(false, this.t("noteTypes.labelRequired"));
+    if (!description || /[\r\n]/.test(description)) return this.noteTypeResult(false, this.t("noteTypes.descriptionRequired"));
+    let clash = this.labelClash(C, label, name);
+    if (clash) return this.noteTypeResult(false, this.t("noteTypes.labelTaken", { label, name: clash }));
+    let text = C.composeDeclaration(C.splitDeclaration(String(d.body || "")).body, label, description);
+    try {
+      let path = d.isNew ? PathUtils.join(this.templatesDir(), name + ".md") : all[name].path;
+      if (d.isNew) {
+        await IOUtils.makeDirectory(this.templatesDir(), { ignoreExisting: true, createAncestors: true });
+        // an unreadable file the loader skipped still must not be overwritten
+        if (await IOUtils.exists(path)) return this.noteTypeResult(false, C.validateTemplateName(name, [name]).reason);
+      }
+      await this.safeWrite(path, text);
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.saved", { name }), name);
+  },
+
+  // Rename (R15, KTD8): refuses an existing name in any letter case; a case-only
+  // rename moves through a temporary name. An inherited declaration is written
+  // into the file first so the renamed file stays declared. The default pref
+  // follows the rename (R8).
+  async renameNoteType(win, name, newName) {
+    let C = await this.noteTypeCore(win);
+    let all = this._templates || {}, t = Object.hasOwn(all, name) ? all[name] : null;
+    if (!t) return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
+    let v = C.validateTemplateName(newName, Object.keys(all).filter((n) => n !== name));
+    if (!v.valid) return this.noteTypeResult(false, v.reason);
+    if (v.name === name) return this.noteTypeResult(true, "", name);
+    let target = PathUtils.join(PathUtils.parent(t.path), v.name + t.path.match(/\.[^.]+$/)[0]);
+    try {
+      let own = this.paperTypeDeclarationOf(t.text);
+      if (t.paperType && !own) {
+        await this.safeWrite(t.path, C.composeDeclaration(t.text, t.paperType.label, t.paperType.description));
+      }
+      if (target.toLowerCase() === t.path.toLowerCase()) {
+        let tmp = t.path + ".zon-rename";
+        await IOUtils.move(t.path, tmp, { noOverwrite: true });
+        await IOUtils.move(tmp, target, { noOverwrite: true });
+      } else {
+        await IOUtils.move(t.path, target, { noOverwrite: true });
+      }
+      await this.rememberSeeded(name);
+      if (Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) === name) Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, v.name, true);
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates({ from: name, to: v.name });
+    return this.noteTypeResult(true, this.t("noteTypes.renamed", { name, to: v.name }), v.name);
+  },
+
+  // Delete (R16, R18): after confirmation, moves the file into `archive/` (never
+  // overwriting). Refused for the last declared note type; an undeclared file is
+  // always deletable. A default pointing at it is rewritten to the KTD6 fallback.
+  async deleteNoteType(win, name) {
+    await this.noteTypeCore(win);
+    let all = this._templates || {}, t = Object.hasOwn(all, name) ? all[name] : null;
+    if (!t) return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
+    let declared = this.noteTypeNames();
+    if (declared.length === 1 && declared[0] === name) return this.noteTypeResult(false, this.t("noteTypes.lastDeclared", { name }));
+    if (!this.confirmNoteTypeAction(win, this.t("noteTypes.confirmDelete", { name }))) return this.noteTypeResult(false, this.t("noteTypes.cancelled"));
+    try {
+      let archive = PathUtils.join(this.templatesDir(), "archive");
+      await IOUtils.makeDirectory(archive, { ignoreExisting: true });
+      await IOUtils.move(t.path, await this.archivePath(archive, PathUtils.filename(t.path)), { noOverwrite: true });
+      await this.rememberSeeded(name);
+      if (Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) === name) {
+        Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, declared.find((n) => n !== name) || "", true);
+      }
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.deleted", { name }));
+  },
+
+  // Reset to built-in (R17): only a shipped name present in the folder, only
+  // while no other note type holds the built-in's label, after confirmation.
+  async resetNoteType(win, name) {
+    let C = await this.noteTypeCore(win);
+    let all = this._templates || {};
+    if (!Object.hasOwn(this.BUILTIN_TEMPLATES, name) || !Object.hasOwn(all, name)) {
+      return this.noteTypeResult(false, this.t("noteTypes.notShipped", { name }));
+    }
+    let label = this.paperTypeDeclarationOf(this.BUILTIN_TEMPLATES[name]).label;
+    let clash = this.labelClash(C, label, name);
+    if (clash) return this.noteTypeResult(false, this.t("noteTypes.labelTaken", { label, name: clash }));
+    if (!this.confirmNoteTypeAction(win, this.t("noteTypes.confirmReset", { name }))) return this.noteTypeResult(false, this.t("noteTypes.cancelled"));
+    try { await this.safeWrite(all[name].path, this.BUILTIN_TEMPLATES[name]); } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.reset", { name }), name);
   },
 
   // Point a Composer pane's template picker at `name` and refresh its preview.
