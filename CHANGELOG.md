@@ -84,9 +84,10 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   fingerprint, so cached Run-LLM resolutions are never invalidated.
 - **Addon-owned templates folder with seeding.** The templates folder now
   defaults to `paper-summarizer/templates` under the Zotero data directory. On
-  startup the folder is created and each starter template is written **only if
-  its file is missing** — user edits are never overwritten, and deleting a
-  seeded file restores the pristine version on the next start. A one-time
+  startup the folder is created and each starter note type is written once
+  per folder — user edits are never overwritten, and a starter you delete or
+  rename is not re-created (see *Seeding remembers what it has already
+  created* below). A one-time
   migration clears a vault-era *Templates folder* preference so the addon
   folder takes effect (the old folder and its files are left untouched on
   disk; point the preference back at it if you really want the old behavior).
@@ -166,9 +167,9 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   Duplicate, Reset, or closing.
 - **Pickers list only declared note types.** The Composer picker, Settings →
   *Default note template*, and the bulk summary-note dialog now list exactly
-  the templates that declare a unique `paperType` — a template with no
-  declaration, or one duplicating another's label, is excluded and stays
-  editor-only. The Settings default follows a rename and falls back to the
+  the templates that declare a `paperType` — a template with no declaration
+  is excluded and stays editor-only, and a label declared by more than one
+  note type is left out of bulk detection until fixed. The Settings default follows a rename and falls back to the
   first declared note type alphabetically if it's archived or missing.
 - **Seeding remembers what it has already created, per Templates folder.**
   A small state file records which shipped note types were seeded there, so
@@ -176,20 +177,6 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `note-qualitative`, `note-theoretical`, `note-review`) is remembered and it
   is not re-created on the next start — previously, seed-if-missing recreated
   a deleted or renamed shipped note type on every start.
-- **Composer note-type picker lists whole-note templates only.** The Composer's
-  template dropdown and Settings → *Default note template* used to list every
-  template — whole-note scaffolds (`note`, `note-*`, …) mixed in with
-  per-annotation/field building blocks (`abstract`, `critique`, `key-quote`,
-  `highlight`, `snapshot`, and the core `list`/`quote`/`callout`/`compact`
-  formats). Both pickers now show only whole-note scaffolds; building blocks
-  are unchanged and still reachable via `highlights(...)`, a `%% zon …
-  format=<name> %%` marker, and the Template Builder's block configurator. The
-  built-in `research-questions` template — a reusable "Research Questions"
-  section, not a note type — now carries a `%%! kind=section sync=on %%`
-  directive so it classifies as a block instead of a document (a template's
-  first-line `%%!` directive can force block classification even when its
-  content, e.g. an `{% llm %}` block, would otherwise sniff as a whole-note
-  scaffold — see `docs/TEMPLATES.md`).
 - **Cache-friendly LLM prompts: context first, task last.** The per-block user
   message is now `Context:\n<context>\n\nTask:\n<task>` (was task-first), so
   blocks sharing a context spec send byte-identical request prefixes — the
