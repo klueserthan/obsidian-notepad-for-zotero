@@ -56,11 +56,20 @@ var ZON = {
   DEFAULT_TEMPLATES_MIGRATED: false,
   _templates: null,
 
+  // Templates the plugin no longer ships (R5). archiveRetiredTemplates() moves
+  // any `<name>.md|.njk|.txt` among them into `<templatesDir>/archive/` once per
+  // folder (KTD4); nothing is deleted, and a file restored by hand stays put (R7).
+  RETIRED_TEMPLATES: ["abstract", "critique", "highlight", "key-quote", "snapshot",
+    "research-questions", "note", "note-minimal", "note-by-colour"],
+  // Per-folder startup state, inside the Templates folder (the loader ignores
+  // .json): { archived: true, seeded: [shipped names] } (KTD3, KTD4).
+  TEMPLATES_STATE_FILE: ".zon-templates-state.json",
+
   // The note types that ship WITH the plugin (R5), keyed by filename stem and
   // written as `<stem>.md`. Never merged into the loaded set (KTD1) — a note type
   // exists only as a file in the Templates folder. Their text is read only by
-  // seedTemplatesFolder() (writes any MISSING file, never overwrites), by the
-  // loader's shipped-name inheritance (KTD2), and by Reset to built-in.
+  // seedTemplatesFolder() (writes each one once per folder, never overwrites),
+  // by the loader's shipped-name inheritance (KTD2), and by Reset to built-in.
   // Obsidian-free by design: no [[wikilinks]], no > [!callouts]; the leading
   // frontmatter carries only the paper type declaration, stripped before HTML.
   // No leading H1 either — the generate/preview pipeline prepends the
@@ -228,11 +237,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // views live in the same document (which corrupts the caret while typing).
     try { for (let win of Zotero.getMainWindows()) this.removeWraps(win); } catch (e) {}
     this.migrateTemplatesDir();
-    // refreshTemplates, not a bare load: a pane that populated before seeding
-    // finished repopulates once the seeded note types exist.
-    this.seedTemplatesFolder()
-      .then(() => this.refreshTemplates())
-      .catch((e) => this.log("seed/loadTemplates failed: " + e));
+    // Archive → seed → load, each awaited, then open panes refresh (KTD4). Not
+    // awaited here so pane registration below isn't held up by folder IO; a pane
+    // that populated early repopulates when the loaded note types differ.
+    let templatesReady = this.prepareTemplatesFolder();
     for (let win of Zotero.getMainWindows()) this.addToWindow(win);
     try { this.registerSection(); } catch (e) { this.log("registerSection failed: " + e); }
     try {
@@ -246,6 +254,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         });
       }
     } catch (e) { this.log("prefpane register failed: " + e); }
+    await templatesReady;
     this.log("initialized");
   },
 
@@ -514,21 +523,80 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("migrateTemplatesDir failed: " + e); }
   },
 
-  // Seed the templates folder with the builtin starters: create the folder and
-  // write each builtin as `<name>.md` ONLY if that file is missing — user edits
-  // are never overwritten (deleting a seeded file restores it on next startup).
+  // The startup chain after migrateTemplatesDir: archive retired files, seed
+  // never-seeded shipped note types, then load and refresh open panes. Never throws.
+  async prepareTemplatesFolder() {
+    try { await this.archiveRetiredTemplates(); } catch (e) { this.log("archiveRetiredTemplates failed: " + e); }
+    try { await this.seedTemplatesFolder(); } catch (e) { this.log("seedTemplatesFolder failed: " + e); }
+    await this.refreshTemplates();
+  },
+
+  // Per-folder startup state (TEMPLATES_STATE_FILE); {} when absent or unreadable.
+  async templatesState(dir) {
+    try { return JSON.parse(await IOUtils.readUTF8(PathUtils.join(dir, this.TEMPLATES_STATE_FILE))); }
+    catch (e) { return {}; }
+  },
+  async saveTemplatesState(dir, patch) {
+    let state = Object.assign(await this.templatesState(dir), patch);
+    await this.safeWrite(PathUtils.join(dir, this.TEMPLATES_STATE_FILE), JSON.stringify(state, null, 2) + "\n");
+  },
+
+  // Run once per Templates folder (KTD4): move every retired-name template file
+  // into `archive/`. Completion is recorded only when every move succeeded, so a
+  // failed move leaves its file in place and the next start retries; once
+  // recorded, a file moved back by hand is never archived again (R7).
+  async archiveRetiredTemplates() {
+    let dir = this.templatesDir();
+    if (!dir || (await this.templatesState(dir)).archived) return;
+    let children;
+    try { children = await IOUtils.getChildren(dir); } catch (e) { return; } // no folder yet: nothing to archive
+    let archive = PathUtils.join(dir, "archive"), ok = true;
+    for (let p of children) {
+      let m = PathUtils.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
+      if (!m || !this.RETIRED_TEMPLATES.includes(m[1])) continue;
+      try {
+        await IOUtils.makeDirectory(archive, { ignoreExisting: true });
+        await IOUtils.move(p, await this.archivePath(archive, PathUtils.filename(p)), { noOverwrite: true });
+      } catch (e) { ok = false; this.log("archive failed for " + p + ": " + e); }
+    }
+    if (ok) await this.saveTemplatesState(dir, { archived: true });
+  },
+
+  // A free path in `archive/` for `filename`: the plain name, else a timestamp
+  // suffix, else that plus a counter. Never an existing file (noOverwrite on the
+  // move guards the check-then-move gap).
+  async archivePath(archive, filename) {
+    let [, stem, ext] = filename.match(/^(.*)(\.[^.]+)$/);
+    let stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14); // yyyymmddhhmmss
+    let path = PathUtils.join(archive, filename);
+    for (let i = 1; await IOUtils.exists(path); i++) {
+      path = PathUtils.join(archive, stem + "-" + stamp + (i > 1 ? "-" + i : "") + ext);
+    }
+    return path;
+  },
+
+  // Seed the Templates folder with the shipped note types, once per folder
+  // (KTD3): a shipped name is written only when its file is missing AND the
+  // folder's state doesn't record it as seeded; every name then present is
+  // recorded. So user edits are never overwritten, and a shipped note type the
+  // researcher deleted or renamed is not re-created on the next start (R16).
   // Writes go through safeWrite (atomic tmp+rename), same as Builder saves.
   async seedTemplatesFolder() {
     let dir = this.templatesDir();
     if (!dir) return;
     try { await IOUtils.makeDirectory(dir, { ignoreExisting: true, createAncestors: true }); }
     catch (e) { this.log("seedTemplatesFolder mkdir failed: " + e); return; }
+    let seeded = (await this.templatesState(dir)).seeded || [];
+    let added = [];
     for (let name of Object.keys(this.BUILTIN_TEMPLATES)) {
+      if (seeded.includes(name)) continue;
       try {
         let p = PathUtils.join(dir, name + ".md");
         if (!(await IOUtils.exists(p))) await this.safeWrite(p, this.BUILTIN_TEMPLATES[name]);
+        added.push(name); // a failed write stays unrecorded, so the next start retries
       } catch (e) { this.log("seedTemplatesFolder write failed for " + name + ": " + e); }
     }
+    if (added.length) await this.saveTemplatesState(dir, { seeded: seeded.concat(added) });
   },
   // KTD6: the stored default when it names a declared note type, else the first
   // declared note type alphabetically, else "" (the Composer shows its empty
