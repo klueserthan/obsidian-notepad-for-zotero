@@ -107,4 +107,34 @@
       </html:div>
     </html:div>
   </groupbox>
+
+  <groupbox>
+    <label><html:h2>Automatic Summary Notes</html:h2></label>
+    <html:div style="display:flex;flex-direction:column;gap:12px;padding:8px;">
+      <!-- Automatic mode checkbox -->
+      <html:label style="display:flex;align-items:flex-start;gap:8px;">
+        <html:input id="zon-auto-summary-enabled" type="checkbox" preference="extensions.zotero-obsidian-notes.autoSummaryEnabled"/>
+        <html:span style="display:flex;flex-direction:column;gap:3px;">
+          <html:span>Automatically summarize tagged items</html:span>
+          <html:span style="color:#888;font-size:11px;">Runs only while desktop Zotero is open — it checks for tagged items on startup and every few minutes, and does nothing while it's closed. Turning this on sends the full text of every item carrying the trigger tag below to the configured LLM, with no confirmation per item, including any backlog already tagged.</html:span>
+        </html:span>
+      </html:label>
+
+      <!-- Trigger tag -->
+      <html:label style="display:flex;flex-direction:column;gap:3px;">
+        <html:span>Trigger tag</html:span>
+        <html:input id="zon-auto-summary-tag" type="text" style="flex:1;box-sizing:border-box;"
+          preference="extensions.zotero-obsidian-notes.autoSummaryTriggerTag"/>
+        <html:span style="color:#888;font-size:11px;">An item carrying this tag is picked up for automatic summarization (default: zps:summarize). Can't be blank, or match a failure tag or the Summary Note marker tag.</html:span>
+      </html:label>
+
+      <!-- Full-text wait -->
+      <html:label style="display:flex;flex-direction:column;gap:3px;">
+        <html:span>Full-text wait (hours)</html:span>
+        <html:input id="zon-auto-summary-wait" type="number" min="1" style="flex:1;box-sizing:border-box;"
+          preference="extensions.zotero-obsidian-notes.autoSummaryWaitHours"/>
+        <html:span style="color:#888;font-size:11px;">How long to wait for a tagged item's PDF to have full text before marking it a "no full text" failure (default: 24).</html:span>
+      </html:label>
+    </html:div>
+  </groupbox>
 </vbox>

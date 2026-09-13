@@ -79,7 +79,8 @@ export function parseDetectAnswer(text, n) {
 // runs the rest through the shared bounded pool at settings.concurrency
 // (shouldStop passed through for KTD5's mid-run cancel). `onRow(key, result)`
 // fires as each row settles; result is `{ templateName, label }` on success,
-// else `{ reason, detail }` (detail only for http-failed, already sanitized).
+// else `{ reason, detail, status }` (detail and status only for http-failed:
+// detail already sanitized, status the numeric HTTP status or null).
 // Never throws for a single row; resolves once every row has settled or
 // shouldStop has cut the run short.
 export async function detectPaperTypes(rows, candidates, settings, fetchFn, onRow, opts = {}) {
@@ -133,7 +134,8 @@ export async function detectPaperTypes(rows, candidates, settings, fetchFn, onRo
         emit(row.key, { reason: DETECT_REASONS.INVALID_ANSWER });
       }
     } catch (error) {
-      emit(row.key, { reason: DETECT_REASONS.HTTP_FAILED, detail: sanitizeError(error) });
+      const status = typeof error?.status === "number" ? error.status : null;
+      emit(row.key, { reason: DETECT_REASONS.HTTP_FAILED, detail: sanitizeError(error), status });
     }
   };
 

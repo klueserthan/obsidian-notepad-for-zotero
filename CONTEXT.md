@@ -44,6 +44,24 @@ A read-only signal in the Composer that an item has annotations newer than its
 newest Summary Note (compared via the note's dateAdded). It never triggers a write.
 _Avoid_: auto-sync, refresh
 
+**Automatic Mode**:
+An opt-in Settings toggle (off by default) that runs the same render →
+resolve → create pipeline as Generate on a periodic sweep, with no click,
+for personal-library items carrying the **Trigger Tag**. The one exception
+to ADR-0001's user-triggered rule; see ADR-0004.
+_Avoid_: auto-sync, background sync
+
+**Trigger Tag**:
+The Zotero tag (default `zps:summarize`) that selects an item for
+**Automatic Mode**. Removed on success; re-adding it after a **Failure Tag**
+retries the item.
+
+**Failure Tag**:
+The tag **Automatic Mode** swaps the **Trigger Tag** for when it can't
+produce a Summary Note — one tag for "no full text after the wait," a
+different one for every other failure — so the outcome is visible on the
+iPad, where the plugin doesn't run.
+
 **Upstream**:
 Acatechnic/obsidian-notepad-for-zotero — the Obsidian-vault-based origin of this fork.
 
@@ -53,7 +71,7 @@ Acatechnic/obsidian-notepad-for-zotero — the Obsidian-vault-based origin of th
 - A **Summary Note** belongs to exactly one Zotero item (as a child note) and carries the **Marker Tag**
 - An item may accumulate several **Summary Notes** over time; the **Stale Indicator** compares the newest one against the item's annotations
 - **Create-once** is the regeneration policy of **One-way render**
-- All item data (metadata, annotations, colour routing, tags, fulltext, LLM output) enters a **Summary Note** only at generate time, through the **Template** — there is no event-driven sync
+- All item data (metadata, annotations, colour routing, tags, fulltext, LLM output) enters a **Summary Note** only at generate time, through the **Template** — there is no event-driven sync; **Automatic Mode**'s periodic sweep (ADR-0004) polls on a timer rather than reacting to Zotero events, so this still holds
 - The **Composer** preview never executes `{% llm %}` blocks (placeholder shown); an explicit Run-LLM action resolves them, and Generate refuses while any block is unresolved (ADR-0001)
 - Live-block syntax (`%% zon %%`, `%% ann:KEY %%`) survives only as the **Template**/Builder authoring model; the generate/preview pipeline strips all delimiters before markdown→HTML, so a **Summary Note** never contains them
 - Old Obsidian vault notes are not migrated by the plugin; anything worth keeping is imported manually (e.g. via Better Notes)

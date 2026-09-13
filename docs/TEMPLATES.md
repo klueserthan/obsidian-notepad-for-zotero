@@ -296,7 +296,9 @@ Templates can include **LLM blocks** — prompt-marked regions resolved by an
 LLM and replaced with static markdown. See
 [docs/adr/0001-explicit-static-llm-interpreter.md](adr/0001-explicit-static-llm-interpreter.md)
 for the design rationale: model calls are BYOK, explicit, and never part of
-normal rendering.
+normal rendering — except the opt-in **Automatic mode** (README, ADR-0004),
+off by default, which runs this same resolve step unattended on a periodic
+sweep for items carrying its trigger tag.
 
 **Requirements:**
 - An LLM provider must be configured in Settings → Paper Summarizer → LLM
