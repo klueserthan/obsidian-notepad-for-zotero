@@ -106,9 +106,17 @@ describe("detectPaperTypes", () => {
     expect(results.r2).toEqual({ templateName: "qual", label: "Qualitative" });
     expect(results.r3.reason).toBe(DETECT_REASONS.HTTP_FAILED);
     expect(results.r3.detail).toBe("Connection refused");
+    expect(results.r3.status).toBeNull();
     expect(results.r4).toEqual({ templateName: "review", label: "Review" });
     expect(results.r5).toEqual({ templateName: "quant", label: "Quantitative" });
     expect(fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("a rejection carrying an HTTP status keeps that status on the http-failed result", async () => {
+    const fetch = makeFetch([Object.assign(new Error("Too many requests"), { status: 429 })]);
+    const results = {};
+    await detectPaperTypes(rows.slice(0, 1), candidates, {}, fetch, (key, result) => { results[key] = result; });
+    expect(results.r1).toMatchObject({ reason: DETECT_REASONS.HTTP_FAILED, status: 429 });
   });
 
   it("an abstract longer than maxContextChars is truncated in the user message", async () => {

@@ -2590,7 +2590,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         this.log("auto summary: detection " + detected.reason + " for " + item.key + ", using " + choice.templateName);
       }
       let res = choice.providerFailure
-        ? { ok: false, code: "detect.httpFailed", status: null }
+        ? { ok: false, code: "detect.httpFailed", status: detected.status ?? null }
         : await this.resolveSummaryMdForItem(win, item, choice.templateName, { fetchExtra });
       if (!this.autoSummaryLive()) return "stop";
       if (!res.ok) {
@@ -2610,7 +2610,14 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       if (!this.autoSummaryLive() || !this.autoSummaryEnabled() || item.deleted || !Zotero.Items.get(item.id)
         || !item.hasTag(tags.triggerTag) || this.existingSummaryNotes(item).length) return;
       attempted = true;
-      let note = await this.generateSummaryNote(win, item, choice.templateName, { md: res.md });
+      let note;
+      try {
+        note = await this.generateSummaryNote(win, item, choice.templateName, { md: res.md });
+      } catch (e) { // R13: the failure tag, so re-adding the trigger tag retries (KTD11: code only)
+        this.logAutoSummaryFailure(item, "create.failed", null);
+        await finish("fail");
+        return;
+      }
       // The note is gone already: keep the trigger tag so the next sweep retries.
       if (!Zotero.Items.get(note.id) || note.deleted) { attempted = false; return; }
       await finish("success");

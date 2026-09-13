@@ -230,7 +230,7 @@ describe("auto summary: sweep engine (U4)", function () {
   const NO_FT = "zps:summarize-no-fulltext";
   const HOUR = 3600 * 1000;
   const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "autoSummaryLive", "autoSummarySyncing",
-    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem"];
+    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure"];
   const answer = (content) => JSON.stringify({ choices: [{ message: { content } }] });
 
   let win, C, dir, created, fetchCalls, fetchExtras, reply;
@@ -586,6 +586,27 @@ describe("auto summary: sweep engine (U4)", function () {
     await sweep();
     assert.lengthOf(notesOf(item), 0);
     assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("a note save that throws logs create.failed and puts the failure tag in place of the trigger tag", async function () {
+    const item = await makeItem("Save failure fixture");
+    const logged = [];
+    Z().logAutoSummaryFailure = (it, code, status) => logged.push([code, status]);
+    Z().generateSummaryNote = async () => { throw new Error("save failed"); };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [FAILED]);
+    assert.deepEqual(logged, [["create.failed", null]]);
+  });
+
+  it("a detection request rejected with HTTP 429 logs detect.httpFailed with status 429", async function () {
+    const item = await makeItem("Throttled detection fixture");
+    const logged = [];
+    Z().logAutoSummaryFailure = (it, code, status) => logged.push([code, status]);
+    reply = () => { throw Object.assign(new Error("too many requests"), { status: 429 }); };
+    await sweep();
+    assert.deepEqual(logged, [["detect.httpFailed", 429]]);
+    assert.deepEqual(tagsOf(item), [FAILED]);
   });
 
   it("a tag write that throws after the note is created lets the sweep continue, and the next sweep clears the tag via the R9 path", async function () {
