@@ -207,7 +207,7 @@ export function composeDeclaration(body, label, description) {
 // Remove the given top-level frontmatter keys (and their continuation/loop
 // lines) from a template's leading `--- … ---` block; drops the block entirely
 // if nothing else is left inside it. Local to splitDeclaration — same grammar
-// as frontmatterBody, mirrors src/builder.js's removeFrontmatterField.
+// as frontmatterBody.
 function removeFrontmatterKeys(text, keys) {
   const t = String(text);
   const m = t.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)([\s\S]*)$/);

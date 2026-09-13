@@ -404,9 +404,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // section header/sidenav must use Zotero's l10nID mechanism — see the .ftl.)
   STRINGS: {
     "btn.builder": "Template Builder…",
-    "tip.builder": "Author a template with a live preview, then save it to your Templates folder — the Composer uses it to generate the note",
-    "status.templateSaved": "Saved template ‘{name}’ to your Templates folder",
-    "msg.builderOverwrite": "A template named ‘{name}.md’ already exists. Overwrite it?",
+    "tip.builder": "Create and edit note types with a live preview — the Composer generates Summary Notes from them",
     // Note-type editor actions (bridge calls, KTD8)
     "noteTypes.saved": "Saved note type ‘{name}’.",
     "noteTypes.renamed": "Renamed ‘{name}’ to ‘{to}’.",
@@ -3100,12 +3098,12 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return this.t("err.llmRunFailed", { error: code || "error" });
   },
   // --------------------------------------------------------- Template Builder
-  // A dedicated builder surface: a full-window modal overlay (in the main window)
-  // hosting ONE srcdoc iframe that loads core.bundle.js + editor.bundle.js +
-  // builder-app.js. The iframe runs the whole builder UI (CM editor + palette +
-  // live preview, all over ZONCore — the same pure engine the write paths use);
-  // this glue gathers the preview context from the selected item, opens/tears
-  // down the overlay, and provides the privileged insert/save bridge.
+  // The note-type editor: a full-window modal overlay (in the main window) hosting
+  // ONE srcdoc iframe that loads core.bundle.js + editor.bundle.js + builder-app.js.
+  // The iframe runs the whole UI (note-type list, fields, CodeMirror source, HTML
+  // preview, all over ZONCore); this glue gathers the preview context from the
+  // selected item, opens/tears down the overlay, and provides the privileged
+  // note-type bridge.
   async openTemplateBuilder(win, rec) {
     win = win || Zotero.getMainWindows()[0];
     if (!win) return;
@@ -3115,22 +3113,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let item = (rec && rec.item) || (this.selectedRegularItems(win)[0] || null);
     let ctx = await this.gatherPreviewContext(win, item);
     let dark = this.isDarkTheme(win, rec && rec.host);
-    // Name → raw text map of existing templates, for the builder's "Edit existing".
-    // Plus the per-annotation format names (built-ins + custom, EXCLUDING field/
-    // section/custom directive templates) for the block configurator's dropdown.
-    let templates = {};
-    let formatNames = [];
-    try {
-      await this.loadTemplates();
-      let all = this.allTemplates(win) || {};
-      for (let name in all) {
-        let t = all[name];
-        if (t && typeof t.text === "string") templates[name] = t.text;
-        let dk = t && t.defaults && t.defaults.kind;
-        if (t && t.kind === "format" && (!dk || dk === "annotations")) formatNames.push(name);
-      }
-      formatNames.sort();
-    } catch (e) { this.log("builder: template list failed: " + e); }
+    await this.refreshTemplates(); // bridge.list() reads the loaded set
+    // The preview reuses the Composer's preview typography + LLM placeholder styles.
+    this.injectComposerCSS(win);
+    let previewCSS = (win.document.getElementById("zon-composer-css") || {}).textContent || "";
 
     let NS = "http://www.w3.org/1999/xhtml";
     let overlay = win.document.createElementNS(NS, "div");
@@ -3149,48 +3135,48 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       this.rootURI + "content/core.bundle.js",
       this.rootURI + "content/editor.bundle.js",
       this.rootURI + "content/builder-app.js",
-      dark,
+      dark, previewCSS,
     );
     panel.appendChild(iframe);
     overlay.appendChild(panel);
-    // Click the dimmed backdrop (not the panel) to close.
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) this.closeTemplateBuilder(win); });
+    // Click the dimmed backdrop (not the panel) to close — through the editor, so
+    // unsaved edits are confirmed first (KTD14).
+    overlay.addEventListener("mousedown", (e) => {
+      if (e.target !== overlay) return;
+      let fw = iframe.contentWindow;
+      if (fw && fw.builderRequestClose) fw.builderRequestClose();
+      else this.closeTemplateBuilder(win);
+    });
     win.document.documentElement.appendChild(overlay);
 
     let self = this;
+    // Note-type editor actions (KTD8): each re-validates, writes, refreshes once,
+    // and resolves { ok, message, name?, templates }.
     let bridge = {
-      // Note-type editor actions (KTD8): each re-validates, writes, refreshes once,
-      // and resolves { ok, message, name?, templates }. A string first argument to
-      // save is the legacy builder UI (name, text, setDefault) until U6 replaces it.
       list: () => self.noteTypeList(),
-      save: (draft, ...legacy) => typeof draft === "string"
-        ? self.builderSaveTemplate(win, rec, draft, ...legacy)
-        : self.saveNoteType(win, draft),
+      save: (draft) => self.saveNoteType(win, draft),
       rename: (name, newName) => self.renameNoteType(win, name, newName),
       delete: (name) => self.deleteNoteType(win, name),
       reset: (name) => self.resetNoteType(win, name),
       confirm: (message) => self.confirmNoteTypeAction(win, message),
+      // Rename's new-name prompt: the entered text, or null when cancelled.
+      prompt: (message, value) => {
+        let input = { value };
+        return Services.prompt.prompt(win, self.t("menu.title"), message, input, null, {}) ? input.value : null;
+      },
       close: () => self.closeTemplateBuilder(win),
     };
-    // The Builder is a pure template-authoring surface. Seed the editor with the
-    // TEMPLATE currently selected in the Composer's picker (falling back to the
-    // default template), never a note file — and prefill the Save-as name with it so
-    // saving updates that template.
-    let initialName = (rec && rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate() || "";
-    let initialDoc = null;
-    try {
-      let t = initialName ? (this.allTemplates(win) || {})[initialName] : null;
-      if (t && typeof t.text === "string") initialDoc = t.text;         // folder template
-      else if (t && typeof t.item === "string") initialDoc = t.item;    // built-in format body
-      // else null → the builder's own starter
-    } catch (e) {}
+    // Open on the note type selected in the Composer's picker, else the default.
+    let initialName = (rec && rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+    let model = "";
+    try { model = this.llmModel() || ""; } catch (e) {}
     // Poll the (srcdoc-swapped) contentWindow for the app entry + both bundles,
     // then start it — same robustness trick the note editor iframe uses.
     let tries = 0;
     let waitForApp = function () {
       let fw = iframe.contentWindow;
       if (fw && fw.startBuilder && fw.ZONCore && fw.ZOSEditorLib) {
-        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, templates, formatNames, initialDoc, initialName }); }
+        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, initialName, model }); }
         catch (e) { self.log("startBuilder failed: " + e); }
         return;
       }
@@ -3228,93 +3214,52 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // The srcdoc page: minimal markup + styles, then the three bundles (absolute
   // jar: URLs — Gecko loads <script src> from jar: fine, even though it won't
   // navigate the iframe document itself to jar:). builder-app.js builds the UI.
-  builderPageHTML(coreURL, edURL, appURL, dark) {
+  // `previewCSS` is the Composer's stylesheet (preview typography + LLM
+  // placeholders); its Zotero theme variables are mapped onto this palette.
+  builderPageHTML(coreURL, edURL, appURL, dark, previewCSS) {
     let bg = dark ? "#1e1e1e" : "#ffffff";
     let fg = dark ? "#e6e6e6" : "#1a1a1a";
     let muted = dark ? "#9aa0a6" : "#666";
     let border = dark ? "#3a3a3a" : "#ddd";
     let pane = dark ? "#252526" : "#f6f6f6";
     let accent = "#7048e8";
-    let css = "html,body{margin:0;height:100%;background:" + bg + ";color:" + fg + ";font:13px/1.4 -apple-system,system-ui,sans-serif;}"
+    let css = ":root{--fill-primary:" + fg + ";--fill-secondary:" + muted + ";--fill-quarternary:" + border
+      + ";--fill-quinary:" + border + ";--material-background:" + bg + ";--color-accent:" + accent + ";}"
+      + "html,body{margin:0;height:100%;background:" + bg + ";color:" + fg + ";font:13px/1.4 -apple-system,system-ui,sans-serif;}"
       + "#zon-builder-root{display:flex;flex-direction:column;height:100%;}"
       + ".b-header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid " + border + ";}"
       + ".b-title{font-weight:600;font-size:14px;}.b-sub{color:" + muted + ";font-size:12px;flex:1;}"
       + ".b-x{margin-left:auto;border:0;background:transparent;color:" + muted + ";font-size:15px;cursor:pointer;}"
-      + ".b-toggle{display:flex;align-items:center;gap:4px;font-size:11px;color:" + muted + ";cursor:pointer;white-space:nowrap;}"
-      + ".b-help{padding:6px 14px;font-size:11px;color:" + muted + ";background:" + pane + ";border-bottom:1px solid " + border + ";}"
+      + ".b-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid " + border + ";background:" + pane + ";}"
       + ".b-body{flex:1;display:flex;min-height:0;}"
-      + ".b-side{width:300px;border-right:1px solid " + border + ";overflow:auto;padding:8px 10px;background:" + pane + ";}"
-      + ".b-pal-head{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;margin:12px 2px 5px;}"
-      + ".b-section{font-weight:700;color:" + fg + ";font-size:13px;text-transform:uppercase;letter-spacing:.02em;margin:14px 0 6px;padding-top:10px;border-top:2px solid " + border + ";}"
-      + ".b-ctx{font-size:11px;color:" + accent + ";background:rgba(112,72,232,0.10);border-radius:5px;padding:5px 8px;margin:2px 0 8px;}"
-      + ".b-pal-group{display:flex;flex-wrap:wrap;gap:4px;}"
-      + ".b-chip{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:5px;padding:3px 7px;font-size:11px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
-      + ".b-chip:hover{border-color:" + accent + ";color:" + accent + ";}.b-chip-l{pointer-events:none;}"
-      + ".b-chip.b-on{border-color:" + accent + ";color:" + accent + ";background:rgba(112,72,232,0.12);font-weight:600;}"
-      + ".b-col{text-transform:capitalize;}.b-rm{color:#d33;font-weight:600;}"
-      // guided chooser + compose form
-      + ".b-chooser{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;}"
-      + ".b-chooser-q{font-size:18px;font-weight:600;margin-bottom:20px;}"
-      + ".b-cards{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;max-width:760px;}"
-      + ".b-card{width:220px;border:1px solid " + border + ";border-radius:10px;padding:16px;cursor:pointer;background:" + pane + ";transition:border-color .1s;}"
-      + ".b-card:hover{border-color:" + accent + ";}.b-card-off{opacity:.45;cursor:default;}.b-card-off:hover{border-color:" + border + ";}"
-      + ".b-card-t{font-weight:600;font-size:14px;margin-bottom:6px;}.b-card-d{color:" + muted + ";font-size:12px;line-height:1.45;}"
-      + ".b-back{border:0;background:transparent;color:" + accent + ";cursor:pointer;font-size:12px;padding:0 6px 0 0;}"
-      + ".b-form{display:flex;flex-direction:column;gap:6px;margin:2px 0 8px;}"
-      + ".b-form-h{font-weight:600;font-size:11px;color:" + muted + ";margin:8px 0 2px;}"
-      + ".b-checks{display:flex;flex-wrap:wrap;gap:2px 12px;}"
-      + ".b-check{display:flex;align-items:center;gap:5px;font-size:12px;width:46%;cursor:pointer;}"
-      + ".b-form-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:3px 0;}"
-      + ".b-form-rl{font-size:12px;color:" + fg + ";}"
-      + ".b-select{border:1px solid " + border + ";border-radius:5px;padding:3px 6px;background:" + bg + ";color:" + fg + ";font-size:12px;max-width:170px;}"
-      + ".b-gen{width:100%;margin:6px 0 2px;}"
-      + ".b-hint{color:" + muted + ";font-size:11px;line-height:1.4;margin:4px 2px 8px;}"
+      + ".b-side{width:220px;border-right:1px solid " + border + ";overflow:auto;padding:6px;background:" + pane + ";}"
+      + ".b-item{display:block;width:100%;box-sizing:border-box;text-align:left;border:1px solid transparent;background:transparent;color:" + fg + ";border-radius:5px;padding:5px 8px;margin:1px 0;font:inherit;cursor:pointer;overflow-wrap:anywhere;}"
+      + ".b-item:hover{border-color:" + border + ";}.b-item.b-on{border-color:" + accent + ";background:rgba(112,72,232,0.12);}"
+      + ".b-flag{display:block;font-size:10px;color:#d97706;}"
+      + ".b-main{flex:1;display:flex;flex-direction:column;min-width:0;}"
+      + ".b-empty{flex:1;display:flex;align-items:center;justify-content:center;color:" + muted + ";}"
+      + ".b-fields{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid " + border + ";}"
+      + ".b-field{display:flex;flex-direction:column;gap:2px;font-size:11px;color:" + muted + ";}.b-field-wide{flex:1;}"
+      + ".b-input{border:1px solid " + border + ";border-radius:5px;padding:4px 8px;background:" + bg + ";color:" + fg + ";font:inherit;font-size:13px;}"
+      + ".b-input[readonly]{background:" + pane + ";color:" + muted + ";}"
+      + ".b-split{flex:1;display:flex;min-height:0;}"
       + ".b-editor,.b-preview{flex:1;display:flex;flex-direction:column;min-width:0;}"
       + ".b-editor{border-right:1px solid " + border + ";}"
-      + ".b-colhead{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;padding:8px 12px;display:flex;align-items:center;gap:8px;}"
+      + ".b-colhead{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;padding:8px 12px;}"
       + ".b-editor-host{flex:1;min-height:0;overflow:auto;}.cm-editor{height:100%;}"
-      + ".b-kind{font-weight:500;text-transform:none;color:" + accent + ";border:1px solid " + accent + ";border-radius:4px;padding:0 6px;font-size:10px;}"
-      + ".b-kind-err{color:#d33;border-color:#d33;}"
-      + ".b-preview-out{flex:1;margin:0;padding:10px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,Menlo,monospace;}"
-      + ".b-preview-out.b-err{color:#d33;}"
-      + ".b-preview-host{flex:1;min-height:0;overflow:auto;}"
-      + ".b-footer{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid " + border + ";background:" + pane + ";}"
-      + ".b-name-label{color:" + muted + ";}.b-name{border:1px solid " + border + ";border-radius:5px;padding:4px 8px;background:" + bg + ";color:" + fg + ";width:160px;}"
+      + ".b-preview-host.zon-preview{flex:1;min-height:0;max-height:none;margin:0;border:0;border-radius:0;}"
+      + ".b-select{border:1px solid " + border + ";border-radius:5px;padding:4px 6px;background:" + bg + ";color:" + fg + ";font-size:12px;}"
       + ".b-btn{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:6px;padding:5px 12px;cursor:pointer;}"
       + ".b-btn:hover{border-color:" + accent + ";}.b-primary{background:" + accent + ";color:#fff;border-color:" + accent + ";}"
       + ".b-btn:disabled{opacity:0.4;cursor:not-allowed;border-color:" + border + ";background:" + bg + ";color:" + fg + ";}"
-      + ".b-status{margin-left:auto;color:" + muted + ";}.b-status.b-err{color:#d33;}";
+      + ".b-status{margin-left:auto;color:" + muted + ";}.b-status.b-err{color:#d33;}"
+      + (previewCSS || "");
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + css + '</style></head>'
       + '<body><div id="zon-builder-root"></div>'
       + '<script src="' + coreURL + '"></scr' + 'ipt>'
       + '<script src="' + edURL + '"></scr' + 'ipt>'
       + '<script src="' + appURL + '"></scr' + 'ipt>'
       + '</body></html>';
-  },
-
-  // Bridge OUT: write the builder's template SOURCE to the Templates folder
-  // (idempotent — confirms before overwriting; always the templates folder via the
-  // atomic safeWrite path, NEVER an item note file), then refresh the template list
-  // and hand off to the Composer — select the just-saved template and refresh its
-  // preview — so closing the Builder lands on the new template ready to Generate.
-  async builderSaveTemplate(win, rec, name, text, setDefault) {
-    let safe = String(name || "").trim().replace(/\.md$/i, "").replace(/[\/\\:*?"<>|]+/g, "-");
-    if (!safe) throw new Error("empty name");
-    let dir = this.templatesDir();
-    try { await IOUtils.makeDirectory(dir, { ignoreExisting: true }); } catch (e) {}
-    let path = PathUtils.join(dir, safe + ".md");
-    if (await IOUtils.exists(path)) {
-      let ok = Services.prompt.confirm(win, "Obsidian Notepad", this.t("msg.builderOverwrite", { name: safe }));
-      if (!ok) return "Save cancelled";
-    }
-    await this.safeWrite(path, String(text || ""));
-    try { await this.refreshTemplates(); } catch (e) {}
-    // Optionally make this the template the Composer selects by default.
-    if (setDefault) { try { Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, safe, true); } catch (e) {} }
-    // Hand off to the Composer that opened the Builder: point its picker at the
-    // just-saved template and refresh the preview.
-    try { await this.selectComposerTemplate(rec, safe); } catch (e) { this.log("builder handoff failed: " + e); }
-    return this.t("status.templateSaved", { name: safe }) + (setDefault ? " — set as default" : "");
   },
 
   // ------------------------------------------------ note-type editor actions
@@ -3480,18 +3425,6 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     try { await this.safeWrite(all[name].path, this.BUILTIN_TEMPLATES[name]); } catch (e) { return this.noteTypeFailed(e); }
     await this.refreshTemplates();
     return this.noteTypeResult(true, this.t("noteTypes.reset", { name }), name);
-  },
-
-  // Point a Composer pane's template picker at `name` and refresh its preview.
-  // Used by the Builder handoff so a just-saved template is selected in the Composer.
-  async selectComposerTemplate(rec, name) {
-    if (!rec || !rec.templateSel) return;
-    try { await this.populateComposerTemplates(rec); } catch (e) {}
-    let sel = rec.templateSel;
-    if (name && Array.prototype.some.call(sel.options, (o) => o.value === name)) {
-      sel.value = name;
-      this.schedulePreview(rec, { immediate: true });
-    }
   },
 };
 
