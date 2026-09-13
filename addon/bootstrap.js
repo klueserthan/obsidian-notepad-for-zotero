@@ -783,6 +783,17 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return this.noteTypeNames().sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b)));
   },
 
+  // Detection candidates (KTD8): the same declared note types offered to the
+  // bulk dialog's "Detect types" and the automatic path's single-item detection
+  // helper below, in orderedTemplateNames() order. A label declared by more
+  // than one note type is excluded from detection rather than guessed at
+  // (KTD13); both stay pickable by hand elsewhere.
+  detectionCandidates() {
+    let duplicated = new Set(this.noteTypeList().filter((e) => e.duplicateLabel).map((e) => e.name));
+    return this.orderedTemplateNames().filter((n) => !duplicated.has(n))
+      .map((n) => Object.assign({ name: n }, this._templates[n].paperType));
+  },
+
   // Window-independent list for the Settings "Default note template" dropdown:
   // the prefs-pane scope can't reliably enumerate the folder (IOUtils/PathUtils
   // aren't dependable globals there), so it asks the plugin.
@@ -2213,18 +2224,38 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // only if the template actually contains {% llm %} blocks — gathers
   // annotations/fulltext context and runs them through the SAME BYOK runner
   // composerRunLLM uses (ADR-0001: never write a note with an unresolved block).
+  // `opts.fetchExtra` merges into the makeLLMFetchFn Zotero.HTTP.request options
+  // (e.g. the automatic path's errorDelayMax:0), mirroring the bulk dialog's
+  // detect run — the Composer and bulk-generate callers pass none, so their
+  // requests stay byte-identical to before.
   // Returns:
-  //   { ok:true,  md }      — plain rendered md (no blocks) or the resolved
-  //                           static md (blocks all ran ok)
-  //   { ok:false, failure } — a human-readable, metadata-only reason (from
-  //                           describeLLMFailure); NEVER writes a note.
-  // No rec, no pane — purely functional over (win, item, templateName).
-  async resolveSummaryMdForItem(win, item, templateName) {
+  //   { ok:true,  md }                     — plain rendered md (no blocks) or
+  //                                          the resolved static md (blocks ok)
+  //   { ok:false, failure, code, status }  — `failure` is a human-readable,
+  //                          metadata-only reason (from describeLLMFailure);
+  //                          `code` is the runner code unchanged, or one of
+  //                          resolve.notConfigured / resolve.coreMissing /
+  //                          resolve.unknownNoteType / resolve.renderFailed;
+  //                          `status` is result.error.status when it is a
+  //                          number, else null. NEVER writes a note, NEVER
+  //                          throws.
+  // No rec, no pane — purely functional over (win, item, templateName, opts).
+  async resolveSummaryMdForItem(win, item, templateName, opts = {}) {
     if (!win.ZONCore) await this.injectCore(win);
     let C = win.ZONCore;
     let name = templateName || this.defaultNoteTemplate();
 
-    let md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+    // A render failure never throws out of here (KTD7/U3): an UnknownNoteTypeError
+    // (a detected/picked note type gone by resolve time) gets its own code so the
+    // automatic path can abort without a tag write; any other render error is a
+    // per-item failure.
+    let md;
+    try {
+      md = await this.renderTemplateAsNote(win, item, name, { preview: true });
+    } catch (e) {
+      let code = (e && e.name === "UnknownNoteTypeError") ? "resolve.unknownNoteType" : "resolve.renderFailed";
+      return { ok: false, failure: (e && e.message) || String(e), code, status: null };
+    }
     let state = C.reconcileComposeState(null, md, { itemKey: item.key, templateName: name });
 
     if (!state || !C.composeHasLLMBlocks(state)) {
@@ -2233,11 +2264,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
     // Guard: runner + gating exports present (graceful if an old bundle is cached).
     if (!C.executeLLMBlocks || !C.applyLLMOutputs) {
-      return { ok: false, failure: this.t("err.llmCoreMissing") };
+      return { ok: false, failure: this.t("err.llmCoreMissing"), code: "resolve.coreMissing", status: null };
     }
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     if (!C.isLLMConfigured(settings)) {
-      return { ok: false, failure: this.t("err.llmNotConfigured") };
+      return { ok: false, failure: this.t("err.llmNotConfigured"), code: "resolve.notConfigured", status: null };
     }
 
     // Gather PDF annotations so context="annotations" blocks can resolve.
@@ -2262,21 +2293,49 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     }
 
     // Build item data with parity to renderDocument so prompts can use any field.
-    let citekey = this.getCitekey(item);
-    let bibliography = await this.getBibliography(item);
-    let data = {};
-    try { data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext }); }
-    catch (e) { this.log("buildItemData (bulk) failed: " + e); }
+    // A throw here (or from the bibliography fetch) is a render failure — never
+    // silently continue with partial item data (KTD7/U3).
+    let data;
+    try {
+      let citekey = this.getCitekey(item);
+      let bibliography = await this.getBibliography(item);
+      data = C.buildItemData(item, { citekey, bibliography, importDate: new Date().toISOString(), annotations, fulltext });
+    } catch (e) {
+      return { ok: false, failure: (e && e.message) || String(e), code: "resolve.renderFailed", status: null };
+    }
 
-    let fetchFn = this.makeLLMFetchFn();
+    let fetchFn = this.makeLLMFetchFn(opts.fetchExtra);
     let result = await C.executeLLMBlocks(md, data, settings, fetchFn);
 
     if (!result.ok) {
-      return { ok: false, failure: this.describeLLMFailure(result) };
+      let status = (result.error && typeof result.error.status === "number") ? result.error.status : null;
+      return { ok: false, failure: this.describeLLMFailure(result), code: result.code, status };
     }
     // executeLLMBlocks already applied the outputs — result.md is the resolved
     // static markdown, so there is nothing to substitute here.
     return { ok: true, md: result.md };
+  },
+
+  // Single-item paper-type detection for the automatic path (KTD8): the same
+  // win.ZONCore.detectPaperTypes the bulk dialog's "Detect types" button uses,
+  // run for exactly one item's row so the sweep can classify a tagged item with
+  // no dialog. `opts.fetchExtra` merges into makeLLMFetchFn's Zotero.HTTP.request
+  // options (the automatic path passes errorDelayMax:0, matching detectFetchFn
+  // in openBulkDialog, so a 5xx retry cannot stall a sweep for up to an hour).
+  // Returns the row's own result unwrapped: `{ templateName, label }` on a
+  // decided type, else `{ reason, detail? }` — `detail` (only set for
+  // http-failed) is never logged by any caller (KTD11).
+  async detectPaperTypeForItem(win, item, opts = {}) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
+    let candidates = this.detectionCandidates();
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    let fetchFn = this.makeLLMFetchFn(opts.fetchExtra);
+    let row = { key: item.key, title: item.getField("title") || "", abstractNote: item.getField("abstractNote") || "" };
+    let result = null;
+    await C.detectPaperTypes([row], candidates, settings, fetchFn, (key, res) => { result = res; });
+    return result || { reason: (C.DETECT_REASONS && C.DETECT_REASONS.NO_CANDIDATE) || "no-candidate" };
   },
 
   // Bulk config dialog: an in-window modal overlay (plain DOM, no iframe —
@@ -2327,11 +2386,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // each candidate's label/description is the loader's declaration, own or
     // inherited from a shipped built-in (KTD2).
     let templateNames = this.orderedTemplateNames();
-    // A label declared by more than one note type is excluded from detection
-    // rather than guessed at (KTD13); both stay pickable by hand.
-    let duplicated = new Set(this.noteTypeList().filter((e) => e.duplicateLabel).map((e) => e.name));
-    let candidates = templateNames.filter((n) => !duplicated.has(n))
-      .map((n) => Object.assign({ name: n }, this._templates[n].paperType));
+    let candidates = this.detectionCandidates();
 
     return new Promise((resolve) => {
       let settled = false;
