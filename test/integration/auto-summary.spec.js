@@ -216,3 +216,423 @@ describe("auto summary: settings and prefs (U2)", function () {
     assert.deepEqual(Z().autoSummaryFirstSeenMap(C), map);
   });
 });
+
+// Covers U4 (the sweep engine, F1/F2, AE1–AE7, KTD1–KTD11). Calls the sweep
+// directly with the timer stopped, so no tick races a test. Fakes: full text
+// (getPrimaryPDFFulltext), the LLM transport (makeLLMFetchFn — one fake answers
+// both detection and {% llm %} blocks), Zotero.Fulltext.indexItems, and the
+// sync/liveness/grace probes; every pref, patch, and item is restored.
+describe("auto summary: sweep engine (U4)", function () {
+  this.timeout(30000);
+
+  const TRIGGER = "zps:summarize";
+  const FAILED = "zps:summarize-failed";
+  const NO_FT = "zps:summarize-no-fulltext";
+  const HOUR = 3600 * 1000;
+  const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "autoSummaryLive", "autoSummarySyncing",
+    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem"];
+  const answer = (content) => JSON.stringify({ choices: [{ message: { content } }] });
+
+  let win, C, dir, created, fetchCalls, fetchExtras, reply;
+  let prefs, saved = {}, real = {}, realIndexItems, realStartedAt;
+
+  const tagsOf = (item) => item.getTags().map((t) => t.tag).sort();
+  const notesOf = (item) => Z().existingSummaryNotes(item);
+  const keyOf = (item) => item.libraryID + "/" + item.key;
+  const firstSeen = () => Z().autoSummaryFirstSeenMap(C);
+  const sweep = () => Z().runAutoSummarySweep();
+  // The item title rides along in both the detection prompt and the full-text
+  // context, so a fake fetch can tell items apart.
+  const readyText = async (item) => ({ ok: true, attachmentTitle: "PDF", text: "Full text of " + item.getField("title") });
+
+  async function makeItem(title, { abstract = "An abstract about something worth summarizing.", tags = [TRIGGER] } = {}) {
+    let item = new Zotero.Item("journalArticle");
+    item.setField("title", title);
+    if (abstract) item.setField("abstractNote", abstract);
+    for (let t of tags) item.addTag(t);
+    await item.saveTx();
+    created.push(item);
+    return item;
+  }
+
+  async function addPdfAttachment(item) {
+    let att = new Zotero.Item("attachment");
+    att.parentID = item.id;
+    att.attachmentLinkMode = Zotero.Attachments.LINK_MODE_IMPORTED_FILE;
+    att.attachmentContentType = "application/pdf";
+    att.attachmentPath = "storage:paper.pdf";
+    await att.saveTx();
+    return att;
+  }
+
+  before(async function () {
+    win = Zotero.getMainWindow();
+    await Z().injectCore(win);
+    C = win.ZONCore;
+    Z().stopAutoSummaryTimer();
+    prefs = [Z().PREF_TEMPLATES_DIR, Z().PREF_DEFAULT_NOTE, Z().PREF_LLM_BASE_URL, Z().PREF_LLM_MODEL,
+      Z().PREF_LLM_API_KEY, Z().PREF_AUTO_SUMMARY_ENABLED, Z().PREF_AUTO_SUMMARY_TRIGGER_TAG,
+      Z().PREF_AUTO_SUMMARY_WAIT_HOURS, Z().PREF_AUTO_SUMMARY_FIRST_SEEN];
+    for (let p of prefs) saved[p] = Zotero.Prefs.get(p, true);
+    for (let m of PATCHED) real[m] = Z()[m];
+    realIndexItems = Zotero.Fulltext.indexItems;
+    realStartedAt = Z()._startedAt;
+  });
+
+  beforeEach(async function () {
+    created = [];
+    fetchCalls = 0;
+    fetchExtras = [];
+    reply = () => answer("1");
+    dir = PathUtils.join(PathUtils.tempDir, "zon-auto-sweep-" + Date.now() + "-" + Math.floor(Math.random() * 1e6));
+    await IOUtils.makeDirectory(dir, { createAncestors: true });
+    for (let n of Object.keys(Z().BUILTIN_TEMPLATES)) {
+      await IOUtils.writeUTF8(PathUtils.join(dir, n + ".md"), Z().BUILTIN_TEMPLATES[n]);
+    }
+    Zotero.Prefs.set(Z().PREF_TEMPLATES_DIR, dir, true);
+    Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, "", true);
+    Zotero.Prefs.set(Z().PREF_LLM_BASE_URL, "http://localhost:11434/v1", true);
+    Zotero.Prefs.set(Z().PREF_LLM_MODEL, "test-model", true);
+    Zotero.Prefs.set(Z().PREF_LLM_API_KEY, "", true);
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, true, true);
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, "{}", true);
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_TRIGGER_TAG, true); } catch (e) {}
+    try { Zotero.Prefs.clear(Z().PREF_AUTO_SUMMARY_WAIT_HOURS, true); } catch (e) {}
+    await Z().loadTemplates();
+    Z().makeLLMFetchFn = (extra) => {
+      fetchExtras.push(extra);
+      return async (url, headers, payload) => { fetchCalls++; return reply(payload); };
+    };
+    Z().getPrimaryPDFFulltext = readyText;
+    Z().autoSummarySyncing = () => false;
+    Z()._startedAt = 0; // the KTD5 startup grace is long over
+    Z()._autoSummaryCooldown = null;
+  });
+
+  afterEach(async function () {
+    for (let m of PATCHED) Z()[m] = real[m];
+    Zotero.Fulltext.indexItems = realIndexItems;
+    Z()._autoSummaryCooldown = null;
+    for (let item of created) { try { await item.eraseTx(); } catch (e) {} }
+    await IOUtils.remove(dir, { recursive: true, ignoreAbsent: true });
+  });
+
+  after(async function () {
+    for (let p of prefs) {
+      try {
+        if (saved[p] === undefined) Zotero.Prefs.clear(p, true);
+        else Zotero.Prefs.set(p, saved[p], true);
+      } catch (e) {}
+    }
+    Z()._startedAt = realStartedAt;
+    await Z().loadTemplates();
+    Z().startAutoSummaryTimer();
+  });
+
+  it("F1: a tagged item with an abstract and ready full text gets one Summary Note, loses its trigger tag, and has no first-seen entry", async function () {
+    const item = await makeItem("F1 fixture");
+    await sweep();
+    const notes = notesOf(item);
+    assert.lengthOf(notes, 1);
+    assert.include(notes[0].getTags().map((t) => t.tag), Z().MARKER_TAG);
+    assert.notInclude(tagsOf(item), TRIGGER);
+    assert.notProperty(firstSeen(), keyOf(item));
+    assert.isAbove(fetchCalls, 0);
+    assert.isTrue(fetchExtras.every((e) => e && e.errorDelayMax === 0), "the automatic path disables Zotero's 5xx retry");
+  });
+
+  it("AE6: with the mode off, a tagged item keeps its tag, the fake fetch is never called, and the first-seen map is cleared", async function () {
+    const item = await makeItem("AE6 fixture");
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify({ [keyOf(item)]: Date.now() }), true);
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, false, true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.equal(fetchCalls, 0);
+    assert.deepEqual(firstSeen(), {});
+  });
+
+  it("AE7: with the mode on and an empty base URL, a tagged item keeps its tag, gets no failure tag, and the fake fetch is never called", async function () {
+    const item = await makeItem("AE7 fixture");
+    Zotero.Prefs.set(Z().PREF_LLM_BASE_URL, "", true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.equal(fetchCalls, 0);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("AE3: a tagged item that already has a Summary Note gets no new note and loses its trigger tag", async function () {
+    const item = await makeItem("AE3 fixture");
+    let note = new Zotero.Item("note");
+    note.parentID = item.id;
+    note.setNote("<p>Mine</p>");
+    note.addTag(Z().MARKER_TAG);
+    await note.saveTx();
+    const body = note.getNote();
+    await sweep();
+    assert.lengthOf(notesOf(item), 1);
+    assert.equal(note.getNote(), body, "the existing note is untouched");
+    assert.deepEqual(tagsOf(item), []);
+    assert.equal(fetchCalls, 0);
+  });
+
+  it("AE1: an item without full text past its wait, grace over and no sync, gets the no-full-text tag in place of the trigger tag", async function () {
+    const item = await makeItem("AE1 fixture");
+    Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify({ [keyOf(item)]: Date.now() - 25 * HOUR }), true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [NO_FT]);
+    assert.equal(fetchCalls, 0);
+    assert.notProperty(firstSeen(), keyOf(item));
+  });
+
+  it("AE1: an item without full text inside its wait keeps its tags and its first-seen entry", async function () {
+    const item = await makeItem("Waiting fixture");
+    Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });
+    const seen = Date.now() - 2 * HOUR;
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify({ [keyOf(item)]: seen }), true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.equal(firstSeen()[keyOf(item)], seen);
+  });
+
+  it("a PDF with no full-text cache gets one index request and then a note", async function () {
+    const item = await makeItem("Index fixture");
+    const att = await addPdfAttachment(item);
+    let indexed = false;
+    const calls = [];
+    Zotero.Fulltext.indexItems = async (ids, opts) => { calls.push({ ids, opts }); indexed = true; };
+    Z().getPrimaryPDFFulltext = async (it) => (indexed ? readyText(it) : { ok: false, reason: "noExtractedText" });
+    await sweep();
+    assert.lengthOf(calls, 1);
+    assert.deepEqual(calls[0].ids, [att.id]);
+    assert.isTrue(calls[0].opts.ignoreErrors);
+    assert.lengthOf(notesOf(item), 1);
+    assert.notInclude(tagsOf(item), TRIGGER);
+  });
+
+  it("a second sweep in the same session makes no further index request for an attachment that still has no text", async function () {
+    const item = await makeItem("Unindexable fixture");
+    await addPdfAttachment(item);
+    const calls = [];
+    Zotero.Fulltext.indexItems = async (ids) => { calls.push(ids); };
+    Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noExtractedText" });
+    await sweep();
+    await sweep();
+    assert.lengthOf(calls, 1);
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("an item whose wait has passed while a sync is in progress keeps its trigger tag and gets no failure tag", async function () {
+    const item = await makeItem("Syncing fixture");
+    Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });
+    Z().autoSummarySyncing = () => true;
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify({ [keyOf(item)]: Date.now() - 25 * HOUR }), true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("an item whose wait has passed within 10 minutes of startup keeps its trigger tag and gets no failure tag", async function () {
+    const item = await makeItem("Grace fixture");
+    Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });
+    Z()._startedAt = Date.now();
+    Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_FIRST_SEEN, JSON.stringify({ [keyOf(item)]: Date.now() - 25 * HOUR }), true);
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("AE4: an item with an empty abstract gets a note built from the default note type", async function () {
+    const item = await makeItem("AE4 fixture", { abstract: "" });
+    Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, "note-review", true);
+    const names = [];
+    Z().resolveSummaryMdForItem = function (w, it, name, opts) {
+      names.push(name);
+      return real.resolveSummaryMdForItem.call(this, w, it, name, opts);
+    };
+    await sweep();
+    assert.deepEqual(names, ["note-review"]);
+    assert.lengthOf(notesOf(item), 1);
+    assert.notInclude(tagsOf(item), TRIGGER);
+  });
+
+  it("an empty completion puts the generic failure tag on that item, and the next tagged item in the same sweep still gets a note", async function () {
+    const empty = await makeItem("Empty completion fixture");
+    const healthy = await makeItem("Healthy fixture");
+    reply = (payload) => answer(JSON.stringify(payload).includes("Empty completion fixture") ? "" : "1");
+    await sweep();
+    assert.deepEqual(tagsOf(empty), [FAILED]);
+    assert.lengthOf(notesOf(empty), 0);
+    assert.lengthOf(notesOf(healthy), 1);
+    assert.deepEqual(tagsOf(healthy), []);
+  });
+
+  it("a network error tags the first item as failed, stops the sweep, pauses sweeps for 60 minutes, and a model change ends the pause", async function () {
+    const a = await makeItem("Provider fixture A");
+    const b = await makeItem("Provider fixture B");
+    reply = () => { throw new Error("network down"); };
+    await sweep();
+    const failed = [a, b].filter((it) => tagsOf(it).includes(FAILED));
+    const waiting = [a, b].filter((it) => tagsOf(it).includes(TRIGGER));
+    assert.lengthOf(failed, 1);
+    assert.lengthOf(waiting, 1);
+    assert.deepEqual(tagsOf(failed[0]), [FAILED]);
+
+    reply = () => answer("1");
+    const calls = fetchCalls;
+    await sweep();
+    assert.equal(fetchCalls, calls, "no item is processed during the cooldown");
+    assert.deepEqual(tagsOf(waiting[0]), [TRIGGER]);
+
+    Zotero.Prefs.set(Z().PREF_LLM_MODEL, "other-model", true);
+    await sweep();
+    assert.lengthOf(notesOf(waiting[0]), 1);
+    assert.deepEqual(tagsOf(waiting[0]), []);
+  });
+
+  it("clearing the base URL during the first of two items adds no failure tag and leaves both trigger tags", async function () {
+    const a = await makeItem("Unconfigured fixture A");
+    const b = await makeItem("Unconfigured fixture B");
+    reply = () => { Zotero.Prefs.set(Z().PREF_LLM_BASE_URL, "", true); return answer("1"); };
+    await sweep();
+    assert.deepEqual(tagsOf(a), [TRIGGER]);
+    assert.deepEqual(tagsOf(b), [TRIGGER]);
+    assert.lengthOf(notesOf(a), 0);
+    assert.lengthOf(notesOf(b), 0);
+  });
+
+  it("a detected note type deleted before resolve leaves the trigger tag and adds no failure tag", async function () {
+    const item = await makeItem("Deleted type fixture");
+    reply = async () => {
+      for (let n of Object.keys(Z().BUILTIN_TEMPLATES)) await IOUtils.remove(PathUtils.join(dir, n + ".md"), { ignoreAbsent: true });
+      await Z().loadTemplates();
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("AE5: an item carrying both the trigger tag and a failure tag loses the failure tag at pickup and gets a note", async function () {
+    const item = await makeItem("AE5 fixture", { tags: [TRIGGER, FAILED] });
+    await sweep();
+    assert.lengthOf(notesOf(item), 1);
+    assert.deepEqual(tagsOf(item), []);
+  });
+
+  it("a trashed tagged item is not processed", async function () {
+    const item = await makeItem("Trashed fixture");
+    item.deleted = true;
+    await item.saveTx();
+    await sweep();
+    assert.equal(fetchCalls, 0);
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("calling the sweep while a sweep is already running returns without processing any item", async function () {
+    const item = await makeItem("Concurrent fixture");
+    const first = sweep();
+    await sweep();
+    assert.equal(fetchCalls, 0);
+    assert.lengthOf(notesOf(item), 0);
+    await first;
+    assert.lengthOf(notesOf(item), 1);
+  });
+
+  it("removing the trigger tag mid-resolve results in no note being created", async function () {
+    const item = await makeItem("Untagged mid-run fixture");
+    reply = async () => {
+      if (fetchCalls === 2) { item.removeTag(TRIGGER); await item.saveTx(); }
+      return answer("1");
+    };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("making the instance not live inside the fake fetch results in no note and no tag change", async function () {
+    const item = await makeItem("Dead instance fixture");
+    reply = () => { Z().autoSummaryLive = () => false; return answer("1"); };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("deleting the created note before the success tag write leaves the trigger tag in place", async function () {
+    const item = await makeItem("Vanished note fixture");
+    Z().generateSummaryNote = async function (...args) {
+      const note = await real.generateSummaryNote.apply(this, args);
+      await note.eraseTx();
+      return note;
+    };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+  });
+
+  it("a tag write that throws after the note is created lets the sweep continue, and the next sweep clears the tag via the R9 path", async function () {
+    const a = await makeItem("Write failure fixture A");
+    const b = await makeItem("Write failure fixture B");
+    let thrown = false;
+    Z().applyAutoSummaryTags = async function (core, item, outcome, tags) {
+      if (outcome === "success" && !thrown) { thrown = true; throw new Error("write failed"); }
+      return real.applyAutoSummaryTags.call(this, core, item, outcome, tags);
+    };
+    await sweep();
+    assert.lengthOf(notesOf(a), 1);
+    assert.lengthOf(notesOf(b), 1);
+    assert.lengthOf([a, b].filter((it) => tagsOf(it).includes(TRIGGER)), 1);
+
+    const calls = fetchCalls;
+    await sweep();
+    assert.equal(fetchCalls, calls, "the R9 path never calls the LLM");
+    assert.deepEqual(tagsOf(a), []);
+    assert.deepEqual(tagsOf(b), []);
+    assert.lengthOf(notesOf(a), 1);
+    assert.lengthOf(notesOf(b), 1);
+  });
+
+  it("switching the mode off inside the fake fetch leaves the first-seen pref cleared once the sweep ends", async function () {
+    const item = await makeItem("Switched off fixture");
+    reply = () => { Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, false, true); return answer("1"); };
+    await sweep();
+    assert.deepEqual(firstSeen(), {});
+    assert.lengthOf(notesOf(item), 0);
+  });
+});
+
+// KTD1: the sweep timer's lifecycle. Uses throwaway instances (Object.create
+// over the live handle) with fake timers, so the real plugin keeps running.
+describe("auto summary: sweep timer lifecycle (U4)", function () {
+  before(function () { Z().stopAutoSummaryTimer(); });
+  after(function () { Z().startAutoSummaryTimer(); });
+
+  it("uninit cancels the sweep timer", function () {
+    const handle = Zotero.ZON;
+    const inst = Object.create(handle);
+    inst._registeredPaneID = null;
+    let cancelled = 0;
+    inst._autoSummaryTimer = { cancel() { cancelled++; } };
+    const realWindows = Zotero.getMainWindows;
+    Zotero.getMainWindows = () => []; // keep uninit away from the real windows
+    try { inst.uninit(); }
+    finally { Zotero.getMainWindows = realWindows; Zotero.ZON = handle; }
+    assert.equal(cancelled, 1);
+    assert.isNull(inst._autoSummaryTimer);
+  });
+
+  it("starting a new instance cancels the previous Zotero.ZON's timer, so a single timer remains", function () {
+    const prev = Z();
+    let cancelled = 0;
+    prev._autoSummaryTimer = { cancel() { cancelled++; } };
+    const next = Object.create(prev);
+    next._autoSummaryTimer = null;
+    try {
+      next.startAutoSummaryTimer();
+      assert.equal(cancelled, 1);
+      assert.isNull(prev._autoSummaryTimer);
+      assert.isTrue(Object.hasOwn(next, "_autoSummaryTimer") && !!next._autoSummaryTimer, "the new instance holds the only timer");
+    } finally {
+      next.stopAutoSummaryTimer();
+      prev._autoSummaryTimer = null;
+    }
+  });
+});

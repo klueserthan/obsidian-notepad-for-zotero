@@ -68,6 +68,19 @@ var ZON = {
   DEFAULT_AUTO_SUMMARY_WAIT_HOURS: 24,
   DEFAULT_AUTO_SUMMARY_FIRST_SEEN: "{}",
   _templates: null,
+  // Automatic Summary Notes sweep (U4, ADR-0004). Session-only state, per instance.
+  AUTO_SUMMARY_INTERVAL_MS: 5 * 60 * 1000,
+  // ponytail: the KTD5 grace counts from plugin startup, not from the first
+  // finished sync, and indexing can still run after a sync ends; start it from
+  // the first completed sync if late-arriving PDFs still get failed.
+  AUTO_SUMMARY_GRACE_MS: 10 * 60 * 1000,
+  AUTO_SUMMARY_COOLDOWN_MS: 60 * 60 * 1000,
+  _autoSummaryTimer: null,
+  _sweepRunning: false,
+  _startedAt: 0,
+  _autoSummaryCooldown: null, // { until, settings } after a provider failure (KTD7)
+  _autoSummaryIndexed: new Set(), // attachment keys already handed to Zotero's indexer (KTD3)
+  _autoSummaryAttempted: new Set(), // "libraryID/key@dateModified" whose writes were attempted (KTD10)
 
   // Templates the plugin no longer ships (R5). archiveRetiredTemplates() moves
   // any `<name>.md|.njk|.txt` among them into `<templatesDir>/archive/` once per
@@ -242,6 +255,9 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
   async init(rootURI) {
     this.rootURI = rootURI;
+    this._startedAt = Date.now(); // KTD5 grace
+    // KTD1: before taking over the handle, so the previous Zotero.ZON's timer is cancelled.
+    this.startAutoSummaryTimer();
     try { Zotero.ZON = this; } catch (e) {} // dev handle for console-driven testing
     this.seedDefaults();
     // A fresh init means any existing editor wraps belong to a previous (now
@@ -269,9 +285,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("prefpane register failed: " + e); }
     await templatesReady;
     this.log("initialized");
+    // R5: catch up once at startup (the sweep needs the core bundle, KTD6), then every interval.
+    try { let w = Zotero.getMainWindow(); if (w) await this.injectCore(w); } catch (e) {}
+    this.runAutoSummarySweep();
   },
 
   uninit() {
+    this.stopAutoSummaryTimer(); // KTD1: first, so no sweep tick outlives this instance
     try { if (this._registeredPaneID) Zotero.ItemPaneManager.unregisterSection(this._registeredPaneID); } catch (e) {}
     // Tear down per-window state so a reinstall hot-reloads cleanly: drop our
     // content wraps (incl. shadow DOM), remove the injected bundle <script>, and
@@ -416,6 +436,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // locale can supply a translated map or wire t() to Fluent. (The item-pane
   // section header/sidenav must use Zotero's l10nID mechanism — see the .ftl.)
   STRINGS: {
+    "autoSummary.failed": "Automatic Summary Note failed: {code}{status} (item {key}, {title})",
     "btn.builder": "Template Builder…",
     "tip.builder": "Create and edit note types with a live preview — the Composer generates Summary Notes from them",
     // Note-type editor actions (bridge calls, KTD8)
@@ -2388,6 +2409,210 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let result = null;
     await C.detectPaperTypes([row], candidates, settings, fetchFn, (key, res) => { result = res; });
     return result || { reason: (C.DETECT_REASONS && C.DETECT_REASONS.NO_CANDIDATE) || "no-candidate" };
+  },
+
+  // ------------------------------------------- Automatic Summary Notes (U4)
+  // The opt-in sweep (ADR-0004): one repeating nsITimer (KTD1, never a Notifier
+  // observer) finds items carrying the trigger tag and runs each through the same
+  // detect -> resolve -> create steps as Generate, turning the tag into the
+  // outcome. The rules live in src/auto-summary.js (C); this owns the timer,
+  // Zotero reads, writes, and liveness. LOGGING CONTRACT (KTD11): title, item
+  // key, reason code, and HTTP status only, never a runner `failure`, a
+  // detection `detail`, an error message, or full text.
+
+  // KTD1: also cancels the timer the previous Zotero.ZON holds (a hot reload's
+  // new ZON starts with an empty field), so init calls this before taking the handle.
+  startAutoSummaryTimer() {
+    let prev = null;
+    try { prev = Zotero.ZON; } catch (e) {}
+    if (prev && prev !== this) this.stopAutoSummaryTimer.call(prev);
+    this.stopAutoSummaryTimer();
+    let timer = Components.classes["@mozilla.org/timer;1"].createInstance(Components.interfaces.nsITimer);
+    timer.initWithCallback({ notify: () => this.runAutoSummarySweep() },
+      this.AUTO_SUMMARY_INTERVAL_MS, Components.interfaces.nsITimer.TYPE_REPEATING_SLACK);
+    this._autoSummaryTimer = timer;
+  },
+  stopAutoSummaryTimer() {
+    try { if (this._autoSummaryTimer) this._autoSummaryTimer.cancel(); } catch (e) {}
+    this._autoSummaryTimer = null;
+  },
+
+  // Environment probes, one line each so the integration spec can stub them.
+  // Live (KTD1): still the plugin instance, and Zotero isn't quitting.
+  autoSummaryLive() { return Zotero.ZON === this && !Zotero.closing; },
+  autoSummarySyncing() { try { return !!Zotero.Sync.Runner.syncInProgress; } catch (e) { return false; } },
+  autoSummaryNow() { return Date.now(); },
+
+  // KTD7: base URL, model, and API key at a provider failure; the cooldown ends
+  // after 60 minutes or as soon as any of them differs.
+  autoSummaryLLMSnapshot() {
+    let s = this.getLLMSettings();
+    return JSON.stringify([s.baseURL, s.model, s.apiKey]);
+  },
+  autoSummaryCoolingDown() {
+    let c = this._autoSummaryCooldown;
+    if (c && this.autoSummaryNow() < c.until && c.settings === this.autoSummaryLLMSnapshot()) return true;
+    this._autoSummaryCooldown = null;
+    return false;
+  },
+
+  // KTD4: only a live instance writes the map, and it writes an empty one once
+  // the mode is off, so an in-flight sweep can't restore cleared entries.
+  saveAutoSummaryFirstSeen(map) {
+    if (this.autoSummaryLive()) this.setAutoSummaryFirstSeenMap(this.autoSummaryEnabled() ? map : {});
+  },
+
+  // R15 / KTD11: the persistent Error Console plus the debug log, metadata only.
+  logAutoSummaryFailure(item, code, status) {
+    let msg = this.t("autoSummary.failed", {
+      code, status: status == null ? "" : " (HTTP " + status + ")",
+      key: item.key, title: item.getField("title") || "",
+    });
+    try { Zotero.logError(msg); } catch (e) {}
+    this.log(msg);
+  },
+
+  // KTD9: one outcome's add/remove lists, then a single saveTx; nothing while dead.
+  async applyAutoSummaryTags(C, item, outcome, tags) {
+    if (!this.autoSummaryLive()) return;
+    let { add, remove } = C.tagChangesForOutcome(outcome, tags);
+    for (let t of remove) if (t && item.hasTag(t)) item.removeTag(t);
+    for (let t of add) if (t) item.addTag(t);
+    await item.saveTx();
+  },
+
+  // One sweep, in the High-Level Technical Design order. Never rejects: the
+  // timer and init call it fire-and-forget.
+  async runAutoSummarySweep() {
+    if (!this.autoSummaryEnabled()) { this.setAutoSummaryFirstSeenMap({}); return; }
+    let win = null;
+    try { win = Zotero.getMainWindow(); } catch (e) {}
+    let C = win && win.ZONCore;
+    // KTD6, KTD10: a main window with the core bundle, a live instance, no sync, one sweep at a time.
+    if (!C || this._sweepRunning || !this.autoSummaryLive() || this.autoSummarySyncing()) return;
+    let tags = {
+      triggerTag: this.autoSummaryTriggerTag(C),
+      failureTag: C.AUTO_SUMMARY_DEFAULTS.FAILURE_TAG,
+      noFulltextTag: C.AUTO_SUMMARY_DEFAULTS.NO_FULLTEXT_TAG,
+    };
+    // R2 and its sibling preconditions: nothing runs and no tag changes.
+    if (!this.llmConfigured() || !tags.triggerTag || !this._templates || !this.defaultNoteTemplate()
+      || this.autoSummaryCoolingDown()) return;
+    this._sweepRunning = true;
+    try {
+      // KTD2: the personal library only; Zotero.Search leaves trashed items out by default.
+      let search = new Zotero.Search();
+      search.libraryID = Zotero.Libraries.userLibraryID;
+      search.addCondition("tag", "is", tags.triggerTag);
+      let items = (await Zotero.Items.getAsync(await search.search())).filter((it) => it.isRegularItem());
+      if (!this.autoSummaryLive()) return;
+      let map = C.updateFirstSeenMap(this.autoSummaryFirstSeenMap(C),
+        items.map((it) => it.libraryID + "/" + it.key), this.autoSummaryNow());
+      this.saveAutoSummaryFirstSeen(map);
+      for (let item of items) {
+        // Switching the mode off mid-sweep starts no further items.
+        if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) break;
+        let next;
+        try { next = await this.autoSummaryItem(win, C, item, tags, map); }
+        catch (e) { if (this.autoSummaryLive()) this.logAutoSummaryFailure(item, "sweep.unexpected", null); }
+        if (next === "stop") break;
+      }
+      this.saveAutoSummaryFirstSeen(map);
+    } catch (e) {
+      this.log("auto summary sweep failed"); // KTD11: no error message
+    } finally {
+      this._sweepRunning = false;
+    }
+  },
+
+  // One tagged item. Returns "stop" to end the sweep (not live, abort, provider
+  // failure); anything else moves on to the next item.
+  async autoSummaryItem(win, C, item, tags, map) {
+    let key = item.libraryID + "/" + item.key;
+    // KTD4: any outcome drops the item's first-seen entry.
+    let finish = async (outcome) => {
+      await this.applyAutoSummaryTags(C, item, outcome, tags);
+      delete map[key];
+      this.saveAutoSummaryFirstSeen(map);
+    };
+    if (item.hasTag(tags.failureTag) || item.hasTag(tags.noFulltextTag)) { // R14: a re-tagged failure
+      await this.applyAutoSummaryTags(C, item, "pickup", tags);
+      if (!this.autoSummaryLive()) return "stop";
+    }
+    if (this.existingSummaryNotes(item).length) return finish("skip-existing"); // R9
+    // KTD3: the same read generation uses. File sync downloads PDFs but never
+    // indexes them, so ask Zotero's own indexer once per session per attachment.
+    let fulltext = await this.getPrimaryPDFFulltext(item, C);
+    if (!fulltext.ok && fulltext.reason === "noExtractedText") {
+      let att = await item.getBestAttachment();
+      if (att && !this._autoSummaryIndexed.has(att.key)) {
+        this._autoSummaryIndexed.add(att.key);
+        try { await Zotero.Fulltext.indexItems([att.id], { ignoreErrors: true }); } catch (e) {}
+        if (!this.autoSummaryLive()) return "stop";
+        fulltext = await this.getPrimaryPDFFulltext(item, C);
+      }
+    }
+    if (!this.autoSummaryLive()) return "stop";
+    let now = this.autoSummaryNow();
+    let action = C.planItemAction({
+      hasSummaryNote: false,
+      fulltextReady: !!fulltext.ok,
+      firstSeen: map[key],
+      now,
+      waitMs: this.autoSummaryWaitHours(C) * 3600 * 1000,
+      // KTD5: no timeout decision in the startup grace or during a sync.
+      timeoutAllowed: now - this._startedAt >= this.AUTO_SUMMARY_GRACE_MS && !this.autoSummarySyncing(),
+    });
+    if (action === "fail-no-fulltext") {
+      this.logAutoSummaryFailure(item, "fulltext." + fulltext.reason, null);
+      return finish("fail-no-fulltext");
+    }
+    if (action === "process") return this.autoSummaryProcess(win, C, item, tags, finish);
+  },
+
+  // Detect, resolve, classify (KTD7), re-check (KTD9), create, then the success tag.
+  async autoSummaryProcess(win, C, item, tags, finish) {
+    // KTD10: an item whose writes were already attempted this session waits for
+    // a later edit (a new dateModified) instead of paying for a run every tick.
+    let attemptKey = () => item.libraryID + "/" + item.key + "@" + item.dateModified;
+    if (this._autoSummaryAttempted.has(attemptKey())) return;
+    let attempted = false;
+    try {
+      let fetchExtra = { errorDelayMax: 0 }; // KTD7: Zotero's 5xx retry can't stall the sweep
+      let detected = await this.detectPaperTypeForItem(win, item, { fetchExtra });
+      if (!this.autoSummaryLive()) return "stop";
+      let choice = C.chooseNoteType(detected, this.defaultNoteTemplate());
+      if (detected.reason && choice.templateName) { // KTD8: a logged fallback
+        this.log("auto summary: detection " + detected.reason + " for " + item.key + ", using " + choice.templateName);
+      }
+      let res = choice.providerFailure
+        ? { ok: false, code: "detect.httpFailed", status: null }
+        : await this.resolveSummaryMdForItem(win, item, choice.templateName, { fetchExtra });
+      if (!this.autoSummaryLive()) return "stop";
+      if (!res.ok) {
+        let kind = choice.providerFailure ? "provider" : C.classifyFailure(res);
+        this.logAutoSummaryFailure(item, res.code, res.status);
+        if (kind === "abort") return "stop";
+        if (kind === "provider") {
+          this._autoSummaryCooldown = { until: this.autoSummaryNow() + this.AUTO_SUMMARY_COOLDOWN_MS, settings: this.autoSummaryLLMSnapshot() };
+        }
+        attempted = true;
+        await finish("fail");
+        if (kind === "provider") return "stop";
+        return;
+      }
+      // KTD9: no await between these checks and the note save. A Summary Note
+      // that appeared meanwhile is left to the next sweep's R9 path.
+      if (!this.autoSummaryLive() || !this.autoSummaryEnabled() || item.deleted || !Zotero.Items.get(item.id)
+        || !item.hasTag(tags.triggerTag) || this.existingSummaryNotes(item).length) return;
+      attempted = true;
+      let note = await this.generateSummaryNote(win, item, choice.templateName, { md: res.md });
+      // The note is gone already: keep the trigger tag so the next sweep retries.
+      if (!Zotero.Items.get(note.id) || note.deleted) { attempted = false; return; }
+      await finish("success");
+    } finally {
+      if (attempted) this._autoSummaryAttempted.add(attemptKey());
+    }
   },
 
   // Bulk config dialog: an in-window modal overlay (plain DOM, no iframe —
