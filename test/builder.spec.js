@@ -192,6 +192,13 @@ describe("note-type editor: Insert menu snippets and New scaffold (R12, R13)", (
     expect(html).not.toContain("{% llm");
   });
 
+  it("the Abstract snippet renders without Obsidian callout syntax (Zotero notes don't render callouts)", () => {
+    const abs = INSERT_SNIPPETS.find((s) => s.id === "abstract");
+    const html = composePreviewHtml(previewTemplate(abs.text, ctx).preview);
+    expect(html).toContain("Abstract:");
+    expect(html).not.toContain("[!abstract]");
+  });
+
   it("the New scaffold has no frontmatter (paper type lives in the editor's own fields) and renders", () => {
     expect(NEW_NOTE_TYPE_SCAFFOLD).not.toMatch(/^---/);
     const out = previewTemplate(NEW_NOTE_TYPE_SCAFFOLD, ctx);

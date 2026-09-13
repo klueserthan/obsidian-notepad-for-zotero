@@ -123,6 +123,7 @@
     var entries = [];   // bridge.list(), then the fresh list every action returns
     var current = null; // { name, isNew }; null shows the empty state
     var saved = null;   // fields + buffer as last loaded or saved (KTD14)
+    var busy = false;   // a bridge action is in flight: nothing else may start or switch
 
     function find(name) { return entries.filter(function (e) { return e.name === name; })[0] || null; }
     function firstDeclared() { var e = entries.filter(function (x) { return !x.needsPaperType; })[0]; return e ? e.name : null; }
@@ -134,6 +135,7 @@
     }
     // Run `fn` unless there are unsaved edits the researcher declines to discard.
     function guard(fn) {
+      if (busy) return;
       if (!isDirty() || bridge.confirm("Discard your unsaved changes to "
         + (current.isNew ? "the new note type" : "‘" + current.name + "’") + "?")) fn();
     }
@@ -158,13 +160,15 @@
 
     function refresh() {
       var e = current && !current.isNew ? find(current.name) : null;
-      dupBtn.disabled = renameBtn.disabled = deleteBtn.disabled = !e;
+      dupBtn.disabled = renameBtn.disabled = deleteBtn.disabled = busy || !e;
       resetBtn.style.display = e && e.shipped ? "" : "none";
-      saveBtn.disabled = insertSel.disabled = !current;
+      resetBtn.disabled = busy;
+      saveBtn.disabled = insertSel.disabled = busy || !current;
       list.textContent = "";
       if (current && current.isNew) list.append(el("div", "b-item b-on", "New note type (unsaved)"));
       entries.forEach(function (x) {
         var row = el("button", "b-item" + (x === e ? " b-on" : ""), x.name);
+        row.disabled = busy;
         if (x.needsPaperType) row.append(el("span", "b-flag", "Needs a paper type"));
         if (x.duplicateLabel) row.append(el("span", "b-flag", "Duplicate label: " + x.label));
         if (x.label) row.title = x.label + (x.description ? " — " + x.description : "");
@@ -176,15 +180,20 @@
     function flash(msg, isErr) { status.textContent = msg || ""; status.className = "b-status" + (isErr ? " b-err" : ""); }
     // Every bridge action resolves { ok, message, templates, name? }: rebuild the
     // list from the fresh templates, show the message, then run `onOk`.
+    // One action at a time: while it runs every control is disabled, so its
+    // result can never land on a different note type than the one it acted on.
     function run(result, onOk) {
+      busy = true;
       flash("Working…");
+      refresh();
       Promise.resolve(result).then(function (res) {
         res = res || {};
+        busy = false;
         if (res.templates) entries = res.templates;
         flash(res.message, !res.ok);
         if (res.ok && onOk) onOk(res);
         refresh();
-      }, function (err) { flash("Failed: " + err, true); });
+      }, function (err) { busy = false; flash("Failed: " + err, true); refresh(); });
     }
 
     // ---- actions ------------------------------------------------------------
@@ -196,6 +205,7 @@
       guard(function () { load({ name: "", isNew: true, label: "", description: "", body: saved.body }); flash(""); nameIn.focus(); });
     }
     function onRename() {
+      if (busy) return;
       var to = bridge.prompt("Rename note type ‘" + current.name + "’ to:", current.name);
       if (to == null || to === current.name) return;
       run(bridge.rename(current.name, to), function (res) {
@@ -203,6 +213,7 @@
       });
     }
     function onDelete() {
+      if (busy) return;
       run(bridge.delete(current.name), function () { open(firstDeclared()); });
     }
     function onReset() {
@@ -211,6 +222,7 @@
     // Client-side check for empty fields only; the bridge re-validates name and
     // label rules and is authoritative (KTD8).
     function onSave() {
+      if (busy) return;
       var v = values(), missing = [];
       if (current.isNew && !v.name.trim()) missing.push("Name");
       if (!v.label.trim()) missing.push("Paper type label");
