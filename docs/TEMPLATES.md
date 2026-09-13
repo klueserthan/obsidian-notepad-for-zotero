@@ -220,9 +220,9 @@ does this, in order:
 2. **Resolve `{% llm %}` blocks** — see below. The preview never does this
    step; Generate refuses to proceed while any block is unresolved.
 3. **Strip frontmatter** — a leading `---\n…\n---` YAML block, if the template
-   has one, is dropped. It has no place in a Zotero note body; use it in the
-   Template Builder for organizing fields if you like, but it never reaches
-   the generated note.
+   has one, is dropped. It holds the note type's paper type declaration (set
+   through the note-type editor's fields) and never reaches the generated
+   note.
 4. **Strip markers** — every `%% zon … %%` / `%% /zon %%` line and every
    `%% ann:KEY %%` anchor is removed, byte-identically preserving everything
    else.
