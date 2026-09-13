@@ -4,14 +4,15 @@ import { assert } from "chai";
 // pickers, default resolution, and render guard (KTD1, KTD2, KTD5, KTD6)
 // against a throwaway Templates folder, restoring the prefs afterwards.
 
+const Z = () => Zotero.ZON;
+const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
+
 describe("note types: loader, pickers, default, render guard", function () {
-  const Z = () => Zotero.ZON;
   let dir, prevDir, prevDefault, win, item;
 
   const file = (name) => PathUtils.join(dir, name + ".md");
   const write = (name, text) => IOUtils.writeUTF8(file(name), text);
   const builtin = (name) => Z().BUILTIN_TEMPLATES[name];
-  const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
 
   async function rejection(promise) {
     try { await promise; } catch (e) { return e; }
@@ -125,7 +126,6 @@ describe("note types: loader, pickers, default, render guard", function () {
 // Startup archive and seeding memory (KTD3, KTD4): runs the real startup chain
 // (archive → seed → load) against throwaway folders under one temp root.
 describe("note types: startup archive and seeding memory", function () {
-  const Z = () => Zotero.ZON;
   const SHIPPED = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
   let root, dir, prevDir;
 
@@ -134,7 +134,6 @@ describe("note types: startup archive and seeding memory", function () {
   const read = (path) => IOUtils.readUTF8(path);
   const exists = (path) => IOUtils.exists(path);
   const names = async (folder) => (await IOUtils.getChildren(folder)).map((p) => PathUtils.filename(p)).sort();
-  const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
   const runStartupChain = () => Z().prepareTemplatesFolder();
 
   async function state() {
@@ -285,7 +284,6 @@ describe("note types: startup archive and seeding memory", function () {
 // drives the privileged actions directly against a throwaway Templates folder,
 // with the confirmation helper stubbed to record and accept.
 describe("note types: editor bridge actions and Composer propagation", function () {
-  const Z = () => Zotero.ZON;
   const XHTML = "http://www.w3.org/1999/xhtml";
   let dir, prevDir, prevDefault, win, realConfirm, confirms, pane;
 
@@ -294,7 +292,6 @@ describe("note types: editor bridge actions and Composer propagation", function 
   const read = (name, ext) => IOUtils.readUTF8(file(name, ext));
   const exists = (path) => IOUtils.exists(path);
   const builtin = (name) => Z().BUILTIN_TEMPLATES[name];
-  const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
   const declared = (label, body = "## Notes\n") => `---\npaperType: ${label}\npaperTypeDescription: ${label} papers\n---\n${body}`;
   const entry = (res, name) => res.templates.find((t) => t.name === name);
   const archived = async () => (await IOUtils.getChildren(PathUtils.join(dir, "archive"))).map((p) => PathUtils.filename(p)).sort();

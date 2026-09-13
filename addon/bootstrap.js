@@ -567,16 +567,22 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     if (!dir || (await this.templatesState(dir)).archived) return;
     let children;
     try { children = await IOUtils.getChildren(dir); } catch (e) { return; } // no folder yet: nothing to archive
-    let archive = PathUtils.join(dir, "archive"), ok = true;
+    let ok = true;
     for (let p of children) {
       let m = PathUtils.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
       if (!m || !this.RETIRED_TEMPLATES.includes(m[1])) continue;
-      try {
-        await IOUtils.makeDirectory(archive, { ignoreExisting: true });
-        await IOUtils.move(p, await this.archivePath(archive, PathUtils.filename(p)), { noOverwrite: true });
-      } catch (e) { ok = false; this.log("archive failed for " + p + ": " + e); }
+      try { await this.archiveFile(dir, p); }
+      catch (e) { ok = false; this.log("archive failed for " + p + ": " + e); }
     }
     if (ok) await this.saveTemplatesState(dir, { archived: true });
+  },
+
+  // Move one template file into `<dir>/archive/` under a free name; never
+  // overwrites. Throws on failure — callers decide whether to continue.
+  async archiveFile(dir, path) {
+    let archive = PathUtils.join(dir, "archive");
+    await IOUtils.makeDirectory(archive, { ignoreExisting: true });
+    await IOUtils.move(path, await this.archivePath(archive, PathUtils.filename(path)), { noOverwrite: true });
   },
 
   // A free path in `archive/` for `filename`: the plain name, else a timestamp
@@ -2321,12 +2327,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // each candidate's label/description is the loader's declaration, own or
     // inherited from a shipped built-in (KTD2).
     let templateNames = this.orderedTemplateNames();
-    let candidates = templateNames.map((n) => Object.assign({ name: n }, this._templates[n].paperType));
     // A label declared by more than one note type is excluded from detection
     // rather than guessed at (KTD13); both stay pickable by hand.
-    let labelCount = new Map();
-    for (let c of candidates) { let k = c.label.trim().toLowerCase(); labelCount.set(k, (labelCount.get(k) || 0) + 1); }
-    candidates = candidates.filter((c) => labelCount.get(c.label.trim().toLowerCase()) === 1);
+    let duplicated = new Set(this.noteTypeList().filter((e) => e.duplicateLabel).map((e) => e.name));
+    let candidates = templateNames.filter((n) => !duplicated.has(n))
+      .map((n) => Object.assign({ name: n }, this._templates[n].paperType));
 
     return new Promise((resolve) => {
       let settled = false;
@@ -3398,9 +3403,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     if (declared.length === 1 && declared[0] === name) return this.noteTypeResult(false, this.t("noteTypes.lastDeclared", { name }));
     if (!this.confirmNoteTypeAction(win, this.t("noteTypes.confirmDelete", { name }))) return this.noteTypeResult(false, this.t("noteTypes.cancelled"));
     try {
-      let archive = PathUtils.join(this.templatesDir(), "archive");
-      await IOUtils.makeDirectory(archive, { ignoreExisting: true });
-      await IOUtils.move(t.path, await this.archivePath(archive, PathUtils.filename(t.path)), { noOverwrite: true });
+      await this.archiveFile(this.templatesDir(), t.path);
       await this.rememberSeeded(name);
       if (Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) === name) {
         Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, declared.find((n) => n !== name) || "", true);
