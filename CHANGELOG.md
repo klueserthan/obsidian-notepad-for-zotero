@@ -84,9 +84,10 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   fingerprint, so cached Run-LLM resolutions are never invalidated.
 - **Addon-owned templates folder with seeding.** The templates folder now
   defaults to `paper-summarizer/templates` under the Zotero data directory. On
-  startup the folder is created and each starter template is written **only if
-  its file is missing** — user edits are never overwritten, and deleting a
-  seeded file restores the pristine version on the next start. A one-time
+  startup the folder is created and each starter note type is written once
+  per folder — user edits are never overwritten, and a starter you delete or
+  rename is not re-created (see *Seeding remembers what it has already
+  created* below). A one-time
   migration clears a vault-era *Templates folder* preference so the addon
   folder takes effect (the old folder and its files are left untouched on
   disk; point the preference back at it if you really want the old behavior).
@@ -154,20 +155,28 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   `ZONCore.stripMarkers` / `stripFrontmatter` / `mdToHtml`.
 
 ### Changed
-- **Composer note-type picker lists whole-note templates only.** The Composer's
-  template dropdown and Settings → *Default note template* used to list every
-  template — whole-note scaffolds (`note`, `note-*`, …) mixed in with
-  per-annotation/field building blocks (`abstract`, `critique`, `key-quote`,
-  `highlight`, `snapshot`, and the core `list`/`quote`/`callout`/`compact`
-  formats). Both pickers now show only whole-note scaffolds; building blocks
-  are unchanged and still reachable via `highlights(...)`, a `%% zon …
-  format=<name> %%` marker, and the Template Builder's block configurator. The
-  built-in `research-questions` template — a reusable "Research Questions"
-  section, not a note type — now carries a `%%! kind=section sync=on %%`
-  directive so it classifies as a block instead of a document (a template's
-  first-line `%%!` directive can force block classification even when its
-  content, e.g. an `{% llm %}` block, would otherwise sniff as a whole-note
-  scaffold — see `docs/TEMPLATES.md`).
+- **Template Builder becomes a note-type editor.** It no longer authors
+  building blocks or general templates: markdown source sits beside a live
+  rendered preview for the selected item, with required fields for the note
+  type's name, paper type label, and description, an Insert menu for common
+  snippets (an `{% llm %}` prompt, an annotations section, the citation, the
+  abstract) in place of the old block palette and block configurator, and
+  New, Duplicate, Rename, Delete (archives the file, refused for the last
+  remaining note type), and Reset to built-in (the four shipped note types
+  only) actions. Unsaved edits are confirmed before switching note type, New,
+  Duplicate, Reset, or closing.
+- **Pickers list only declared note types.** The Composer picker, Settings →
+  *Default note template*, and the bulk summary-note dialog now list exactly
+  the templates that declare a `paperType` — a template with no declaration
+  is excluded and stays editor-only, and a label declared by more than one
+  note type is left out of bulk detection until fixed. The Settings default follows a rename and falls back to the
+  first declared note type alphabetically if it's archived or missing.
+- **Seeding remembers what it has already created, per Templates folder.**
+  A small state file records which shipped note types were seeded there, so
+  deleting or renaming one of the four (`note-quantitative`,
+  `note-qualitative`, `note-theoretical`, `note-review`) is remembered and it
+  is not re-created on the next start — previously, seed-if-missing recreated
+  a deleted or renamed shipped note type on every start.
 - **Cache-friendly LLM prompts: context first, task last.** The per-block user
   message is now `Context:\n<context>\n\nTask:\n<task>` (was task-first), so
   blocks sharing a context spec send byte-identical request prefixes — the
@@ -226,6 +235,17 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   the `extensions.zotero-obsidian-notes` prefs prefix.
 
 ### Removed
+- **Building-block templates and the general note types.** Per-annotation and
+  per-field building blocks (`abstract`, `critique`, `highlight`, `key-quote`,
+  `snapshot`, `research-questions`) and the general whole-note templates
+  (`note`, `note-minimal`, `note-by-colour`) are no longer shipped, listed, or
+  authorable — the shipped note types are `note-quantitative`,
+  `note-qualitative`, `note-theoretical`, and `note-review`. On the first
+  start after the update, any of these retired files still present in a
+  Templates folder are moved into an `archive` subfolder rather than
+  deleted; they're recoverable by moving them back out by hand.
+- **The dead "Install starter templates…" button in Settings.** It no longer
+  did anything useful once the Templates folder seeds itself on startup.
 - **Legacy template-fallback preferences.** The *Note template file (legacy)*
   (`templatePath`) and *Custom formats folder (legacy)* (`formatsDir`)
   preferences are gone — pane rows, declarations, and every read. They were
@@ -273,6 +293,14 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   matches the new plugin, and the project restarts its version at `0.1.0`.
 
 ### Fixed
+- **Generating from a missing note type no longer creates an empty note.**
+  When the Settings default named a template that was missing (e.g. deleted
+  or archived), Generate silently produced a note with an empty body instead
+  of failing. Resolving an unknown note type now throws a clear, named error.
+- **A Templates folder seeded before #46 no longer offers
+  `research-questions` as a note type.** Its `{% llm %}` content used to
+  sniff as a whole-note scaffold, so it leaked into the pickers on an
+  upgraded install even though it was meant to stay a reusable block.
 - `executeLLMBlocks` (the pure runner) now honours the configured
   `maxContextChars` limit — it previously ran its pre-flight with the default
   limit regardless of the setting. Harmless so far only because the Composer

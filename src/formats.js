@@ -86,7 +86,7 @@ export function composeFormat(style, parts, commentFirst = false) {
 
 export const FIELD_FORMATS = {
   citation: { item: `**Citation:** {{bibliography}}`, sep: "\n" },
-  abstract: { item: `> [!abstract] Abstract\n> {% if abstractNote %}{{abstractNote}}{% else %}(no abstract){% endif %}`, sep: "\n" },
+  abstract: { item: `> **Abstract:**{% if abstractNote %} {{abstractNote}}{% else %} (no abstract){% endif %}`, sep: "\n" },
   title: { item: `# {{title}}`, sep: "\n" },
   authors: { item: `**Authors:** {% for c in creators %}[[{{c.lastName}}, {{c.firstName}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },
   related: { item: `**Related:** {% for r in relations | selectattr("citekey") %}[[{{r.citekey}}]]{% if not loop.last %}, {% endif %}{% endfor %}`, sep: "\n" },

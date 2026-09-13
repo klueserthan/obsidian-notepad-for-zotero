@@ -33,12 +33,12 @@ var ZON = {
   // One-time migration flag: set after the vault-era templatesDir pref has been
   // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
   PREF_TEMPLATES_MIGRATED: "extensions.zotero-obsidian-notes.templatesMigrated",
-  // Templates folder: holds note.md (whole-note scaffold) + one file per
-  // insertable block template. The pref default is intentionally empty —
-  // empty means "use the addon-owned folder" (defaultTemplatesDir()).
+  // Templates folder: one `<name>.md` file per note type. The pref default is
+  // intentionally empty — empty means "use the addon-owned folder" (defaultTemplatesDir()).
   DEFAULT_TEMPLATES_DIR: "",
-  NOTE_SCAFFOLD_NAME: "note", // <templatesDir>/note.md = the default whole-note scaffold
-  DEFAULT_DEFAULT_NOTE: "note", // which note scaffold "Create note" uses by default
+  // Empty = no stored default; defaultNoteTemplate() falls back to the first
+  // declared note type alphabetically (KTD6).
+  DEFAULT_DEFAULT_NOTE: "",
   // The Zotero tag stamped on every generated Summary Note (ADR-0002) — the sole
   // mechanism by which the plugin recognizes its own notes. Reused by later slices
   // (already-has-one checks, stale indicator). Body edits never affect it.
@@ -56,79 +56,25 @@ var ZON = {
   DEFAULT_TEMPLATES_MIGRATED: false,
   _templates: null,
 
-  // Starter templates that ship WITH the plugin. They serve two purposes:
-  //  1. seedTemplatesFolder() writes any that are MISSING into the addon-owned
-  //     templates folder on every startup (existing files are never overwritten),
-  //     so the user owns + edits them in the Template Builder;
-  //  2. they're a zero-config fallback — even before seeding runs, the Composer
-  //     and Builder work out of the box (see loadTemplates / resolveNoteScaffoldText).
-  // Keyed by filename stem; written as `<stem>.md`.
-  // Kinds are auto-detected (templateKindOf): `note*` = whole-note scaffolds,
-  // `abstract` = a field block, the rest = per-annotation block formats.
-  // Obsidian-free by design: no YAML frontmatter, no [[wikilinks]], no > [!callouts].
+  // Templates the plugin no longer ships (R5). archiveRetiredTemplates() moves
+  // any `<name>.md|.njk|.txt` among them into `<templatesDir>/archive/` once per
+  // folder (KTD4); nothing is deleted, and a file restored by hand stays put (R7).
+  RETIRED_TEMPLATES: ["abstract", "critique", "highlight", "key-quote", "snapshot",
+    "research-questions", "note", "note-minimal", "note-by-colour"],
+  // Per-folder startup state, inside the Templates folder (the loader ignores
+  // .json): { archived: true, seeded: [shipped names] } (KTD3, KTD4).
+  TEMPLATES_STATE_FILE: ".zon-templates-state.json",
+
+  // The note types that ship WITH the plugin (R5), keyed by filename stem and
+  // written as `<stem>.md`. Never merged into the loaded set (KTD1) — a note type
+  // exists only as a file in the Templates folder. Their text is read only by
+  // seedTemplatesFolder() (writes each one once per folder, never overwrites),
+  // by the loader's shipped-name inheritance (KTD2), and by Reset to built-in.
+  // Obsidian-free by design: no [[wikilinks]], no > [!callouts]; the leading
+  // frontmatter carries only the paper type declaration, stripped before HTML.
   // No leading H1 either — the generate/preview pipeline prepends the
   // `# Summary: <item title>` heading itself (withSummaryTitle).
   BUILTIN_TEMPLATES: {
-    "note": `**Citation:** {{bibliography}}
-
-[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
-
-> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
-
-## Notes
-
-
-## Annotations
-%% zon kind=annotations colour=all sync=on format=list %%
-%% /zon %%
-`,
-    "note-minimal": `[Open in Zotero]({{desktopURI}})
-
-## Notes
-
-
-## Annotations
-%% zon kind=annotations colour=all sync=on format=list %%
-%% /zon %%
-`,
-    "note-by-colour": `**Citation:** {{bibliography}}
-
-[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
-
-## Key passages (yellow)
-{{ highlights(colour="yellow", format="quote") }}
-
-## Critiques (red)
-{{ highlights(colour="red", format="quote") }}
-
-## To follow up (blue)
-{{ highlights(colour="blue", format="quote") }}
-`,
-    "abstract": `%%! kind=field sync=on %%
-> **Abstract:**
-> {{abstractNote}}
-`,
-    "critique": `%%! colour=red sync=on sep=blank %%
-> **p.{{page}}:** {{text}}{% if comment %}
->
-> {{comment}}{% endif %}
-`,
-    "key-quote": `%%! colour=yellow sync=on sep=blank %%
-> {{text}}
-> — [p.{{page}}]({{link}})
-{% if comment %}>
-> {{comment}}{% endif %}
-`,
-    "highlight": `- [p.{{page}}]({{link}}) "{{text}}"{% if comment %} — *{{comment}}*{% endif %}
-`,
-    "snapshot": `%%! sync=off %%
-- [p.{{page}}]({{link}}) "{{text}}"{% if comment %} — *{{comment}}*{% endif %}
-`,
-    "research-questions": `%%! kind=section sync=on %%
-## Research Questions
-
-{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
-`,
     "note-quantitative": `---
 paperType: quantitative
 paperTypeDescription: Empirical study with numeric data, statistics, or experiments
@@ -291,9 +237,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // views live in the same document (which corrupts the caret while typing).
     try { for (let win of Zotero.getMainWindows()) this.removeWraps(win); } catch (e) {}
     this.migrateTemplatesDir();
-    this.seedTemplatesFolder()
-      .then(() => this.loadTemplates())
-      .catch((e) => this.log("seed/loadTemplates failed: " + e));
+    // Archive → seed → load, each awaited, then open panes refresh (KTD4). Not
+    // awaited here so pane registration below isn't held up by folder IO; a pane
+    // that populated early repopulates when the loaded note types differ.
+    let templatesReady = this.prepareTemplatesFolder();
     for (let win of Zotero.getMainWindows()) this.addToWindow(win);
     try { this.registerSection(); } catch (e) { this.log("registerSection failed: " + e); }
     try {
@@ -307,6 +254,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         });
       }
     } catch (e) { this.log("prefpane register failed: " + e); }
+    await templatesReady;
     this.log("initialized");
   },
 
@@ -388,21 +336,24 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("watchWindowFocus failed: " + e); }
   },
 
-  // Re-read the templates folder so edits/additions made in another app show up
-  // without restarting Zotero. Called on window focus (the natural moment: you
-  // edit a template file elsewhere, then switch back to Zotero). Content edits
-  // are picked up silently — the next Insert resolves from the refreshed set;
-  // when the set of template NAMES changes (added/renamed/removed) the open
-  // pickers are repopulated too, so the dropdown stays current. Repopulating
-  // only on a name change avoids resetting a manually-chosen colour/sync on
-  // every alt-tab (populating re-applies the template's default colour/sync).
-  async refreshTemplates() {
-    let before = Object.keys(this._templates || {}).sort().join("\n");
+  // Re-read the templates folder so edits made in another app or in the editor
+  // reach every open Composer (KTD10). Called on window focus and after each
+  // editor action. When the declared note types change — added, removed,
+  // renamed, (un)declared, or their text edited — every open pane repopulates
+  // and re-renders its preview; nothing changed → no pane is touched, so an
+  // alt-tab never re-renders. `rename` ({ from, to }) carries a pane's
+  // selection across a rename; a pane whose note type vanished falls back to the
+  // default (KTD6) and says so.
+  async refreshTemplates(rename = null) {
+    let snapshot = () => JSON.stringify(this.noteTypeNames().map((n) => [n, this._templates[n].text, this._templates[n].paperType]));
+    let before = snapshot();
     try { await this.loadTemplates(); } catch (e) { return; }
-    let after = Object.keys(this._templates || {}).sort().join("\n");
-    if (before === after) return;
+    if (before === snapshot()) return;
     for (let rec of this.openRecs()) {
-      try { await this.populateComposerTemplates(rec); } catch (e) {}
+      let prev = rec.templateSel && rec.templateSel.value;
+      if (rename && prev === rename.from) rec.notice = this.t("composer.noteTypeRenamed", { name: prev, to: rename.to });
+      else if (prev && !this.noteTypeNames().includes(prev)) rec.notice = this.t("composer.noteTypeGone", { name: prev });
+      try { await this.populateComposerTemplates(rec, rename); } catch (e) {}
     }
   },
 
@@ -453,9 +404,23 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // section header/sidenav must use Zotero's l10nID mechanism — see the .ftl.)
   STRINGS: {
     "btn.builder": "Template Builder…",
-    "tip.builder": "Author a template with a live preview, then save it to your Templates folder — the Composer uses it to generate the note",
-    "status.templateSaved": "Saved template ‘{name}’ to your Templates folder",
-    "msg.builderOverwrite": "A template named ‘{name}.md’ already exists. Overwrite it?",
+    "tip.builder": "Create and edit note types with a live preview — the Composer generates Summary Notes from them",
+    // Note-type editor actions (bridge calls, KTD8)
+    "noteTypes.saved": "Saved note type ‘{name}’.",
+    "noteTypes.renamed": "Renamed ‘{name}’ to ‘{to}’.",
+    "noteTypes.deleted": "Moved ‘{name}’ to the archive folder.",
+    "noteTypes.reset": "Reset ‘{name}’ to the built-in version.",
+    "noteTypes.cancelled": "Cancelled.",
+    "noteTypes.failed": "Couldn't complete the action: {error}",
+    "noteTypes.labelRequired": "Paper type label is required.",
+    "noteTypes.descriptionRequired": "A one-line paper type description is required.",
+    "noteTypes.labelTaken": "The paper type label ‘{label}’ is already used by ‘{name}’.",
+    "noteTypes.lastDeclared": "‘{name}’ is the last note type with a paper type, so it can't be deleted.",
+    "noteTypes.notShipped": "‘{name}’ isn't a built-in note type in your Templates folder.",
+    "noteTypes.confirmDelete": "Move note type ‘{name}’ to the archive folder? You can restore it by moving the file back into the Templates folder.",
+    "noteTypes.confirmReset": "Replace ‘{name}’ with the built-in version? Your changes to this note type will be lost.",
+    "composer.noteTypeRenamed": "Note type ‘{name}’ was renamed to ‘{to}’.",
+    "composer.noteTypeGone": "Note type ‘{name}’ no longer exists — showing the default note type.",
     "label.autoSync": "Auto-sync",
     "tip.autoSync": "Automatically pull new highlights into this note as you annotate the PDF (applies to all notes).",
     "menu.title": "Obsidian Notepad",
@@ -499,6 +464,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "tip.composerTemplate": "Template used to render this item's Summary Note preview and the note Generate creates",
     "composer.rendering": "Rendering preview…",
     "composer.previewEmpty": "This template renders no visible content for this item.",
+    "composer.noNoteTypes": "No note types yet — open the Template Builder to create one.",
+    "err.unknownNoteType": "Unknown note type ‘{name}’ — it isn't in your Templates folder.",
     "composer.previewFailed": "Preview failed: {error}",
     "composer.generating": "Generating…",
     "composer.generated": "Summary Note created.",
@@ -573,57 +540,94 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("migrateTemplatesDir failed: " + e); }
   },
 
-  // Seed the templates folder with the builtin starters: create the folder and
-  // write each builtin as `<name>.md` ONLY if that file is missing — user edits
-  // are never overwritten (deleting a seeded file restores it on next startup).
+  // The startup chain after migrateTemplatesDir: archive retired files, seed
+  // never-seeded shipped note types, then load and refresh open panes. Never throws.
+  async prepareTemplatesFolder() {
+    try { await this.archiveRetiredTemplates(); } catch (e) { this.log("archiveRetiredTemplates failed: " + e); }
+    try { await this.seedTemplatesFolder(); } catch (e) { this.log("seedTemplatesFolder failed: " + e); }
+    await this.refreshTemplates();
+  },
+
+  // Per-folder startup state (TEMPLATES_STATE_FILE); {} when absent or unreadable.
+  async templatesState(dir) {
+    try { return JSON.parse(await IOUtils.readUTF8(PathUtils.join(dir, this.TEMPLATES_STATE_FILE))); }
+    catch (e) { return {}; }
+  },
+  async saveTemplatesState(dir, patch) {
+    let state = Object.assign(await this.templatesState(dir), patch);
+    await this.safeWrite(PathUtils.join(dir, this.TEMPLATES_STATE_FILE), JSON.stringify(state, null, 2) + "\n");
+  },
+
+  // Run once per Templates folder (KTD4): move every retired-name template file
+  // into `archive/`. Completion is recorded only when every move succeeded, so a
+  // failed move leaves its file in place and the next start retries; once
+  // recorded, a file moved back by hand is never archived again (R7).
+  async archiveRetiredTemplates() {
+    let dir = this.templatesDir();
+    if (!dir || (await this.templatesState(dir)).archived) return;
+    let children;
+    try { children = await IOUtils.getChildren(dir); } catch (e) { return; } // no folder yet: nothing to archive
+    let ok = true;
+    for (let p of children) {
+      let m = PathUtils.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
+      if (!m || !this.RETIRED_TEMPLATES.includes(m[1])) continue;
+      try { await this.archiveFile(dir, p); }
+      catch (e) { ok = false; this.log("archive failed for " + p + ": " + e); }
+    }
+    if (ok) await this.saveTemplatesState(dir, { archived: true });
+  },
+
+  // Move one template file into `<dir>/archive/` under a free name; never
+  // overwrites. Throws on failure — callers decide whether to continue.
+  async archiveFile(dir, path) {
+    let archive = PathUtils.join(dir, "archive");
+    await IOUtils.makeDirectory(archive, { ignoreExisting: true });
+    await IOUtils.move(path, await this.archivePath(archive, PathUtils.filename(path)), { noOverwrite: true });
+  },
+
+  // A free path in `archive/` for `filename`: the plain name, else a timestamp
+  // suffix, else that plus a counter. Never an existing file (noOverwrite on the
+  // move guards the check-then-move gap).
+  async archivePath(archive, filename) {
+    let [, stem, ext] = filename.match(/^(.*)(\.[^.]+)$/);
+    let stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14); // yyyymmddhhmmss
+    let path = PathUtils.join(archive, filename);
+    for (let i = 1; await IOUtils.exists(path); i++) {
+      path = PathUtils.join(archive, stem + "-" + stamp + (i > 1 ? "-" + i : "") + ext);
+    }
+    return path;
+  },
+
+  // Seed the Templates folder with the shipped note types, once per folder
+  // (KTD3): a shipped name is written only when its file is missing AND the
+  // folder's state doesn't record it as seeded; every name then present is
+  // recorded. So user edits are never overwritten, and a shipped note type the
+  // researcher deleted or renamed is not re-created on the next start (R16).
   // Writes go through safeWrite (atomic tmp+rename), same as Builder saves.
   async seedTemplatesFolder() {
     let dir = this.templatesDir();
     if (!dir) return;
     try { await IOUtils.makeDirectory(dir, { ignoreExisting: true, createAncestors: true }); }
     catch (e) { this.log("seedTemplatesFolder mkdir failed: " + e); return; }
+    let seeded = (await this.templatesState(dir)).seeded || [];
+    let added = [];
     for (let name of Object.keys(this.BUILTIN_TEMPLATES)) {
+      if (seeded.includes(name)) continue;
       try {
         let p = PathUtils.join(dir, name + ".md");
         if (!(await IOUtils.exists(p))) await this.safeWrite(p, this.BUILTIN_TEMPLATES[name]);
+        added.push(name); // a failed write stays unrecorded, so the next start retries
       } catch (e) { this.log("seedTemplatesFolder write failed for " + name + ": " + e); }
     }
+    if (added.length) await this.saveTemplatesState(dir, { seeded: seeded.concat(added) });
   },
-  defaultNoteTemplate() { return Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) || this.DEFAULT_DEFAULT_NOTE; },
-
-  // Whole-note scaffolds available in the Templates folder: every file named
-  // `note` or `note-*` (so you can keep several, e.g. note-book / note-article).
-  // Returns [{ name, path }], note-scaffold names without the extension.
-  async noteTemplates() {
-    let out = [];
-    let dir = this.templatesDir();
-    if (dir) {
-      let children;
-      try { children = await IOUtils.getChildren(dir); } catch (e) { children = []; }
-      for (let p of children) {
-        if (!/\.(njk|md|txt)$/i.test(p)) continue;
-        let name = PathUtils.filename(p).replace(/\.(njk|md|txt)$/i, "");
-        if (/^note(-.*)?$/i.test(name)) out.push({ name, path: p });
-      }
-    }
-    out.sort((a, b) => a.name.localeCompare(b.name));
-    return out;
-  },
-
-  // Resolve the TEXT of a note scaffold by name, in priority order:
-  //   user Templates folder file → shipped BUILTIN_TEMPLATES.
-  // Guarantees "Create note" / "Manage fields" have a real scaffold even when the
-  // Templates folder hasn't been seeded yet (fresh install). Returns "" only if
-  // nothing resolves (and the named template isn't a built-in).
-  async resolveNoteScaffoldText(name) {
-    name = name || this.defaultNoteTemplate() || this.NOTE_SCAFFOLD_NAME;
-    let dir = this.templatesDir();
-    if (dir) {
-      let p = PathUtils.join(dir, name + ".md");
-      try { if (await IOUtils.exists(p)) return await IOUtils.readUTF8(p); } catch (e) {}
-    }
-    if (this.BUILTIN_TEMPLATES[name] != null) return this.BUILTIN_TEMPLATES[name];
-    return "";
+  // KTD6: the stored default when it names a declared note type, else the first
+  // declared note type alphabetically, else "" (the Composer shows its empty
+  // state). Never rewrites the pref.
+  defaultNoteTemplate() {
+    let names = this.noteTypeNames();
+    let def = Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true);
+    return names.includes(def) ? def : (names[0] || "");
   },
 
   // Parse a template file into { item, sep, defaults }. Mirrors
@@ -675,6 +679,24 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return "format";
   },
 
+  // A template's paper type declaration { label, description }, or null. Mirrors
+  // src/templates.js paperTypeDeclaration + frontmatterFieldValue (loading runs
+  // without ZONCore): only top-level keys inside the leading frontmatter fence
+  // count, and an empty/absent paperType is no declaration at all.
+  paperTypeDeclarationOf(text) {
+    let m = String(text || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!m) return null;
+    let field = (key) => {
+      for (let line of m[1].split(/\r?\n/)) {
+        let km = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+        if (km && km[1] === key) return km[2].trim().replace(/^(["'])([\s\S]*)\1$/, "$2");
+      }
+      return null;
+    };
+    let label = field("paperType");
+    return label ? { label, description: field("paperTypeDescription") } : null;
+  },
+
   // Frontmatter fields the user owns (mirrors src/templates.js): a field with a
   // `{{ }}` / `{% %}` expression auto-updates from Zotero on Refresh; a plain field
   // (e.g. `KeyIdea:`) is preserved.
@@ -693,44 +715,34 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return keys;
   },
 
-  // Load EVERY template from the unified Templates folder (+ legacy formats folder)
-  // into one map keyed by filename. Each entry is classified:
-  //   document → { kind:'document', text }            (whole-note template)
-  //   format   → { kind:'format', item, sep, defaults } (per-annotation body)
-  // This is the single source for both the Insert dropdown and the Create picker —
-  // any template can be inserted at the cursor OR used to create a whole note.
+  // Load every template from the Templates folder — only the folder; built-ins
+  // are never merged in (KTD1) — into one map keyed by filename. Each entry
+  // records its path and paper type declaration, classified for rendering (KTD12):
+  //   document → { kind:'document', path, paperType, text }
+  //   format   → { kind:'format', path, paperType, item, sep, defaults } (dormant block body)
+  // `paperType` is { label, description } or null. A file named after a shipped
+  // note type that declares none inherits the built-in's declaration, without
+  // the file being rewritten (KTD2); any other undeclared file is editor-only (R3).
   async loadTemplates() {
     let out = {};
-    let load = async (dir) => {
-      if (!dir) return;
-      let children;
-      try { children = await IOUtils.getChildren(dir); }
-      catch (e) { return; } // missing folder is fine — built-ins still apply
-      for (let p of children) {
-        if (!/\.(njk|md|txt)$/i.test(p)) continue;
-        let name = PathUtils.filename(p).replace(/\.(njk|md|txt)$/i, "");
-        if (/^(templates|readme)$/i.test(name)) continue; // docs files, not templates
-        try {
-          let text = await IOUtils.readUTF8(p);
-          if (this.templateKindOf(text) === "document") out[name] = { kind: "document", text };
-          else out[name] = Object.assign({ kind: "format" }, this.parseTemplateText(text));
-        } catch (e) {}
-      }
-    };
-    this.addBuiltins(out);             // shipped starters (lowest priority)
-    await load(this.templatesDir());   // templates folder (wins — user files override)
+    let dir = this.templatesDir();
+    let children = [];
+    if (dir) { try { children = await IOUtils.getChildren(dir); } catch (e) {} } // missing folder → empty set
+    for (let p of children) {
+      if (!/\.(njk|md|txt)$/i.test(p)) continue;
+      let name = PathUtils.filename(p).replace(/\.(njk|md|txt)$/i, "");
+      if (/^(templates|readme|archive)$/i.test(name)) continue; // docs files / archive folder name, not templates
+      try {
+        let text = await IOUtils.readUTF8(p);
+        let paperType = this.paperTypeDeclarationOf(text)
+          || (Object.hasOwn(this.BUILTIN_TEMPLATES, name) ? this.paperTypeDeclarationOf(this.BUILTIN_TEMPLATES[name]) : null);
+        out[name] = this.templateKindOf(text) === "document"
+          ? { kind: "document", path: p, paperType, text }
+          : Object.assign({ kind: "format", path: p, paperType, text }, this.parseTemplateText(text));
+      } catch (e) {}
+    }
     this._templates = out;
     return out;
-  },
-
-  // Seed `out` with the plugin's BUILTIN_TEMPLATES, classified exactly like a
-  // loaded file. User-folder files of the same name override these afterwards.
-  addBuiltins(out) {
-    for (let name of Object.keys(this.BUILTIN_TEMPLATES)) {
-      let text = this.BUILTIN_TEMPLATES[name];
-      if (this.templateKindOf(text) === "document") out[name] = { kind: "document", text };
-      else out[name] = Object.assign({ kind: "format" }, this.parseTemplateText(text));
-    }
   },
 
   // The full unified template list (shipped formats + the user's files), keyed by
@@ -756,39 +768,25 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return out;
   },
 
-  // Order the NOTE-TYPE (document-kind only) template names with the default
-  // note scaffold first, then the rest alphabetically — so the Composer picker
-  // opens on the user's default. Format-kind building blocks (per-annotation /
-  // field bodies) are deliberately excluded: they're not something you generate
-  // a whole note from, they're referenced by name from inside a note template
-  // via `format=` markers / `highlights(...)`, and remain reachable through the
-  // Template Builder's block configurator.
-  orderedTemplateNames(win) {
-    let all = this.allTemplates(win);
-    let names = Object.keys(all).filter((k) => all[k].kind === "document");
-    if (!names.length) names = ["note"];
-    let def = this.defaultNoteTemplate();
-    names.sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b)));
-    return names;
+  // Declared note types (R1): loaded whole-note templates with a paper type
+  // declaration, own or inherited (KTD2), alphabetical. Runs without ZONCore.
+  // Every generation picker and the default (KTD6) draw from exactly this list.
+  noteTypeNames() {
+    let all = this._templates || {};
+    return Object.keys(all).filter((k) => all[k].kind === "document" && all[k].paperType)
+      .sort((a, b) => a.localeCompare(b));
   },
 
-  // Window-INDEPENDENT NOTE-TYPE (document-kind only) name list for the Settings
-  // "Default note template" dropdown. The prefs-pane script scope can't reliably
-  // enumerate the folder (IOUtils/PathUtils aren't dependable globals there —
-  // same class of issue as Services), so it asks the plugin instead: this reads
-  // `_templates` (already loaded in the privileged main-window scope), filtered
-  // to whole-note scaffolds — format-kind building blocks are excluded, same as
-  // the Composer picker (orderedTemplateNames).
-  prefsTemplateNames() {
-    let names = new Set(["note"]);
-    for (let k of Object.keys(this._templates || {})) {
-      if (/^(templates|readme)$/i.test(k)) continue;
-      if (this._templates[k].kind === "document") names.add(k);
-    }
+  // Composer / bulk picker order: the default note type first, then alphabetical.
+  orderedTemplateNames() {
     let def = this.defaultNoteTemplate();
-    if (def && (!this._templates || !this._templates[def] || this._templates[def].kind === "document")) names.add(def);
-    return [...names].sort();
+    return this.noteTypeNames().sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b)));
   },
+
+  // Window-independent list for the Settings "Default note template" dropdown:
+  // the prefs-pane scope can't reliably enumerate the folder (IOUtils/PathUtils
+  // aren't dependable globals there), so it asks the plugin.
+  prefsTemplateNames() { return this.noteTypeNames(); },
 
   // Store defaults for any unset pref so the preferences pane shows real values
   // (its inputs bind to the stored pref, which is blank/"undefined" otherwise).
@@ -1220,10 +1218,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
 
     let toolbar = h("div", "zon-toolbar");
 
-    // Template picker — every template (folder files + built-in formats), default
-    // note scaffold first. Changing it re-renders the preview.
+    // Note-type picker — declared note types only, default first. Changing it
+    // re-renders the preview.
     let templateSel = h("select"); templateSel.title = this.t("tip.composerTemplate");
-    this.orderedTemplateNames(win).forEach((f) => { let o = h("option"); o.value = f; o.textContent = f; templateSel.appendChild(o); });
+    this.orderedTemplateNames().forEach((f) => { let o = h("option"); o.value = f; o.textContent = f; templateSel.appendChild(o); });
 
     // Run-LLM (ADR-0001): resolves every {% llm %} block once so Generate can run.
     // Hidden until the current render is known to contain blocks (see refreshPreview).
@@ -1356,16 +1354,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) {}
   },
 
-  // (Re)fill the Composer picker from the unified template list once loadTemplates
-  // + ZONCore are ready. Default note scaffold first; preserves any selection.
-  async populateComposerTemplates(rec) {
+  // (Re)fill the Composer picker from the declared note types once loadTemplates
+  // + ZONCore are ready. Default note type first; preserves any selection.
+  async populateComposerTemplates(rec, rename = null) {
     let sel = rec.templateSel;
     if (!sel) return;
     let win = rec.wrap.ownerDocument.defaultView;
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
-    let names = this.orderedTemplateNames(win);
-    let prev = sel.value;
+    let names = this.orderedTemplateNames();
+    let prev = rename && sel.value === rename.from ? rename.to : sel.value;
     let doc = sel.ownerDocument;
     sel.textContent = "";
     for (let n of names) {
@@ -1373,7 +1371,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       o.value = n; o.textContent = n;
       sel.appendChild(o);
     }
-    sel.value = (prev && names.includes(prev)) ? prev : names[0];
+    sel.value = (prev && names.includes(prev)) ? prev : (names[0] || "");
     this.schedulePreview(rec, { immediate: true });
   },
 
@@ -1402,18 +1400,33 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let win = rec.wrap.ownerDocument.defaultView;
     let item = rec.item;
     let seq = ++rec.previewSeq;
+    let notice = rec.notice || ""; // set by refreshTemplates; shown once instead of a blank status
+    rec.notice = "";
     let host = rec.host;
     if (!item) {
       host.textContent = "";
       rec.composeMd = ""; rec.composeState = null;
       this.clearLLMError(rec);
       this.updateComposerButtons(rec);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
     if (!win.ZONCore) { try { await this.injectCore(win); } catch (e) {} }
     if (!this._templates) { try { await this.loadTemplates(); } catch (e) {} }
     let name = (rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+    if (!name) {
+      // No declared note type at all (KTD6): point to the editor instead of rendering.
+      rec.composeMd = ""; rec.composeState = null;
+      this.clearLLMError(rec);
+      this.updateComposerButtons(rec);
+      host.textContent = "";
+      let d = win.document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      d.className = "zon-preview-empty";
+      d.textContent = this.t("composer.noNoteTypes");
+      host.appendChild(d);
+      this.setStatus(rec, notice);
+      return;
+    }
     this.setStatus(rec, this.t("composer.rendering"));
 
     // Render the raw Summary-Note markdown (still carries frontmatter, %% zon %%
@@ -1439,7 +1452,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-error";
       d.textContent = this.t("composer.previewFailed", { error: err });
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1473,7 +1486,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-error";
       d.textContent = this.t("composer.previewFailed", { error: err });
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1483,7 +1496,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       d.className = "zon-preview-empty";
       d.textContent = this.t("composer.previewEmpty");
       host.appendChild(d);
-      this.setStatus(rec, "");
+      this.setStatus(rec, notice);
       return;
     }
 
@@ -1502,7 +1515,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       host.textContent = "";
       this.log("preview render failed: " + e);
     }
-    this.setStatus(rec, "");
+    this.setStatus(rec, notice);
   },
 
   // Turn the compose's raw md + gate state into preview HTML. When every {% llm %}
@@ -1977,18 +1990,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // Render template `name` as a whole note. A document template is rendered in
   // full; a per-annotation format becomes a note that's just a filled annotations
   // block (so you really can "start a note that's just a list of annotations").
+  // A name not loaded from the Templates folder throws UnknownNoteTypeError
+  // (KTD5), so Generate, Run LLM, and bulk runs refuse instead of creating an
+  // empty note.
   async renderTemplateAsNote(win, item, name, opts = {}) {
-    let t = this.allTemplates(win)[name];
+    let all = this._templates || {};
+    let t = Object.hasOwn(all, name) ? all[name] : null;
     if (!t) {
-      let text = await this.resolveNoteScaffoldText(name);
-      if (text) {
-        let v = this.validateLLMTemplate(win, text);
-        if (!v.valid) {
-          throw new Error(this.t("err.llmBlocksInvalid", { count: v.errors.length })
-            + " " + v.errors.map(e => "line " + (e.line != null ? e.line : "?") + ": " + e.message).join("; "));
-        }
-      }
-      return this.renderDocument(win, item, text, opts);
+      let err = new Error(name ? this.t("err.unknownNoteType", { name }) : this.t("composer.noNoteTypes"));
+      err.name = "UnknownNoteTypeError";
+      throw err;
     }
     if (t.kind === "document") {
       if (t.text) {
@@ -2312,24 +2323,15 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       templateName: r.templateName, included: r.included,
     });
 
-    // Pickers list every document template (undeclared ones included, R3);
-    // detection candidates are only the ones declaring a paperType (KTD4).
-    let templateNames = this.orderedTemplateNames(win);
-    let all = this.allTemplates(win) || {};
-    let candidates = [];
-    try {
-      // A seeded or hand-copied starter that predates the paperType keys
-      // shadows the shipped built-in of the same name; treat it as still that
-      // starter's paper type so an upgrade doesn't disable Detect (rename the
-      // copy to opt out).
-      candidates = C.paperTypeCandidates
-        ? C.paperTypeCandidates(templateNames.map((n) => {
-            let text = (all[n] && all[n].text) || "";
-            if (!C.paperTypeDeclaration(text) && this.BUILTIN_TEMPLATES[n]) text = this.BUILTIN_TEMPLATES[n];
-            return { name: n, text };
-          }))
-        : [];
-    } catch (e) { this.log("paperTypeCandidates failed: " + e); }
+    // Pickers and detection candidates are the same declared note types (R1);
+    // each candidate's label/description is the loader's declaration, own or
+    // inherited from a shipped built-in (KTD2).
+    let templateNames = this.orderedTemplateNames();
+    // A label declared by more than one note type is excluded from detection
+    // rather than guessed at (KTD13); both stay pickable by hand.
+    let duplicated = new Set(this.noteTypeList().filter((e) => e.duplicateLabel).map((e) => e.name));
+    let candidates = templateNames.filter((n) => !duplicated.has(n))
+      .map((n) => Object.assign({ name: n }, this._templates[n].paperType));
 
     return new Promise((resolve) => {
       let settled = false;
@@ -3101,12 +3103,12 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     return this.t("err.llmRunFailed", { error: code || "error" });
   },
   // --------------------------------------------------------- Template Builder
-  // A dedicated builder surface: a full-window modal overlay (in the main window)
-  // hosting ONE srcdoc iframe that loads core.bundle.js + editor.bundle.js +
-  // builder-app.js. The iframe runs the whole builder UI (CM editor + palette +
-  // live preview, all over ZONCore — the same pure engine the write paths use);
-  // this glue gathers the preview context from the selected item, opens/tears
-  // down the overlay, and provides the privileged insert/save bridge.
+  // The note-type editor: a full-window modal overlay (in the main window) hosting
+  // ONE srcdoc iframe that loads core.bundle.js + editor.bundle.js + builder-app.js.
+  // The iframe runs the whole UI (note-type list, fields, CodeMirror source, HTML
+  // preview, all over ZONCore); this glue gathers the preview context from the
+  // selected item, opens/tears down the overlay, and provides the privileged
+  // note-type bridge.
   async openTemplateBuilder(win, rec) {
     win = win || Zotero.getMainWindows()[0];
     if (!win) return;
@@ -3116,22 +3118,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let item = (rec && rec.item) || (this.selectedRegularItems(win)[0] || null);
     let ctx = await this.gatherPreviewContext(win, item);
     let dark = this.isDarkTheme(win, rec && rec.host);
-    // Name → raw text map of existing templates, for the builder's "Edit existing".
-    // Plus the per-annotation format names (built-ins + custom, EXCLUDING field/
-    // section/custom directive templates) for the block configurator's dropdown.
-    let templates = {};
-    let formatNames = [];
-    try {
-      await this.loadTemplates();
-      let all = this.allTemplates(win) || {};
-      for (let name in all) {
-        let t = all[name];
-        if (t && typeof t.text === "string") templates[name] = t.text;
-        let dk = t && t.defaults && t.defaults.kind;
-        if (t && t.kind === "format" && (!dk || dk === "annotations")) formatNames.push(name);
-      }
-      formatNames.sort();
-    } catch (e) { this.log("builder: template list failed: " + e); }
+    await this.refreshTemplates(); // bridge.list() reads the loaded set
+    // The preview reuses the Composer's preview typography + LLM placeholder styles.
+    this.injectComposerCSS(win);
+    let previewCSS = (win.document.getElementById("zon-composer-css") || {}).textContent || "";
 
     let NS = "http://www.w3.org/1999/xhtml";
     let overlay = win.document.createElementNS(NS, "div");
@@ -3150,40 +3140,48 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       this.rootURI + "content/core.bundle.js",
       this.rootURI + "content/editor.bundle.js",
       this.rootURI + "content/builder-app.js",
-      dark,
+      dark, previewCSS,
     );
     panel.appendChild(iframe);
     overlay.appendChild(panel);
-    // Click the dimmed backdrop (not the panel) to close.
-    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) this.closeTemplateBuilder(win); });
+    // Click the dimmed backdrop (not the panel) to close — through the editor, so
+    // unsaved edits are confirmed first (KTD14).
+    overlay.addEventListener("mousedown", (e) => {
+      if (e.target !== overlay) return;
+      let fw = iframe.contentWindow;
+      if (fw && fw.builderRequestClose) fw.builderRequestClose();
+      else this.closeTemplateBuilder(win);
+    });
     win.document.documentElement.appendChild(overlay);
 
     let self = this;
+    // Note-type editor actions (KTD8): each re-validates, writes, refreshes once,
+    // and resolves { ok, message, name?, templates }.
     let bridge = {
-      // Templates only — the Builder never writes an item note file. Saving hands
-      // off to the Composer (rec) so it selects the just-saved template.
-      save: (name, text, setDefault) => self.builderSaveTemplate(win, rec, name, text, setDefault),
+      list: () => self.noteTypeList(),
+      save: (draft) => self.saveNoteType(win, draft),
+      rename: (name, newName) => self.renameNoteType(win, name, newName),
+      delete: (name) => self.deleteNoteType(win, name),
+      reset: (name) => self.resetNoteType(win, name),
+      confirm: (message) => self.confirmNoteTypeAction(win, message),
+      // Rename's new-name prompt: the entered text, or null when cancelled.
+      prompt: (message, value) => {
+        let input = { value };
+        return Services.prompt.prompt(win, self.t("menu.title"), message, input, null, {}) ? input.value : null;
+      },
       close: () => self.closeTemplateBuilder(win),
     };
-    // The Builder is a pure template-authoring surface. Seed the editor with the
-    // TEMPLATE currently selected in the Composer's picker (falling back to the
-    // default template), never a note file — and prefill the Save-as name with it so
-    // saving updates that template.
-    let initialName = (rec && rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate() || "";
-    let initialDoc = null;
-    try {
-      let t = initialName ? (this.allTemplates(win) || {})[initialName] : null;
-      if (t && typeof t.text === "string") initialDoc = t.text;         // folder template
-      else if (t && typeof t.item === "string") initialDoc = t.item;    // built-in format body
-      else initialDoc = await this.resolveNoteScaffoldText(initialName || undefined); // scaffold / default
-    } catch (e) {}
+    // Open on the note type selected in the Composer's picker, else the default.
+    let initialName = (rec && rec.templateSel && rec.templateSel.value) || this.defaultNoteTemplate();
+    let model = "";
+    try { model = this.llmModel() || ""; } catch (e) {}
     // Poll the (srcdoc-swapped) contentWindow for the app entry + both bundles,
     // then start it — same robustness trick the note editor iframe uses.
     let tries = 0;
     let waitForApp = function () {
       let fw = iframe.contentWindow;
       if (fw && fw.startBuilder && fw.ZONCore && fw.ZOSEditorLib) {
-        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, templates, formatNames, initialDoc, initialName }); }
+        try { fw.startBuilder({ previewCtx: ctx, bridge, dark, initialName, model }); }
         catch (e) { self.log("startBuilder failed: " + e); }
         return;
       }
@@ -3221,62 +3219,46 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // The srcdoc page: minimal markup + styles, then the three bundles (absolute
   // jar: URLs — Gecko loads <script src> from jar: fine, even though it won't
   // navigate the iframe document itself to jar:). builder-app.js builds the UI.
-  builderPageHTML(coreURL, edURL, appURL, dark) {
+  // `previewCSS` is the Composer's stylesheet (preview typography + LLM
+  // placeholders); its Zotero theme variables are mapped onto this palette.
+  builderPageHTML(coreURL, edURL, appURL, dark, previewCSS) {
     let bg = dark ? "#1e1e1e" : "#ffffff";
     let fg = dark ? "#e6e6e6" : "#1a1a1a";
     let muted = dark ? "#9aa0a6" : "#666";
     let border = dark ? "#3a3a3a" : "#ddd";
     let pane = dark ? "#252526" : "#f6f6f6";
     let accent = "#7048e8";
-    let css = "html,body{margin:0;height:100%;background:" + bg + ";color:" + fg + ";font:13px/1.4 -apple-system,system-ui,sans-serif;}"
+    let css = ":root{--fill-primary:" + fg + ";--fill-secondary:" + muted + ";--fill-quarternary:" + border
+      + ";--fill-quinary:" + border + ";--material-background:" + bg + ";--color-accent:" + accent + ";}"
+      + "html,body{margin:0;height:100%;background:" + bg + ";color:" + fg + ";font:13px/1.4 -apple-system,system-ui,sans-serif;}"
       + "#zon-builder-root{display:flex;flex-direction:column;height:100%;}"
       + ".b-header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid " + border + ";}"
       + ".b-title{font-weight:600;font-size:14px;}.b-sub{color:" + muted + ";font-size:12px;flex:1;}"
       + ".b-x{margin-left:auto;border:0;background:transparent;color:" + muted + ";font-size:15px;cursor:pointer;}"
-      + ".b-toggle{display:flex;align-items:center;gap:4px;font-size:11px;color:" + muted + ";cursor:pointer;white-space:nowrap;}"
-      + ".b-help{padding:6px 14px;font-size:11px;color:" + muted + ";background:" + pane + ";border-bottom:1px solid " + border + ";}"
+      + ".b-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid " + border + ";background:" + pane + ";}"
       + ".b-body{flex:1;display:flex;min-height:0;}"
-      + ".b-side{width:300px;border-right:1px solid " + border + ";overflow:auto;padding:8px 10px;background:" + pane + ";}"
-      + ".b-pal-head{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;margin:12px 2px 5px;}"
-      + ".b-section{font-weight:700;color:" + fg + ";font-size:13px;text-transform:uppercase;letter-spacing:.02em;margin:14px 0 6px;padding-top:10px;border-top:2px solid " + border + ";}"
-      + ".b-ctx{font-size:11px;color:" + accent + ";background:rgba(112,72,232,0.10);border-radius:5px;padding:5px 8px;margin:2px 0 8px;}"
-      + ".b-pal-group{display:flex;flex-wrap:wrap;gap:4px;}"
-      + ".b-chip{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:5px;padding:3px 7px;font-size:11px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
-      + ".b-chip:hover{border-color:" + accent + ";color:" + accent + ";}.b-chip-l{pointer-events:none;}"
-      + ".b-chip.b-on{border-color:" + accent + ";color:" + accent + ";background:rgba(112,72,232,0.12);font-weight:600;}"
-      + ".b-col{text-transform:capitalize;}.b-rm{color:#d33;font-weight:600;}"
-      // guided chooser + compose form
-      + ".b-chooser{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;}"
-      + ".b-chooser-q{font-size:18px;font-weight:600;margin-bottom:20px;}"
-      + ".b-cards{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;max-width:760px;}"
-      + ".b-card{width:220px;border:1px solid " + border + ";border-radius:10px;padding:16px;cursor:pointer;background:" + pane + ";transition:border-color .1s;}"
-      + ".b-card:hover{border-color:" + accent + ";}.b-card-off{opacity:.45;cursor:default;}.b-card-off:hover{border-color:" + border + ";}"
-      + ".b-card-t{font-weight:600;font-size:14px;margin-bottom:6px;}.b-card-d{color:" + muted + ";font-size:12px;line-height:1.45;}"
-      + ".b-back{border:0;background:transparent;color:" + accent + ";cursor:pointer;font-size:12px;padding:0 6px 0 0;}"
-      + ".b-form{display:flex;flex-direction:column;gap:6px;margin:2px 0 8px;}"
-      + ".b-form-h{font-weight:600;font-size:11px;color:" + muted + ";margin:8px 0 2px;}"
-      + ".b-checks{display:flex;flex-wrap:wrap;gap:2px 12px;}"
-      + ".b-check{display:flex;align-items:center;gap:5px;font-size:12px;width:46%;cursor:pointer;}"
-      + ".b-form-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:3px 0;}"
-      + ".b-form-rl{font-size:12px;color:" + fg + ";}"
-      + ".b-select{border:1px solid " + border + ";border-radius:5px;padding:3px 6px;background:" + bg + ";color:" + fg + ";font-size:12px;max-width:170px;}"
-      + ".b-gen{width:100%;margin:6px 0 2px;}"
-      + ".b-hint{color:" + muted + ";font-size:11px;line-height:1.4;margin:4px 2px 8px;}"
+      + ".b-side{width:220px;border-right:1px solid " + border + ";overflow:auto;padding:6px;background:" + pane + ";}"
+      + ".b-item{display:block;width:100%;box-sizing:border-box;text-align:left;border:1px solid transparent;background:transparent;color:" + fg + ";border-radius:5px;padding:5px 8px;margin:1px 0;font:inherit;cursor:pointer;overflow-wrap:anywhere;}"
+      + ".b-item:hover{border-color:" + border + ";}.b-item.b-on{border-color:" + accent + ";background:rgba(112,72,232,0.12);}"
+      + ".b-flag{display:block;font-size:10px;color:#d97706;}"
+      + ".b-main{flex:1;display:flex;flex-direction:column;min-width:0;}"
+      + ".b-empty{flex:1;display:flex;align-items:center;justify-content:center;color:" + muted + ";}"
+      + ".b-fields{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid " + border + ";}"
+      + ".b-field{display:flex;flex-direction:column;gap:2px;font-size:11px;color:" + muted + ";}.b-field-wide{flex:1;}"
+      + ".b-input{border:1px solid " + border + ";border-radius:5px;padding:4px 8px;background:" + bg + ";color:" + fg + ";font:inherit;font-size:13px;}"
+      + ".b-input[readonly]{background:" + pane + ";color:" + muted + ";}"
+      + ".b-split{flex:1;display:flex;min-height:0;}"
       + ".b-editor,.b-preview{flex:1;display:flex;flex-direction:column;min-width:0;}"
       + ".b-editor{border-right:1px solid " + border + ";}"
-      + ".b-colhead{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;padding:8px 12px;display:flex;align-items:center;gap:8px;}"
+      + ".b-colhead{font-weight:600;color:" + muted + ";font-size:11px;text-transform:uppercase;padding:8px 12px;}"
       + ".b-editor-host{flex:1;min-height:0;overflow:auto;}.cm-editor{height:100%;}"
-      + ".b-kind{font-weight:500;text-transform:none;color:" + accent + ";border:1px solid " + accent + ";border-radius:4px;padding:0 6px;font-size:10px;}"
-      + ".b-kind-err{color:#d33;border-color:#d33;}"
-      + ".b-preview-out{flex:1;margin:0;padding:10px 14px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,Menlo,monospace;}"
-      + ".b-preview-out.b-err{color:#d33;}"
-      + ".b-preview-host{flex:1;min-height:0;overflow:auto;}"
-      + ".b-footer{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid " + border + ";background:" + pane + ";}"
-      + ".b-name-label{color:" + muted + ";}.b-name{border:1px solid " + border + ";border-radius:5px;padding:4px 8px;background:" + bg + ";color:" + fg + ";width:160px;}"
+      + ".b-preview-host.zon-preview{flex:1;min-height:0;max-height:none;margin:0;border:0;border-radius:0;}"
+      + ".b-select{border:1px solid " + border + ";border-radius:5px;padding:4px 6px;background:" + bg + ";color:" + fg + ";font-size:12px;}"
       + ".b-btn{border:1px solid " + border + ";background:" + bg + ";color:" + fg + ";border-radius:6px;padding:5px 12px;cursor:pointer;}"
       + ".b-btn:hover{border-color:" + accent + ";}.b-primary{background:" + accent + ";color:#fff;border-color:" + accent + ";}"
       + ".b-btn:disabled{opacity:0.4;cursor:not-allowed;border-color:" + border + ";background:" + bg + ";color:" + fg + ";}"
-      + ".b-status{margin-left:auto;color:" + muted + ";}.b-status.b-err{color:#d33;}";
+      + ".b-status{margin-left:auto;color:" + muted + ";}.b-status.b-err{color:#d33;}"
+      + (previewCSS || "");
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + css + '</style></head>'
       + '<body><div id="zon-builder-root"></div>'
       + '<script src="' + coreURL + '"></scr' + 'ipt>'
@@ -3285,41 +3267,167 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       + '</body></html>';
   },
 
-  // Bridge OUT: write the builder's template SOURCE to the Templates folder
-  // (idempotent — confirms before overwriting; always the templates folder via the
-  // atomic safeWrite path, NEVER an item note file), then refresh the template list
-  // and hand off to the Composer — select the just-saved template and refresh its
-  // preview — so closing the Builder lands on the new template ready to Generate.
-  async builderSaveTemplate(win, rec, name, text, setDefault) {
-    let safe = String(name || "").trim().replace(/\.md$/i, "").replace(/[\/\\:*?"<>|]+/g, "-");
-    if (!safe) throw new Error("empty name");
-    let dir = this.templatesDir();
-    try { await IOUtils.makeDirectory(dir, { ignoreExisting: true }); } catch (e) {}
-    let path = PathUtils.join(dir, safe + ".md");
-    if (await IOUtils.exists(path)) {
-      let ok = Services.prompt.confirm(win, "Obsidian Notepad", this.t("msg.builderOverwrite", { name: safe }));
-      if (!ok) return "Save cancelled";
-    }
-    await this.safeWrite(path, String(text || ""));
-    try { await this.refreshTemplates(); } catch (e) {}
-    // Optionally make this the template the Composer selects by default.
-    if (setDefault) { try { Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, safe, true); } catch (e) {} }
-    // Hand off to the Composer that opened the Builder: point its picker at the
-    // just-saved template and refresh the preview.
-    try { await this.selectComposerTemplate(rec, safe); } catch (e) { this.log("builder handoff failed: " + e); }
-    return this.t("status.templateSaved", { name: safe }) + (setDefault ? " — set as default" : "");
+  // ------------------------------------------------ note-type editor actions
+  // The editor's list (R13): every loaded file, alphabetical, including
+  // undeclared ones. `label`/`description` are the effective declaration (own or
+  // inherited from a shipped built-in, KTD2); `inherited` when the file itself
+  // declares none; `shipped` for the four built-in names (Reset is offered only
+  // for those); `needsPaperType` when no picker lists it (R3); `duplicateLabel`
+  // when another note type declares the same label (KTD13).
+  noteTypeList() {
+    let all = this._templates || {}, listed = this.noteTypeNames();
+    let norm = (t) => t.paperType ? t.paperType.label.trim().toLowerCase() : null;
+    let counts = new Map();
+    for (let n in all) if (norm(all[n])) counts.set(norm(all[n]), (counts.get(norm(all[n])) || 0) + 1);
+    return Object.keys(all).sort((a, b) => a.localeCompare(b)).map((name) => {
+      let t = all[name];
+      return {
+        name, path: t.path, text: t.text,
+        label: t.paperType ? t.paperType.label : "",
+        description: (t.paperType && t.paperType.description) || "",
+        inherited: !!t.paperType && !this.paperTypeDeclarationOf(t.text),
+        shipped: Object.hasOwn(this.BUILTIN_TEMPLATES, name),
+        needsPaperType: !listed.includes(name),
+        duplicateLabel: !!norm(t) && counts.get(norm(t)) > 1,
+      };
+    });
   },
 
-  // Point a Composer pane's template picker at `name` and refresh its preview.
-  // Used by the Builder handoff so a just-saved template is selected in the Composer.
-  async selectComposerTemplate(rec, name) {
-    if (!rec || !rec.templateSel) return;
-    try { await this.populateComposerTemplates(rec); } catch (e) {}
-    let sel = rec.templateSel;
-    if (name && Array.prototype.some.call(sel.options, (o) => o.value === name)) {
-      sel.value = name;
-      this.schedulePreview(rec, { immediate: true });
+  // Shared by every editor action: ZONCore for the pure rules (KTD9) and a fresh
+  // load, so validation never runs against a stale folder.
+  async noteTypeCore(win) {
+    if (!win.ZONCore) await this.injectCore(win);
+    await this.refreshTemplates();
+    return win.ZONCore;
+  },
+  noteTypeResult(ok, message, name) {
+    return Object.assign({ ok, message, templates: this.noteTypeList() }, ok && name ? { name } : {});
+  },
+  // A file operation threw part-way: reload what is actually on disk, report it.
+  async noteTypeFailed(e) {
+    await this.refreshTemplates();
+    return this.noteTypeResult(false, this.t("noteTypes.failed", { error: (e && e.message) || e }));
+  },
+  // The label a note type may not take: another note type's effective
+  // declaration, an inherited one read from the built-in's text.
+  labelClash(C, label, currentName) {
+    let sources = this.noteTypeList().map((e) => ({ name: e.name, text: e.inherited ? this.BUILTIN_TEMPLATES[e.name] : e.text }));
+    return C.findLabelClash(label, sources, currentName);
+  },
+  // A shipped name leaving the folder by Rename/Delete stays recorded as seeded,
+  // so the next start doesn't re-create it (KTD3, R16).
+  async rememberSeeded(name) {
+    if (!Object.hasOwn(this.BUILTIN_TEMPLATES, name)) return;
+    try {
+      let dir = this.templatesDir(), seeded = (await this.templatesState(dir)).seeded || [];
+      if (!seeded.includes(name)) await this.saveTemplatesState(dir, { seeded: seeded.concat(name) });
+    } catch (e) { this.log("rememberSeeded failed for " + name + ": " + e); }
+  },
+  confirmNoteTypeAction(win, message) {
+    return Services.prompt.confirm(win, this.t("menu.title"), message);
+  },
+
+  // Save (KTD7, KTD8): `draft` = { name, isNew, label, description, body }, where
+  // body is the markdown without the declaration. isNew creates `<name>.md` and
+  // refuses any existing name; otherwise the existing note type is updated in
+  // place at its recorded path (.md/.njk/.txt) — Save never renames.
+  async saveNoteType(win, draft) {
+    let C = await this.noteTypeCore(win);
+    let d = draft || {}, all = this._templates || {};
+    let label = String(d.label || "").trim(), description = String(d.description || "").trim();
+    let name = String(d.name || "");
+    if (d.isNew) {
+      let v = C.validateTemplateName(name, Object.keys(all));
+      if (!v.valid) return this.noteTypeResult(false, v.reason);
+      name = v.name;
+    } else if (!Object.hasOwn(all, name)) {
+      return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
     }
+    if (!label) return this.noteTypeResult(false, this.t("noteTypes.labelRequired"));
+    if (!description || /[\r\n]/.test(description)) return this.noteTypeResult(false, this.t("noteTypes.descriptionRequired"));
+    let clash = this.labelClash(C, label, name);
+    if (clash) return this.noteTypeResult(false, this.t("noteTypes.labelTaken", { label, name: clash }));
+    let text = C.composeDeclaration(C.splitDeclaration(String(d.body || "")).body, label, description);
+    try {
+      let path = d.isNew ? PathUtils.join(this.templatesDir(), name + ".md") : all[name].path;
+      if (d.isNew) {
+        await IOUtils.makeDirectory(this.templatesDir(), { ignoreExisting: true, createAncestors: true });
+        // an unreadable file the loader skipped still must not be overwritten
+        if (await IOUtils.exists(path)) return this.noteTypeResult(false, C.validateTemplateName(name, [name]).reason);
+      }
+      await this.safeWrite(path, text);
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.saved", { name }), name);
+  },
+
+  // Rename (R15, KTD8): refuses an existing name in any letter case; a case-only
+  // rename moves through a temporary name. An inherited declaration is written
+  // into the file first so the renamed file stays declared. The default pref
+  // follows the rename (R8).
+  async renameNoteType(win, name, newName) {
+    let C = await this.noteTypeCore(win);
+    let all = this._templates || {}, t = Object.hasOwn(all, name) ? all[name] : null;
+    if (!t) return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
+    let v = C.validateTemplateName(newName, Object.keys(all).filter((n) => n !== name));
+    if (!v.valid) return this.noteTypeResult(false, v.reason);
+    if (v.name === name) return this.noteTypeResult(true, "", name);
+    let target = PathUtils.join(PathUtils.parent(t.path), v.name + t.path.match(/\.[^.]+$/)[0]);
+    try {
+      let own = this.paperTypeDeclarationOf(t.text);
+      if (t.paperType && !own) {
+        await this.safeWrite(t.path, C.composeDeclaration(t.text, t.paperType.label, t.paperType.description));
+      }
+      if (target.toLowerCase() === t.path.toLowerCase()) {
+        let tmp = t.path + ".zon-rename";
+        await IOUtils.move(t.path, tmp, { noOverwrite: true });
+        await IOUtils.move(tmp, target, { noOverwrite: true });
+      } else {
+        await IOUtils.move(t.path, target, { noOverwrite: true });
+      }
+      await this.rememberSeeded(name);
+      if (Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) === name) Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, v.name, true);
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates({ from: name, to: v.name });
+    return this.noteTypeResult(true, this.t("noteTypes.renamed", { name, to: v.name }), v.name);
+  },
+
+  // Delete (R16, R18): after confirmation, moves the file into `archive/` (never
+  // overwriting). Refused for the last declared note type; an undeclared file is
+  // always deletable. A default pointing at it is rewritten to the KTD6 fallback.
+  async deleteNoteType(win, name) {
+    await this.noteTypeCore(win);
+    let all = this._templates || {}, t = Object.hasOwn(all, name) ? all[name] : null;
+    if (!t) return this.noteTypeResult(false, this.t("err.unknownNoteType", { name }));
+    let declared = this.noteTypeNames();
+    if (declared.length === 1 && declared[0] === name) return this.noteTypeResult(false, this.t("noteTypes.lastDeclared", { name }));
+    if (!this.confirmNoteTypeAction(win, this.t("noteTypes.confirmDelete", { name }))) return this.noteTypeResult(false, this.t("noteTypes.cancelled"));
+    try {
+      await this.archiveFile(this.templatesDir(), t.path);
+      await this.rememberSeeded(name);
+      if (Zotero.Prefs.get(this.PREF_DEFAULT_NOTE, true) === name) {
+        Zotero.Prefs.set(this.PREF_DEFAULT_NOTE, declared.find((n) => n !== name) || "", true);
+      }
+    } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.deleted", { name }));
+  },
+
+  // Reset to built-in (R17): only a shipped name present in the folder, only
+  // while no other note type holds the built-in's label, after confirmation.
+  async resetNoteType(win, name) {
+    let C = await this.noteTypeCore(win);
+    let all = this._templates || {};
+    if (!Object.hasOwn(this.BUILTIN_TEMPLATES, name) || !Object.hasOwn(all, name)) {
+      return this.noteTypeResult(false, this.t("noteTypes.notShipped", { name }));
+    }
+    let label = this.paperTypeDeclarationOf(this.BUILTIN_TEMPLATES[name]).label;
+    let clash = this.labelClash(C, label, name);
+    if (clash) return this.noteTypeResult(false, this.t("noteTypes.labelTaken", { label, name: clash }));
+    if (!this.confirmNoteTypeAction(win, this.t("noteTypes.confirmReset", { name }))) return this.noteTypeResult(false, this.t("noteTypes.cancelled"));
+    try { await this.safeWrite(all[name].path, this.BUILTIN_TEMPLATES[name]); } catch (e) { return this.noteTypeFailed(e); }
+    await this.refreshTemplates();
+    return this.noteTypeResult(true, this.t("noteTypes.reset", { name }), name);
   },
 };
 

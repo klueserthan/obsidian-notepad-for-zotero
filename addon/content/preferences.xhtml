@@ -9,16 +9,15 @@
           <html:input id="zon-templates" type="text" style="flex:1;box-sizing:border-box;"
             preference="extensions.zotero-obsidian-notes.templatesDir"/>
           <html:button id="zon-templates-browse" type="button">Browse…</html:button>
-          <html:button id="zon-templates-install" type="button">Install starter templates…</html:button>
         </html:div>
-        <html:span style="color:#888;font-size:11px;">Folder of templates. Leave blank to use the addon-managed folder (<html:b>paper-summarizer/templates</html:b> under your Zotero data directory), which is created and seeded with the starter templates automatically on startup — your edits there are never overwritten. <html:b>note.md</html:b> (and any <html:b>note-*</html:b>) are whole-note scaffolds; every other file is an insertable block template (shown in the Template dropdown by filename). <html:b>Install starter templates…</html:b> copies the plugin's defaults into the folder (existing files are kept).</html:span>
+        <html:span style="color:#888;font-size:11px;">Folder of note types. Leave blank to use the addon-managed folder (<html:b>paper-summarizer/templates</html:b> under your Zotero data directory), which is created and seeded with the built-in note types automatically on startup — your edits there are never overwritten. A note type is a whole-note template that declares a unique paper type; manage them from the Template Builder.</html:span>
       </html:label>
 
       <html:label style="display:flex;flex-direction:column;gap:3px;">
         <html:span>Default note template</html:span>
         <html:select id="zon-default-note" style="width:100%;box-sizing:border-box;"
           preference="extensions.zotero-obsidian-notes.defaultNoteTemplate"></html:select>
-        <html:span style="color:#888;font-size:11px;">The Composer's template picker defaults to this. Can be <html:b>any</html:b> template — a whole-note scaffold or a per-annotation/field template (then a generated Summary Note is just that block).</html:span>
+        <html:span style="color:#888;font-size:11px;">The Composer's template picker defaults to this. Must be one of your declared note types.</html:span>
       </html:label>
 
 

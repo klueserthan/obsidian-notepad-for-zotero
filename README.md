@@ -44,9 +44,10 @@ support, no file editor, and no annotation sync; none of that is coming back.
   Ollama, OpenAI, LM Studio, …) and substitutes static markdown. **Generate
   refuses while any block is unresolved**, so a Summary Note can never be
   created with a hole. See [docs/adr/0001-explicit-static-llm-interpreter.md](docs/adr/0001-explicit-static-llm-interpreter.md).
-- **Template Builder** — a visual template editor with a live preview against a
-  real (or sample) item. It authors and saves templates only; it no longer
-  reads or writes an item's note.
+- **Template Builder** — a note-type editor: markdown source beside a live
+  preview against a real item, with required name/paper-type fields and
+  Save, Duplicate, Rename, Delete, and Reset to built-in. It authors and
+  saves note types only; it no longer reads or writes an item's note.
 - **Find DOI (Crossref)** — a small item-menu action to look up a missing DOI
   for one or more selected items.
 
@@ -106,17 +107,20 @@ gear icon → Install Plugin From File…** and choose it.
 
 ## Templates
 
-Templates are authored in **Nunjucks** and use the same block syntax the
-upstream plugin uses for organizing annotations — colour routing
-(`highlights(colour="yellow")`), per-block formats (`list`/`quote`/`callout`/
-`compact`/custom), and tag filters (`tag=method`) all still work as authoring
-input. What's different: the `%% zon %%` delimiters and any YAML frontmatter are
-**stripped before the note is created** — a Summary Note never contains them.
-Author and preview templates with the **Template Builder** (opened from the
-Composer), or hand-edit files in your Templates folder. See
-[docs/TEMPLATES.md](docs/TEMPLATES.md) for the full reference, including
-`{% llm %}` block syntax and supported contexts (`abstract`, `annotations`,
-`fulltext`).
+Every template you can pick in the Composer is a **note type**: a whole-note
+Nunjucks template declaring a paper type (a short label plus a one-line
+description) so it can be chosen automatically for a batch of items. Note
+types are authored in **Nunjucks** and use the same block syntax the upstream
+plugin uses for organizing annotations — colour routing
+(`highlights(colour="yellow")`), built-in per-annotation formats
+(`list`/`quote`/`callout`/`compact`), and tag filters (`tag=method`) all still
+work as authoring input. What's different: the `%% zon %%` delimiters and any
+YAML frontmatter are **stripped before the note is created** — a Summary Note
+never contains them. Author and preview note types with the **Template
+Builder** (opened from the Composer), or hand-edit files in your Templates
+folder. See [docs/TEMPLATES.md](docs/TEMPLATES.md) for the full reference,
+including `{% llm %}` block syntax and supported contexts (`abstract`,
+`annotations`, `fulltext`).
 
 ## Development
 
