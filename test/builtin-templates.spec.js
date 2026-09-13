@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { render } from "../src/render.js";
-import { templateKind, parseTemplateFile, paperTypeDeclaration } from "../src/templates.js";
+import { templateKind, paperTypeDeclaration } from "../src/templates.js";
 import { stripFrontmatter } from "../src/strip-markers.js";
+import { DEFAULT_FORMATS, FIELD_FORMATS } from "../src/formats.js";
 
-// The four LLM summary templates declare a paper type (KTD4) via a leading
-// frontmatter block, so they're exempt from the "no leading frontmatter"
-// Obsidian-residue check below.
+// The shipped set is exactly the four paper-type note types (R5): each declares
+// its paper type via a leading frontmatter block.
 const PAPER_TYPE_TEMPLATES = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
 
 // The starter templates ship as a literal in addon/bootstrap.js (privileged
@@ -43,40 +43,26 @@ const SAMPLE = {
 describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
   const builtins = extractBuiltins();
 
-  it("ships exactly the expected set", () => {
-    expect(Object.keys(builtins).sort()).toEqual(
-      [
-        "abstract",
-        "critique",
-        "highlight",
-        "key-quote",
-        "note",
-        "note-by-colour",
-        "note-minimal",
-        "note-qualitative",
-        "note-quantitative",
-        "note-review",
-        "note-theoretical",
-        "research-questions",
-        "snapshot",
-      ]
-    );
+  it("ships exactly the four paper-type note types (R5)", () => {
+    expect(Object.keys(builtins).sort()).toEqual([...PAPER_TYPE_TEMPLATES].sort());
   });
 
-  it("classifies note scaffolds as documents and the rest as formats", () => {
-    expect(templateKind(builtins["note"])).toBe("document");
-    expect(templateKind(builtins["note-minimal"])).toBe("document");
-    expect(templateKind(builtins["note-by-colour"])).toBe("document");
-    for (const n of ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"]) {
-      expect(templateKind(builtins[n])).toBe("document");
-    }
-    for (const n of ["abstract", "critique", "key-quote", "highlight", "snapshot", "research-questions"]) {
-      expect(templateKind(builtins[n])).toBe("format");
+  it("every built-in is a whole-note template", () => {
+    for (const n of PAPER_TYPE_TEMPLATES) expect(templateKind(builtins[n]), n).toBe("document");
+  });
+
+  it("no built-in is or references a building block (R2, KTD12)", () => {
+    const core = new Set([...Object.keys(DEFAULT_FORMATS), ...Object.keys(FIELD_FORMATS)]);
+    for (const [name, text] of Object.entries(builtins)) {
+      expect(text, `${name} carries a %%! directive`).not.toMatch(/^\s*%%!/m);
+      expect(text, `${name} calls highlights()`).not.toMatch(/highlights\s*\(/);
+      for (const m of text.matchAll(/format=([^\s%]+)/g)) {
+        expect(core.has(m[1]), `${name} references non-core format ${m[1]}`).toBe(true);
+      }
     }
   });
 
   it("a leading %%! directive forces format kind even over LLM/zon/frontmatter content", () => {
-    expect(templateKind(builtins["research-questions"])).toBe("format");
     expect(templateKind("%%! kind=section %%\n---\nfoo: bar\n---\ntext")).toBe("format");
     expect(templateKind("%%! kind=section %%\n%% zon kind=annotations %%\n%% /zon %%")).toBe("format");
   });
@@ -88,25 +74,14 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     }
   });
 
-  it("research-questions ships the exact directive, heading, context, and prompt", () => {
-    expect(builtins["research-questions"]).toBe(
-      `%%! kind=section sync=on %%
-## Research Questions
-
-{% llm context="fulltext" %}What is/are the research question(s) the paper answers? Render as concrete bullet points.{% endllm %}
-`
-    );
-  });
-
   it("every template renders through the engine without throwing", () => {
     for (const [name, text] of Object.entries(builtins)) {
-      const body = templateKind(text) === "document" ? text : parseTemplateFile(text).item;
-      expect(() => render(body, SAMPLE), `render ${name}`).not.toThrow();
+      expect(() => render(text, SAMPLE), `render ${name}`).not.toThrow();
     }
   });
 
-  it("the note scaffold renders item data into its body (frontmatter-free)", () => {
-    const out = render(builtins["note"], SAMPLE);
+  it("a note type renders item data into its body (frontmatter-free once stripped)", () => {
+    const out = stripFrontmatter(render(builtins["note-review"], SAMPLE));
     expect(out).toContain("**Citation:** Doe, J. (2020). A Thing.");
     expect(out).toContain("[Open in Zotero](zotero://select/library/items/ABCD1234)");
     expect(out).toContain("[Open PDF](zotero://open-pdf/library/items/EFGH5678)");
@@ -116,13 +91,10 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     expect(out).not.toContain("[[");
   });
 
-  it("no builtin carries Obsidian residue (frontmatter, wikilinks, callouts, H1)", () => {
+  it("no builtin carries Obsidian residue (wikilinks, callouts, H1)", () => {
     for (const [name, text] of Object.entries(builtins)) {
-      // The four paper-type templates carry a leading frontmatter block on
-      // purpose (KTD4: paperType/paperTypeDescription) — checked separately below.
-      if (!PAPER_TYPE_TEMPLATES.includes(name)) {
-        expect(text, `${name} starts with a frontmatter fence`).not.toMatch(/^---\r?\n/);
-      }
+      // The leading frontmatter block is on purpose (paperType/paperTypeDescription)
+      // — checked below; stripping removes it from the note.
       expect(text, `${name} contains a wikilink`).not.toContain("[[");
       expect(text, `${name} contains an Obsidian callout`).not.toMatch(/>\s*\[!/);
       // The pipeline prepends `# Summary: <title>` — templates must not add their own H1.
@@ -145,6 +117,8 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
       expect(decl.description.length, `${name} description non-empty`).toBeGreaterThan(0);
       expect(templateKind(builtins[name]), `${name} still classifies as document`).toBe("document");
     }
+    const labels = Object.keys(expected).map((n) => paperTypeDeclaration(builtins[n]).label);
+    expect(new Set(labels).size, "labels are distinct (R4)").toBe(labels.length);
   });
 
   it("stripping frontmatter leaves no trace of the paper-type declaration (AE9)", () => {
