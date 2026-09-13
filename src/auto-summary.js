@@ -86,7 +86,8 @@ export function classifyFailure({ code, status }) {
   }
   if (code === "resolve.renderFailed") return "item";
   if (code === LLM_RUN_ERRORS.HTTP_FAILED) {
-    const isProviderStatus = status == null || PROVIDER_HTTP_STATUSES.has(status) || (status >= 500 && status <= 599);
+    // Zotero.HTTP reports a refused or dropped connection as status 0: a provider failure, like no status at all.
+    const isProviderStatus = status == null || status === 0 || PROVIDER_HTTP_STATUSES.has(status) || (status >= 500 && status <= 599);
     return isProviderStatus ? "provider" : "item";
   }
   // Every other llm.run.* code (emptyResponse, contextTooLarge, contextMissing,

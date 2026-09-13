@@ -488,6 +488,26 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.deepEqual(tagsOf(waiting[0]), []);
   });
 
+  it("a refused connection (HTTP status 0) at resolve on no-abstract items fails only the first item and pauses sweeps", async function () {
+    // No abstract, so detection makes no request and the failure comes from the resolve step,
+    // shaped like Zotero.HTTP's rejection for a refused connection.
+    const a = await makeItem("Refused fixture A", { abstract: "" });
+    const b = await makeItem("Refused fixture B", { abstract: "" });
+    reply = () => { throw Object.assign(new Error("connection refused"), { status: 0 }); };
+    try {
+      await sweep();
+      const failed = [a, b].filter((it) => tagsOf(it).includes(FAILED));
+      const waiting = [a, b].filter((it) => tagsOf(it).includes(TRIGGER));
+      assert.lengthOf(failed, 1, "a transport failure stops the sweep after one item");
+      assert.lengthOf(waiting, 1);
+      const calls = fetchCalls;
+      await sweep();
+      assert.equal(fetchCalls, calls, "no item is processed during the cooldown");
+    } finally {
+      Z()._autoSummaryCooldown = null;
+    }
+  });
+
   it("clearing the base URL during the first of two items adds no failure tag and leaves both trigger tags", async function () {
     const a = await makeItem("Unconfigured fixture A");
     const b = await makeItem("Unconfigured fixture B");

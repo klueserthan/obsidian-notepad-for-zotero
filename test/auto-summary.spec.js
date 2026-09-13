@@ -158,6 +158,10 @@ describe("classifyFailure (KTD7)", () => {
     expect(classifyFailure({ code: "llm.run.httpFailed" })).toBe("provider");
   });
 
+  it("llm.run.httpFailed with status 0 (a refused or dropped connection) classifies as provider", () => {
+    expect(classifyFailure({ code: "llm.run.httpFailed", status: 0 })).toBe("provider");
+  });
+
   it("llm.run.httpFailed with 401, 403, 404, 429, or 5xx classifies as provider", () => {
     for (const status of [401, 403, 404, 429, 500, 503, 599]) {
       expect(classifyFailure({ code: "llm.run.httpFailed", status })).toBe("provider");
