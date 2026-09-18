@@ -29,5 +29,5 @@ export { summaryNoteStaleness } from "../src/staleness.js";
 export { planBulk, bulkGate, plannedTemplateNames } from "../src/bulk.js";
 export { DETECT_REASONS, DETECT_SYSTEM_PROMPT, buildDetectMessages, parseDetectAnswer, detectPaperTypes } from "../src/paper-type.js";
 export { AUTO_SUMMARY_DEFAULTS, parseFirstSeenMap, updateFirstSeenMap, sanitizeWaitHours, planItemAction, chooseNoteType, classifyFailure, sanitizeTriggerTag, tagChangesForOutcome } from "../src/auto-summary.js";
-export { ABSTRACT_TAG, ABSTRACT_REASONS, MAX_SLICE_CHARS, EXTRACT_SYSTEM_PROMPT, buildExtractMessages, parseExtractAnswer, normalizeForContainment, collapseWhitespace, containsVerbatim, extractAbstract } from "../src/abstract-extract.js";
+export { ABSTRACT_TAG, ABSTRACT_REASONS, MAX_SLICE_CHARS, EXTRACT_SYSTEM_PROMPT, buildExtractMessages, parseExtractAnswer, normalizeForContainment, containsVerbatim, extractAbstract } from "../src/abstract-extract.js";
 export { runBounded } from "../src/llm-pool.js";

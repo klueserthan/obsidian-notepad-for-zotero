@@ -107,7 +107,7 @@ Paper-type detection reads only the item's abstract. An item with an empty abstr
   3. Containment compares text with Latin ligatures folded (such as "ﬁ"; only U+FB00–FB06, not full NFKC, so "CO₂" never matches "CO2"), with line-break hyphenation removed ("-" followed by whitespace), soft hyphens removed, and all whitespace collapsed. The comparison is case-sensitive.
   4. An answer shorter than 20 words is `not-found`, so a running header or journal name can never pass as an abstract.
   5. A truncated answer is `not-found`. A reply whose `finish_reason` is `length` counts as truncated; the module reads the raw response for this because `parseChatCompletionsResponse` drops it. So does an answer whose match ends within the last 200 normalized characters of a slice that is shorter than the whole text, because the abstract may continue past the cut. Otherwise a prefix of the abstract would pass containment and, under R4, never be replaced.
-  6. The written value is the parsed answer with whitespace collapsed, which the check has proven matches the source.
+  6. The written value is the parsed answer in the same normalized form containment matched (ligatures folded, soft and line-break hyphens removed, whitespace collapsed), so no layout artifact is saved.
 
   Governs R2, R3.
 - KTD3. **One bootstrap helper extracts for one item and writes, and every trigger calls it.**
@@ -204,7 +204,7 @@ flowchart TB
   3. Add `ABSTRACT_TAG` to the tags `sanitizeTriggerTag` rejects.
 - **Patterns to follow:** `src/paper-type.js` and `test/paper-type.spec.js` (`makeFetch`, `vi.fn` call counts); `src/crossref.js` `normalizeTitle` for how normalization is kept pure.
 - **Test scenarios:**
-  - An answer copied exactly from the source is verified, and the written value has collapsed whitespace.
+  - An answer copied exactly from the source is verified, and the written value is in normalized form.
   - Covers AE2. A paraphrase absent from the source is `not-found`.
   - Source text with "clas- sification" split across a line, a soft hyphen, and a "ﬁ" ligature matches a clean answer.
   - An answer wrapped in quotes or prefixed "Abstract:" is stripped and verified.

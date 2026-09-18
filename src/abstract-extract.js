@@ -102,14 +102,6 @@ export function normalizeForContainment(s) {
     .trim();
 }
 
-// The value actually written once containment has proven it matches the
-// source (KTD2.6): line-break hyphenation joined as containment joins it, so
-// "inter-\nnational" is saved as "international", and whitespace collapsed.
-// Every other character is preserved.
-export function collapseWhitespace(s) {
-  return String(s ?? "").replace(/-[ \t]*\r?\n\s*/g, "").replace(/\s+/g, " ").trim();
-}
-
 // The containment check itself (KTD2.3-5): the normalized answer must appear
 // in the normalized slice, and — when the slice is a truncated prefix of the
 // full text — the match must not end within the last 200 normalized
@@ -179,5 +171,7 @@ export async function extractAbstract(text, settings, fetchFn) {
     return { ok: false, reason: ABSTRACT_REASONS.NOT_FOUND };
   }
 
-  return { ok: true, abstract: collapseWhitespace(parsed.answer) };
+  // KTD2.6: saved in the same normalized form containment matched, so no layout
+  // artifact the check ignored (soft hyphen, line-break hyphen, ligature) is written.
+  return { ok: true, abstract: normalizeForContainment(parsed.answer) };
 }
