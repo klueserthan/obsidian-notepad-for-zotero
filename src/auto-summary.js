@@ -6,6 +6,7 @@
 
 import { DETECT_REASONS } from "./paper-type.js";
 import { LLM_RUN_ERRORS } from "./llm-runner.js";
+import { ABSTRACT_TAG } from "./abstract-extract.js";
 
 export const AUTO_SUMMARY_DEFAULTS = {
   TRIGGER_TAG: "zps:summarize",
@@ -96,11 +97,13 @@ export function classifyFailure({ code, status }) {
 }
 
 // Validate a trigger-tag setting (R3): trimmed, non-empty, and distinct from
-// both failure tags and the Summary Note marker tag (a trigger tag that
-// collided with either would make the sweep's own tag writes ambiguous).
+// both failure tags, the Summary Note marker tag, and the abstract-extraction
+// marker tag (KTD8) — a trigger tag colliding with any of them would make the
+// sweep's own tag writes ambiguous.
 export function sanitizeTriggerTag(value, { failureTags, markerTag } = {}) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
+  if (trimmed === ABSTRACT_TAG) return "";
   const fails = Array.isArray(failureTags) ? failureTags : [];
   if (fails.includes(trimmed)) return "";
   if (markerTag && trimmed === markerTag) return "";
