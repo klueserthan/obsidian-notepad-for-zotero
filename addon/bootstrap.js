@@ -2634,7 +2634,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       if (this.itemAbstractState(item) === "missing") {
         let extraction;
         try {
-          extraction = await this.extractAbstractForItem(win, item, { fulltext, fetchExtra });
+          extraction = await this.extractAbstractForItem(win, item,
+            { fulltext, fetchExtra, shouldStop: () => !this.autoSummaryEnabled() }); // opted out mid-request: no write
         } catch (e) { // a throwing abstract save gets the failure tag, like create.failed (R13, KTD11: code only)
           if (!this.autoSummaryLive()) return "stop";
           attempted = true;

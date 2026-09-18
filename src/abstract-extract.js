@@ -89,14 +89,14 @@ export function parseExtractAnswer(raw) {
 }
 
 // Normalizes text for containment (KTD2.3): NFKC (folds ligatures like
-// "ﬁ"), soft hyphens dropped, line-break hyphenation joined ("-" then
-// whitespace), whitespace collapsed. Case is left as-is — the comparison is
+// "ﬁ"), soft hyphens dropped, line-break hyphenation joined ("-" then a
+// line break), whitespace collapsed. Case is left as-is — the comparison is
 // case-sensitive.
 export function normalizeForContainment(s) {
   return String(s ?? "")
     .normalize("NFKC")
     .replace(/­/g, "")
-    .replace(/-\s+/g, "")
+    .replace(/-[ \t]*\r?\n\s*/g, "") // a hyphen before a line break, not same-line punctuation
     .replace(/\s+/g, " ")
     .trim();
 }

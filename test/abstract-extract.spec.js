@@ -81,6 +81,11 @@ describe("normalizeForContainment", () => {
     expect(normalizeForContainment("clas­sification")).toBe("classification");
   });
 
+  it("keeps a same-line hyphen, so an answer that drops it does not match", () => {
+    expect(normalizeForContainment("results - especially")).toBe("results - especially");
+    expect(containsVerbatim("the results - especially the strong ones", "the results especially the strong ones", false)).toBe(false);
+  });
+
   it("joins line-break hyphenation", () => {
     expect(normalizeForContainment("clas-\nsification")).toBe("classification");
   });
