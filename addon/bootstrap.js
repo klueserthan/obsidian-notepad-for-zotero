@@ -460,6 +460,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "menu.title": "Obsidian Notepad",
     "menu.findDOI": "Find DOI (Crossref)",
     "menu.findDOIN": "Find DOIs for {count} items (Crossref)",
+    "menu.extractAbstract": "Extract abstract",
+    "menu.extractAbstractN": "Extract abstracts for {count} items",
     "menu.generateSummary": "Generate summary note…",
     "menu.generateSummaryN": "Generate {count} summary notes…",
     "summary.generatingTitle": "Generating summary notes…",
@@ -520,6 +522,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
+    "abstract.extracting": "Extracting abstracts…",
+    "abstract.noneMissing": "All selected items already have an abstract.",
+    "abstract.summary": "Abstracts — extracted {extracted}, not found {notFound}, no full text {noFulltext}, failed {failed}, skipped {skipped}.",
+    // Row status shared with the bulk dialog's "Detect types" pre-pass (U4).
+    "bulk.extractingAbstract": "Extracting abstract…",
     "btn.testLLM": "Test LLM connection",
     "status.llmTestOk": "LLM connection successful",
     "status.llmTestFail": "LLM connection failed: {error}",
@@ -2171,6 +2178,18 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { return "unsupported"; }
   },
 
+  // "has" = a non-empty Abstract field; "unsupported" = the item type has no
+  // Abstract field; otherwise "missing" (a candidate for extraction). Mirrors
+  // itemDoiState (R4, KTD3, KTD6).
+  itemAbstractState(item) {
+    try {
+      if ((item.getField("abstractNote") || "").trim()) return "has";
+      let ok = false;
+      try { ok = Zotero.ItemFields.isValidForType(Zotero.ItemFields.getID("abstractNote"), item.itemTypeID); } catch (e) {}
+      return ok ? "missing" : "unsupported";
+    } catch (e) { return "unsupported"; }
+  },
+
   // Add our two actions to the item-list context menu (idempotent per window).
   addItemMenu(win) {
     try {
@@ -2189,12 +2208,14 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       sep.classList.add("zon-itemmenu");
       let miSummary = mk("zon-itemmenu-summary", () => this.generateSummaryNotes(win));
       let miDOI = mk("zon-itemmenu-doi", () => this.findDOIsForItems(win));
+      let miAbstract = mk("zon-itemmenu-abstract", () => this.extractAbstractsForItems(win));
       popup.appendChild(sep);
       popup.appendChild(miSummary);
       popup.appendChild(miDOI);
-      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI });
+      popup.appendChild(miAbstract);
+      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI, miAbstract });
       popup.addEventListener("popupshowing", onShow);
-      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI], onShow };
+      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI, miAbstract], onShow };
     } catch (e) { this.log("addItemMenu failed: " + e); }
   },
 
@@ -2207,13 +2228,18 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       els.sep.hidden = !show;
       els.miSummary.hidden = !show;
       els.miDOI.hidden = !show;
+      els.miAbstract.hidden = !show;
       if (!show) return;
       els.miSummary.setAttribute("label",
         n === 1 ? this.t("menu.generateSummary") : this.t("menu.generateSummaryN", { count: n }));
-      let missing = items.filter((it) => this.itemDoiState(it) === "missing").length;
-      els.miDOI.hidden = missing === 0;
+      let missingDOI = items.filter((it) => this.itemDoiState(it) === "missing").length;
+      els.miDOI.hidden = missingDOI === 0;
       els.miDOI.setAttribute("label",
-        missing === 1 ? this.t("menu.findDOI") : this.t("menu.findDOIN", { count: missing }));
+        missingDOI === 1 ? this.t("menu.findDOI") : this.t("menu.findDOIN", { count: missingDOI }));
+      let missingAbstract = items.filter((it) => this.itemAbstractState(it) === "missing").length;
+      els.miAbstract.hidden = missingAbstract === 0;
+      els.miAbstract.setAttribute("label",
+        missingAbstract === 1 ? this.t("menu.extractAbstract") : this.t("menu.extractAbstractN", { count: missingAbstract }));
     } catch (e) {}
   },
 
@@ -3155,6 +3181,86 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     await item.saveTx();
     this.log("DOI set on " + item.key + ": " + match.doi);
     return "found";
+  },
+
+  // ------------------------------------------------------------ abstract extraction
+
+  // Shared per-item helper (KTD3): read the indexed full text (unless the
+  // caller already has it), ask the pure module for the verbatim abstract, and
+  // — on a verified answer — write abstractNote + the marker tag in ONE
+  // saveTx. This is the ONLY place abstractNote is ever written; every trigger
+  // (this menu action, the automatic sweep, the bulk dialog's pre-pass) calls
+  // it. `opts.fulltext` lets a caller that already read the full text (the
+  // sweep) skip a second read; `opts.fetchFn` overrides the transport outright,
+  // else `opts.fetchExtra` merges into makeLLMFetchFn's Zotero.HTTP.request
+  // options (same contract as resolveSummaryMdForItem / detectPaperTypeForItem).
+  // Returns { outcome: "extracted"|"not-found"|"no-fulltext"|"skipped"|"http-failed", status? }.
+  // LOGGING CONTRACT (KTD7): a caller may log title/key/outcome/status only —
+  // never the full text, the model's answer, e.message, or sanitizeError output.
+  async extractAbstractForItem(win, item, opts = {}) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let fulltext = opts.fulltext || await this.getPrimaryPDFFulltext(item, C);
+    if (!fulltext || !fulltext.ok) return { outcome: "no-fulltext" };
+
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    let fetchFn = opts.fetchFn || this.makeLLMFetchFn(opts.fetchExtra);
+    let result = await C.extractAbstract(fulltext.text, settings, fetchFn);
+    if (!result.ok) {
+      if (result.reason === C.ABSTRACT_REASONS.HTTP_FAILED) {
+        return { outcome: "http-failed", status: result.status ?? null };
+      }
+      if (result.reason === C.ABSTRACT_REASONS.NO_FULLTEXT) return { outcome: "no-fulltext" };
+      return { outcome: "not-found" };
+    }
+
+    // KTD3.2: zero-await pre-write guard — the plugin instance is still live,
+    // the item isn't deleted/erased, and the field is still valid and empty.
+    // itemAbstractState already encodes "valid for type and non-empty", so
+    // reusing it here also re-catches a write that landed while we awaited.
+    if (!this.autoSummaryLive() || item.deleted || !Zotero.Items.get(item.id)
+      || this.itemAbstractState(item) !== "missing") {
+      return { outcome: "skipped" };
+    }
+    item.setField("abstractNote", result.abstract);
+    item.addTag(C.ABSTRACT_TAG);
+    await item.saveTx();
+    return { outcome: "extracted" };
+  },
+
+  // "Extract abstracts" item-menu action (R8, KTD6). Items that already have
+  // an abstract (or whose type has no Abstract field) never reach the LLM —
+  // they're counted as skipped up front, same as itemAbstractState === "has"/
+  // "unsupported". The LLM-configured check only fires once we know at least
+  // one item needs extraction.
+  async extractAbstractsForItems(win) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let counts = { extracted: 0, "not-found": 0, "no-fulltext": 0, "http-failed": 0, skipped: 0 };
+    let toExtract = [];
+    for (let item of this.selectedRegularItems(win)) {
+      if (this.itemAbstractState(item) === "missing") toExtract.push(item);
+      else counts.skipped++;
+    }
+    if (!toExtract.length) { this.popup(win, this.t("menu.title"), this.t("abstract.noneMissing")); return; }
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    if (!C.isLLMConfigured(settings)) {
+      this.popup(win, this.t("menu.title"), this.t("err.llmNotConfigured"));
+      return;
+    }
+    let pw = this.progress(win, this.t("abstract.extracting"));
+    await C.runBounded(toExtract.length, settings.concurrency, async (i) => {
+      let item = toExtract[i];
+      let outcome = "http-failed";
+      try {
+        outcome = (await this.extractAbstractForItem(win, item)).outcome;
+      } catch (e) { this.log("extractAbstractForItem failed for " + item.key); }
+      counts[outcome] = (counts[outcome] || 0) + 1;
+    }, { shouldStop: () => !this.autoSummaryLive() });
+    this.finishProgress(pw, this.t("abstract.summary", {
+      extracted: counts.extracted, notFound: counts["not-found"], noFulltext: counts["no-fulltext"],
+      failed: counts["http-failed"], skipped: counts.skipped,
+    }));
   },
 
   // ------------------------------------------------------------ progress popups
