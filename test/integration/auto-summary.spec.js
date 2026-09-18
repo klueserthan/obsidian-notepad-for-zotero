@@ -516,6 +516,41 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.lengthOf(notesOf(item), 0);
   });
 
+  it("removing the trigger tag while an extraction request is in flight writes no abstract", async function () {
+    const item = await makeItem("Tag removed mid-request fixture", { abstract: "" });
+    const ABSTRACT = "This paper studies how a verbatim abstract can be extracted from indexed " +
+      "full text and verified against the source before it is ever written back to the record.";
+    Z().getPrimaryPDFFulltext = async () => ({
+      ok: true, attachmentTitle: "PDF",
+      text: "Journal of Testing\n\nAbstract\n" + ABSTRACT + "\n\n1. Introduction\nFiller body text follows the abstract.",
+    });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.removeTag(TRIGGER);
+        return answer(ABSTRACT);
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.equal(item.getField("abstractNote"), "");
+    assert.deepEqual(tagsOf(item), []);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("removing the trigger tag while an extraction request fails adds no failure tag", async function () {
+    const item = await makeItem("Tag removed failing request fixture", { abstract: "" });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.removeTag(TRIGGER);
+        throw Object.assign(new Error("too many requests"), { status: 429 });
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(tagsOf(item), []);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
   it("covers the plan's AE3: a NONE extraction reply writes no abstract and yields a default-type note without the failure tag", async function () {
     const item = await makeItem("Plan AE3 fixture", { abstract: "" });
     Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, "note-review", true);

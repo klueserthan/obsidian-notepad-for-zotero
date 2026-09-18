@@ -2635,15 +2635,17 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         let extraction;
         try {
           extraction = await this.extractAbstractForItem(win, item,
-            { fulltext, fetchExtra, shouldStop: () => !this.autoSummaryEnabled() }); // opted out mid-request: no write
+            { fulltext, fetchExtra, shouldStop: () => !this.autoSummaryEnabled() || !item.hasTag(tags.triggerTag) }); // opted out mid-request: no write
         } catch (e) { // a throwing abstract save gets the failure tag, like create.failed (R13, KTD11: code only)
           if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out: leave the trigger tag
+          if (!item.hasTag(tags.triggerTag)) return; // item opted out: no failure tag
           attempted = true;
           this.logAutoSummaryFailure(item, "extract.failed", null);
           await finish("fail");
           return;
         }
         if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out mid-request: no tag change
+        if (!item.hasTag(tags.triggerTag)) return; // trigger tag removed mid-request: skip the item
         if (extraction.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) {
           attempted = true; // set before the tag write, so a throwing save still counts (KTD10)
           let result = await this.autoSummaryFail(item,
