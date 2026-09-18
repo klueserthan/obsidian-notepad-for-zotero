@@ -104,7 +104,7 @@ Paper-type detection reads only the item's abstract. An item with an empty abstr
 - KTD2. **The input is the first 12,000 characters of the indexed text, and the check is normalized containment with a length floor.**
   1. The slice is `min(12000, maxContextChars)` characters from the start of the text `getPrimaryPDFFulltext` returns. That covers the opening two to three pages of a typical article. The constant carries a `ponytail:` note: it approximates pages because the cache has no page breaks, and the upgrade path is a page-aware slice if Zotero ever exposes one.
   2. The prompt asks for the abstract copied exactly, or the single word `NONE`. The parser checks for `NONE` first, then strips wrapping quotes and a leading "Abstract" label.
-  3. Containment compares NFKC-normalized text (which folds ligatures such as "ﬁ"), with line-break hyphenation removed ("-" followed by whitespace), soft hyphens removed, and all whitespace collapsed. The comparison is case-sensitive.
+  3. Containment compares text with Latin ligatures folded (such as "ﬁ"; only U+FB00–FB06, not full NFKC, so "CO₂" never matches "CO2"), with line-break hyphenation removed ("-" followed by whitespace), soft hyphens removed, and all whitespace collapsed. The comparison is case-sensitive.
   4. An answer shorter than 20 words is `not-found`, so a running header or journal name can never pass as an abstract.
   5. A truncated answer is `not-found`. A reply whose `finish_reason` is `length` counts as truncated; the module reads the raw response for this because `parseChatCompletionsResponse` drops it. So does an answer whose match ends within the last 200 normalized characters of a slice that is shorter than the whole text, because the abstract may continue past the cut. Otherwise a prefix of the abstract would pass containment and, under R4, never be replaced.
   6. The written value is the parsed answer with whitespace collapsed, which the check has proven matches the source.
@@ -185,7 +185,7 @@ flowchart TB
 
 ### Risks
 
-- **Ligature or encoding quirks beyond NFKC** can make a correct abstract fail containment. The only effect is `not-found`, never a wrong write. The unit tests fix the normalization cases the plan names.
+- **Encoding quirks beyond the ligature fold** can make a correct abstract fail containment. The only effect is `not-found`, never a wrong write. The unit tests fix the normalization cases the plan names.
 - **The existing sweep test "refused connection (HTTP status 0) at resolve on no-abstract items"** rests on "no abstract, so detection makes no request". Extraction now makes that request. U3 updates its premise and the code it expects to be logged.
 
 ---

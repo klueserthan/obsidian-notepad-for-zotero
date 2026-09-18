@@ -73,8 +73,12 @@ describe("parseExtractAnswer", () => {
 });
 
 describe("normalizeForContainment", () => {
-  it("folds ligatures via NFKC", () => {
+  it("folds ligatures", () => {
     expect(normalizeForContainment("classiﬁcation")).toBe("classification");
+  });
+
+  it("keeps subscripts and superscripts, so CO₂ never matches CO2", () => {
+    expect(normalizeForContainment("CO₂ and 10²")).toBe("CO₂ and 10²");
   });
 
   it("drops soft hyphens", () => {
