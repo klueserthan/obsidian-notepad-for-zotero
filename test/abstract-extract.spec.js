@@ -51,9 +51,15 @@ describe("parseExtractAnswer", () => {
     expect(parseExtractAnswer(`Abstract: ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
   });
 
-  it("strips a bare 'Abstract' heading with no punctuation", () => {
+  it("strips a bare heading on its own line or in all caps", () => {
     expect(parseExtractAnswer(`ABSTRACT\n${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
-    expect(parseExtractAnswer(`Abstract ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
+    expect(parseExtractAnswer(`Abstract\n${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
+    expect(parseExtractAnswer(`ABSTRACT ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
+  });
+
+  it("keeps a leading 'Abstract' that is part of the first sentence", () => {
+    const text = `Abstract interpretation ${ABSTRACT_TEXT}`;
+    expect(parseExtractAnswer(text)).toEqual({ answer: text });
   });
 
   it("strips a leading 'ABSTRACT.' label", () => {

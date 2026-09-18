@@ -78,7 +78,11 @@ export function parseExtractAnswer(raw) {
       break;
     }
   }
-  s = s.replace(/^abstract(?:\s*[:.\-–—]\s*|\s+)/i, "").trim();
+  // A bare word is only a heading when it is all caps, or when punctuation or a
+  // line break follows it: "Abstract interpretation …" must keep its first word.
+  if (/^ABSTRACT\s+/.test(s)) s = s.replace(/^ABSTRACT\s+/, "");
+  else s = s.replace(/^abstract(?:\s*[:.\-–—]\s*|[ \t]*\r?\n\s*)/i, "");
+  s = s.trim();
 
   if (s === "") return { none: true };
   return { answer: s };

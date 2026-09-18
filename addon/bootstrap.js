@@ -3022,7 +3022,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           await C.runBounded(missing.length, settings.concurrency, async (i) => {
             let r = missing[i];
             let res = { outcome: C.ABSTRACT_REASONS.HTTP_FAILED };
-            try { res = await this.extractAbstractForItem(win, r.item, { fetchFn: detectFetchFn }); }
+            try { res = await this.extractAbstractForItem(win, r.item,
+              { fetchFn: detectFetchFn, shouldStop: () => stopped || seq !== detectSeq }); }
             catch (e) { this.log("bulk abstract extraction failed for " + r.key); }
             if (res.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) failedKeys.add(r.key);
             if (seq === detectSeq && !stopped && !r.touched) r.status.textContent = this.t("bulk.detecting");
@@ -3257,6 +3258,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // sweep) skip a second read; `opts.fetchFn` overrides the transport outright,
   // else `opts.fetchExtra` merges into makeLLMFetchFn's Zotero.HTTP.request
   // options (same contract as resolveSummaryMdForItem / detectPaperTypeForItem).
+  // `opts.shouldStop` lets a cancellable caller (the bulk dialog) stop before
+  // the request and before the write.
   // Returns { outcome: "extracted"|"not-found"|"no-fulltext"|"skipped"|"http-failed", status? }.
   // LOGGING CONTRACT (KTD7): a caller may log title/key/outcome/status only —
   // never the full text, the model's answer, e.message, or sanitizeError output.
@@ -3265,6 +3268,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let C = win.ZONCore;
     let fulltext = opts.fulltext || await this.getPrimaryPDFFulltext(item, C);
     if (!fulltext || !fulltext.ok) return { outcome: "no-fulltext" };
+    // A caller whose run was cancelled meanwhile (the bulk dialog closed) sends nothing.
+    if (opts.shouldStop && opts.shouldStop()) return { outcome: "skipped" };
 
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     let fetchFn = opts.fetchFn || this.makeLLMFetchFn(opts.fetchExtra);
@@ -3281,7 +3286,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // the item isn't deleted/erased, and the field is still valid and empty.
     // itemAbstractState already encodes "valid for type and non-empty", so
     // reusing it here also re-catches a write that landed while we awaited.
-    if (!this.autoSummaryLive() || item.deleted || !Zotero.Items.get(item.id)
+    if (!this.autoSummaryLive() || (opts.shouldStop && opts.shouldStop()) || item.deleted || !Zotero.Items.get(item.id)
       || this.itemAbstractState(item) !== "missing") {
       return { outcome: "skipped" };
     }

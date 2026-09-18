@@ -115,6 +115,22 @@ describe("abstract extraction: helper, guard, and menu flow (U2)", function () {
       assert.notInclude(it.getTags().map((t) => t.tag), C.ABSTRACT_TAG);
     });
 
+    it("a caller stop signal before the request sends nothing, and one raised during the request writes nothing", async function () {
+      const it = await makeItem("Cancelled fixture");
+      Z().getPrimaryPDFFulltext = readyText(GOOD_ABSTRACT);
+      let calls = 0;
+      Z().makeLLMFetchFn = () => async () => { calls++; return answer(GOOD_ABSTRACT); };
+      let res = await Z().extractAbstractForItem(win, it, { shouldStop: () => true });
+      assert.equal(res.outcome, "skipped");
+      assert.equal(calls, 0);
+      let stopped = false;
+      Z().makeLLMFetchFn = () => async () => { calls++; stopped = true; return answer(GOOD_ABSTRACT); };
+      res = await Z().extractAbstractForItem(win, it, { shouldStop: () => stopped });
+      assert.equal(res.outcome, "skipped");
+      assert.equal(calls, 1);
+      assert.equal(it.getField("abstractNote"), "");
+    });
+
     it("an item with no PDF, or with unindexed text, is counted as no full text", async function () {
       const it = await makeItem("No fulltext fixture");
       Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });
