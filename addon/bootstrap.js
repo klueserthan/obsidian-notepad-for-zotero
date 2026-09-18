@@ -3271,8 +3271,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let C = win.ZONCore;
     let fulltext = opts.fulltext || await this.getPrimaryPDFFulltext(item, C);
     if (!fulltext || !fulltext.ok) return { outcome: "no-fulltext" };
-    // A caller whose run was cancelled meanwhile (the bulk dialog closed) sends nothing.
-    if (opts.shouldStop && opts.shouldStop()) return { outcome: "skipped" };
+    // A caller whose run was cancelled meanwhile (the bulk dialog closed), or an
+    // item that got an abstract while queued, sends nothing.
+    if ((opts.shouldStop && opts.shouldStop()) || this.itemAbstractState(item) !== "missing") {
+      return { outcome: "skipped" };
+    }
 
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     let fetchFn = opts.fetchFn || this.makeLLMFetchFn(opts.fetchExtra);
