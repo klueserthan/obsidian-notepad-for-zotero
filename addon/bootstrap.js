@@ -3271,11 +3271,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let C = win.ZONCore;
     let fulltext = opts.fulltext || await this.getPrimaryPDFFulltext(item, C);
     if (!fulltext || !fulltext.ok) return { outcome: "no-fulltext" };
-    // A caller whose run was cancelled meanwhile (the bulk dialog closed), or an
-    // item that got an abstract while queued, sends nothing.
-    if ((opts.shouldStop && opts.shouldStop()) || this.itemAbstractState(item) !== "missing") {
-      return { outcome: "skipped" };
-    }
+    // KTD3.2: checked both before the request and, with zero awaits, before the
+    // write — a cancelled run (the bulk dialog closed), a dead plugin instance,
+    // a deleted/erased item, or one that got an abstract meanwhile (itemAbstractState
+    // encodes "valid for type and non-empty") sends nothing and writes nothing.
+    let stale = () => !this.autoSummaryLive() || (opts.shouldStop && opts.shouldStop()) || item.deleted
+      || !Zotero.Items.get(item.id) || this.itemAbstractState(item) !== "missing";
+    if (stale()) return { outcome: "skipped" };
 
     let settings = C.sanitizeLLMSettings(this.getLLMSettings());
     let fetchFn = opts.fetchFn || this.makeLLMFetchFn(opts.fetchExtra);
@@ -3288,14 +3290,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       return { outcome: C.ABSTRACT_REASONS.NOT_FOUND };
     }
 
-    // KTD3.2: zero-await pre-write guard — the plugin instance is still live,
-    // the item isn't deleted/erased, and the field is still valid and empty.
-    // itemAbstractState already encodes "valid for type and non-empty", so
-    // reusing it here also re-catches a write that landed while we awaited.
-    if (!this.autoSummaryLive() || (opts.shouldStop && opts.shouldStop()) || item.deleted || !Zotero.Items.get(item.id)
-      || this.itemAbstractState(item) !== "missing") {
-      return { outcome: "skipped" };
-    }
+    if (stale()) return { outcome: "skipped" }; // zero awaits from here to the save
     let hadTag = item.hasTag(C.ABSTRACT_TAG);
     item.setField("abstractNote", result.abstract);
     item.addTag(C.ABSTRACT_TAG);
