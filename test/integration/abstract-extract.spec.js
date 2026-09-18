@@ -115,6 +115,20 @@ describe("abstract extraction: helper, guard, and menu flow (U2)", function () {
       assert.notInclude(it.getTags().map((t) => t.tag), C.ABSTRACT_TAG);
     });
 
+    it("a save that fails leaves no unsaved abstract or marker tag on the item", async function () {
+      const it = await makeItem("Save rollback fixture");
+      Z().getPrimaryPDFFulltext = readyText(GOOD_ABSTRACT);
+      Z().makeLLMFetchFn = () => async () => answer(GOOD_ABSTRACT);
+      const realSave = it.saveTx;
+      it.saveTx = async () => { throw new Error("save failed"); };
+      let threw = false;
+      try { await Z().extractAbstractForItem(win, it); } catch (e) { threw = true; }
+      it.saveTx = realSave;
+      assert.isTrue(threw);
+      assert.equal(it.getField("abstractNote"), "");
+      assert.notInclude(it.getTags().map((t) => t.tag), C.ABSTRACT_TAG);
+    });
+
     it("a caller stop signal before the request sends nothing, and one raised during the request writes nothing", async function () {
       const it = await makeItem("Cancelled fixture");
       Z().getPrimaryPDFFulltext = readyText(GOOD_ABSTRACT);

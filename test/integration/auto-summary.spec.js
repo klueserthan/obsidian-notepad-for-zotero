@@ -481,6 +481,20 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.lengthOf(notesOf(item), 1);
   });
 
+  it("switching the mode off while an extraction request fails leaves the trigger tag and no failure tag", async function () {
+    const item = await makeItem("Opt-out failing request fixture", { abstract: "" });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, false, true);
+        throw Object.assign(new Error("too many requests"), { status: 429 });
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
   it("switching the mode off while an extraction request is in flight writes no abstract", async function () {
     const item = await makeItem("Opt-out mid-request fixture", { abstract: "" });
     const ABSTRACT = "This paper studies how a verbatim abstract can be extracted from indexed " +

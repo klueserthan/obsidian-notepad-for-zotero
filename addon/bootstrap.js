@@ -2637,13 +2637,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           extraction = await this.extractAbstractForItem(win, item,
             { fulltext, fetchExtra, shouldStop: () => !this.autoSummaryEnabled() }); // opted out mid-request: no write
         } catch (e) { // a throwing abstract save gets the failure tag, like create.failed (R13, KTD11: code only)
-          if (!this.autoSummaryLive()) return "stop";
+          if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out: leave the trigger tag
           attempted = true;
           this.logAutoSummaryFailure(item, "extract.failed", null);
           await finish("fail");
           return;
         }
-        if (!this.autoSummaryLive()) return "stop";
+        if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out mid-request: no tag change
         if (extraction.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) {
           attempted = true; // set before the tag write, so a throwing save still counts (KTD10)
           let result = await this.autoSummaryFail(item,
@@ -3291,9 +3291,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       || this.itemAbstractState(item) !== "missing") {
       return { outcome: "skipped" };
     }
+    let hadTag = item.hasTag(C.ABSTRACT_TAG);
     item.setField("abstractNote", result.abstract);
     item.addTag(C.ABSTRACT_TAG);
-    await item.saveTx();
+    try {
+      await item.saveTx();
+    } catch (e) { // undo the unsaved change so a later save (e.g. the failure tag) can't persist it
+      item.setField("abstractNote", "");
+      if (!hadTag) item.removeTag(C.ABSTRACT_TAG);
+      throw e;
+    }
     return { outcome: "extracted" };
   },
 
