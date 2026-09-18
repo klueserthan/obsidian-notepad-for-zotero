@@ -6,6 +6,7 @@ import {
   buildExtractMessages,
   parseExtractAnswer,
   normalizeForContainment,
+  collapseWhitespace,
   containsVerbatim,
   extractAbstract,
 } from "../src/abstract-extract.js";
@@ -69,6 +70,12 @@ describe("parseExtractAnswer", () => {
   it("NONE inside a longer reply is not treated as the sentinel", () => {
     expect(parseExtractAnswer("NONE of this is relevant, here: " + ABSTRACT_TEXT))
       .toEqual({ answer: "NONE of this is relevant, here: " + ABSTRACT_TEXT });
+  });
+});
+
+describe("collapseWhitespace (the saved value)", () => {
+  it("joins line-break hyphenation and collapses whitespace, keeping same-line dashes", () => {
+    expect(collapseWhitespace("inter-\nnational  results - here\n")).toBe("international results - here");
   });
 });
 

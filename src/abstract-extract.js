@@ -102,11 +102,12 @@ export function normalizeForContainment(s) {
     .trim();
 }
 
-// Collapses whitespace only, preserving every other character — this is the
-// value actually written once containment has proven it matches the source
-// (KTD2.6).
+// The value actually written once containment has proven it matches the
+// source (KTD2.6): line-break hyphenation joined as containment joins it, so
+// "inter-\nnational" is saved as "international", and whitespace collapsed.
+// Every other character is preserved.
 export function collapseWhitespace(s) {
-  return String(s ?? "").replace(/\s+/g, " ").trim();
+  return String(s ?? "").replace(/-[ \t]*\r?\n\s*/g, "").replace(/\s+/g, " ").trim();
 }
 
 // The containment check itself (KTD2.3-5): the normalized answer must appear
