@@ -165,7 +165,7 @@ export async function extractAbstract(text, settings, fetchFn) {
 
   const parsed = parseExtractAnswer(content);
   if (parsed.none) return { ok: false, reason: ABSTRACT_REASONS.NOT_FOUND };
-  if (finishReason === "length") return { ok: false, reason: ABSTRACT_REASONS.NOT_FOUND };
+  if (finishReason === "length" || finishReason === "content_filter") return { ok: false, reason: ABSTRACT_REASONS.NOT_FOUND };
 
   const wordCount = parsed.answer.split(/\s+/).filter(Boolean).length;
   if (wordCount < MIN_ABSTRACT_WORDS) return { ok: false, reason: ABSTRACT_REASONS.NOT_FOUND };

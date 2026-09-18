@@ -230,7 +230,7 @@ describe("auto summary: sweep engine (U4)", function () {
   const NO_FT = "zps:summarize-no-fulltext";
   const HOUR = 3600 * 1000;
   const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "autoSummaryLive", "autoSummarySyncing",
-    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure", "extractAbstractForItem"];
+    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure", "extractAbstractForItem", "detectPaperTypeForItem"];
   const answer = (content) => JSON.stringify({ choices: [{ message: { content } }] });
 
   let win, C, dir, created, fetchCalls, fetchExtras, reply;
@@ -534,6 +534,26 @@ describe("auto summary: sweep engine (U4)", function () {
     await sweep();
     assert.equal(item.getField("abstractNote"), "");
     assert.deepEqual(tagsOf(item), []);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("an item trashed while its extraction request is in flight makes no further provider call", async function () {
+    const item = await makeItem("Trashed mid-request fixture", { abstract: "" });
+    const detected = [];
+    Z().detectPaperTypeForItem = function (w, it, opts) {
+      detected.push(it.id);
+      return real.detectPaperTypeForItem.call(this, w, it, opts);
+    };
+    reply = async (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.deleted = true;
+        await item.saveTx();
+        return answer("NONE");
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.notInclude(detected, item.id);
     assert.lengthOf(notesOf(item), 0);
   });
 

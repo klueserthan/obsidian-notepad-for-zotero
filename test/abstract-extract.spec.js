@@ -238,8 +238,8 @@ describe("extractAbstract", () => {
     expect(userMsg).not.toContain("x".repeat(501));
   });
 
-  it("a reply with finish_reason 'length' is not-found even when its text is in the source", async () => {
-    const fetch = makeFetch([{ content: ABSTRACT_TEXT, finishReason: "length" }]);
+  it.each(["length", "content_filter"])("a reply with finish_reason '%s' is not-found even when its text is in the source", async (finishReason) => {
+    const fetch = makeFetch([{ content: ABSTRACT_TEXT, finishReason }]);
     const result = await extractAbstract(ABSTRACT_TEXT, {}, fetch);
     expect(result).toEqual({ ok: false, reason: ABSTRACT_REASONS.NOT_FOUND });
   });

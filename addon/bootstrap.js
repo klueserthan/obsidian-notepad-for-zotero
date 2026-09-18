@@ -2645,7 +2645,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           return;
         }
         if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out mid-request: no tag change
-        if (!item.hasTag(tags.triggerTag)) return; // trigger tag removed mid-request: skip the item
+        if (!item.hasTag(tags.triggerTag) || item.deleted || !Zotero.Items.get(item.id)) return; // opted out or deleted mid-request: skip the item
         if (extraction.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) {
           attempted = true; // set before the tag write, so a throwing save still counts (KTD10)
           let result = await this.autoSummaryFail(item,
@@ -3041,7 +3041,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           row.status.textContent = this.t("bulk.reasonExtractFailed");
           row.status.style.color = red;
         });
-        let payload = targets.filter((r) => !failedKeys.has(r.key))
+        // A row the user unticked or edited during the pre-pass gets no detection request.
+        let payload = targets.filter((r) => r.included && !r.touched && !failedKeys.has(r.key))
           .map((r) => ({ key: r.key, title: r.title, abstractNote: field(r.item, "abstractNote") }));
         try {
           await C.detectPaperTypes(payload, candidates, settings, detectFetchFn, (key, res) => {
