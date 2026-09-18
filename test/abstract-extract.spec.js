@@ -34,6 +34,10 @@ const ABSTRACT_TEXT =
   "consistent, statistically significant increases following reform.";
 
 describe("parseExtractAnswer", () => {
+  it("strips quotes inside an Abstract label", () => {
+    expect(parseExtractAnswer('Abstract: "We study things."')).toEqual({ answer: "We study things." });
+  });
+
   it("NONE is reported before any stripping", () => {
     expect(parseExtractAnswer("NONE")).toEqual({ none: true });
   });

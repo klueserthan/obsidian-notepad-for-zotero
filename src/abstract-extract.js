@@ -58,7 +58,7 @@ export function buildExtractMessages(slice) {
 }
 
 // Extracts the model's answer (KTD2.2): NONE (exact, checked first) means no
-// abstract; otherwise strip one layer of wrapping quotes and a leading
+// abstract; otherwise strip wrapping quotes (outside and/or inside) and a leading
 // "Abstract" label ("Abstract:", "ABSTRACT.", "Abstract -", or a bare
 // heading followed by whitespace).
 const QUOTE_PAIRS = [
@@ -72,17 +72,20 @@ export function parseExtractAnswer(raw) {
   let s = String(raw ?? "").trim();
   if (s === "" || s === "NONE") return { none: true };
 
-  for (const [open, close] of QUOTE_PAIRS) {
-    if (s.length >= 2 && s.startsWith(open) && s.endsWith(close)) {
-      s = s.slice(open.length, s.length - close.length).trim();
-      break;
+  const unquote = (t) => {
+    for (const [open, close] of QUOTE_PAIRS) {
+      if (t.length >= 2 && t.startsWith(open) && t.endsWith(close)) {
+        return t.slice(open.length, t.length - close.length).trim();
+      }
     }
-  }
+    return t;
+  };
+  s = unquote(s);
   // A bare word is only a heading when it is all caps, or when punctuation or a
   // line break follows it: "Abstract interpretation …" must keep its first word.
   if (/^ABSTRACT\s+/.test(s)) s = s.replace(/^ABSTRACT\s+/, "");
   else s = s.replace(/^abstract(?:\s*[:.\-–—]\s*|[ \t]*\r?\n\s*)/i, "");
-  s = s.trim();
+  s = unquote(s.trim()); // quotes inside the label too: Abstract: "…"
 
   if (s === "") return { none: true };
   return { answer: s };
