@@ -105,6 +105,16 @@ describe("abstract extraction: helper, guard, and menu flow (U2)", function () {
       assert.notInclude(it.getTags().map((t) => t.tag), C.ABSTRACT_TAG);
     });
 
+    it("a rejected request reports http-failed with its status and writes nothing", async function () {
+      const it = await makeItem("Throttled fixture");
+      Z().getPrimaryPDFFulltext = readyText(GOOD_ABSTRACT);
+      Z().makeLLMFetchFn = () => async () => { throw Object.assign(new Error("too many requests"), { status: 429 }); };
+      const res = await Z().extractAbstractForItem(win, it);
+      assert.deepEqual(res, { outcome: "http-failed", status: 429 });
+      assert.equal(it.getField("abstractNote"), "");
+      assert.notInclude(it.getTags().map((t) => t.tag), C.ABSTRACT_TAG);
+    });
+
     it("an item with no PDF, or with unindexed text, is counted as no full text", async function () {
       const it = await makeItem("No fulltext fixture");
       Z().getPrimaryPDFFulltext = async () => ({ ok: false, reason: "noPrimaryPDF" });

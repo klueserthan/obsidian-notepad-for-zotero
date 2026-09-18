@@ -59,7 +59,8 @@ export function buildExtractMessages(slice) {
 
 // Extracts the model's answer (KTD2.2): NONE (exact, checked first) means no
 // abstract; otherwise strip one layer of wrapping quotes and a leading
-// "Abstract" label ("Abstract:", "ABSTRACT.", "Abstract -", …).
+// "Abstract" label ("Abstract:", "ABSTRACT.", "Abstract -", or a bare
+// heading followed by whitespace).
 const QUOTE_PAIRS = [
   ['"', '"'],
   ["'", "'"],
@@ -77,7 +78,7 @@ export function parseExtractAnswer(raw) {
       break;
     }
   }
-  s = s.replace(/^abstract\s*[:.\-–—]\s*/i, "").trim();
+  s = s.replace(/^abstract(?:\s*[:.\-–—]\s*|\s+)/i, "").trim();
 
   if (s === "") return { none: true };
   return { answer: s };

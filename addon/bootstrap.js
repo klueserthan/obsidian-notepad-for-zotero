@@ -527,6 +527,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "abstract.summary": "Abstracts — extracted {extracted}, not found {notFound}, no full text {noFulltext}, failed {failed}, skipped {skipped}.",
     // Row status shared with the bulk dialog's "Detect types" pre-pass (U4).
     "bulk.extractingAbstract": "Extracting abstract…",
+    "bulk.reasonExtractFailed": "Abstract extraction request failed — pick a template by hand.",
     "btn.testLLM": "Test LLM connection",
     "status.llmTestOk": "LLM connection successful",
     "status.llmTestFail": "LLM connection failed: {error}",
@@ -2631,9 +2632,18 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       // so detection decides on real text instead of falling back for want
       // of one. `not-found`/`no-fulltext`/`skipped` fall through unchanged.
       if (this.itemAbstractState(item) === "missing") {
-        let extraction = await this.extractAbstractForItem(win, item, { fulltext, fetchExtra });
+        let extraction;
+        try {
+          extraction = await this.extractAbstractForItem(win, item, { fulltext, fetchExtra });
+        } catch (e) { // a throwing abstract save gets the failure tag, like create.failed (R13, KTD11: code only)
+          if (!this.autoSummaryLive()) return "stop";
+          attempted = true;
+          this.logAutoSummaryFailure(item, "extract.failed", null);
+          await finish("fail");
+          return;
+        }
         if (!this.autoSummaryLive()) return "stop";
-        if (extraction.outcome === "http-failed") {
+        if (extraction.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) {
           attempted = true; // set before the tag write, so a throwing save still counts (KTD10)
           let result = await this.autoSummaryFail(item,
             { code: "extract.httpFailed", status: extraction.status ?? null }, "provider", finish);
@@ -3011,19 +3021,20 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         try {
           await C.runBounded(missing.length, settings.concurrency, async (i) => {
             let r = missing[i];
-            let res = { outcome: "http-failed" };
+            let res = { outcome: C.ABSTRACT_REASONS.HTTP_FAILED };
             try { res = await this.extractAbstractForItem(win, r.item, { fetchFn: detectFetchFn }); }
             catch (e) { this.log("bulk abstract extraction failed for " + r.key); }
-            if (res.outcome === "http-failed") failedKeys.add(r.key);
-            if (seq === detectSeq && !stopped) r.status.textContent = this.t("bulk.detecting");
+            if (res.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) failedKeys.add(r.key);
+            if (seq === detectSeq && !stopped && !r.touched) r.status.textContent = this.t("bulk.detecting");
           }, { shouldStop: () => stopped || seq !== detectSeq });
-        } catch (e) { this.log("bulk abstract pre-pass failed: " + e); }
+        } catch (e) { this.log("bulk abstract pre-pass failed"); } // KTD7: never log e
         if (stopped || seq !== detectSeq) return;
         failedKeys.forEach((key) => {
           let row = byKey.get(key);
+          if (!row || row.touched) return; // a row the user edited mid-run keeps their state
           row.templateName = null;
           row.sel.value = "";
-          row.status.textContent = reasonText({ reason: (C.DETECT_REASONS || {}).HTTP_FAILED });
+          row.status.textContent = this.t("bulk.reasonExtractFailed");
           row.status.style.color = red;
         });
         let payload = targets.filter((r) => !failedKeys.has(r.key))
@@ -3260,10 +3271,10 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let result = await C.extractAbstract(fulltext.text, settings, fetchFn);
     if (!result.ok) {
       if (result.reason === C.ABSTRACT_REASONS.HTTP_FAILED) {
-        return { outcome: "http-failed", status: result.status ?? null };
+        return { outcome: result.reason, status: result.status ?? null };
       }
-      if (result.reason === C.ABSTRACT_REASONS.NO_FULLTEXT) return { outcome: "no-fulltext" };
-      return { outcome: "not-found" };
+      if (result.reason === C.ABSTRACT_REASONS.NO_FULLTEXT) return { outcome: result.reason };
+      return { outcome: C.ABSTRACT_REASONS.NOT_FOUND };
     }
 
     // KTD3.2: zero-await pre-write guard — the plugin instance is still live,

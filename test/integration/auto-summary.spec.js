@@ -230,7 +230,7 @@ describe("auto summary: sweep engine (U4)", function () {
   const NO_FT = "zps:summarize-no-fulltext";
   const HOUR = 3600 * 1000;
   const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "autoSummaryLive", "autoSummarySyncing",
-    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure"];
+    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure", "extractAbstractForItem"];
   const answer = (content) => JSON.stringify({ choices: [{ message: { content } }] });
 
   let win, C, dir, created, fetchCalls, fetchExtras, reply;
@@ -677,6 +677,17 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.lengthOf(notesOf(item), 0);
     assert.deepEqual(tagsOf(item), [FAILED]);
     assert.deepEqual(logged, [["create.failed", null]]);
+  });
+
+  it("an abstract save that throws logs extract.failed and puts the failure tag in place of the trigger tag", async function () {
+    const item = await makeItem("Abstract save failure fixture", { abstract: "" });
+    const logged = [];
+    Z().logAutoSummaryFailure = (it, code, status) => logged.push([code, status]);
+    Z().extractAbstractForItem = async () => { throw new Error("save failed"); };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [FAILED]);
+    assert.deepEqual(logged, [["extract.failed", null]]);
   });
 
   it("a detection request rejected with HTTP 429 logs detect.httpFailed with status 429", async function () {

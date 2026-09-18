@@ -51,6 +51,11 @@ describe("parseExtractAnswer", () => {
     expect(parseExtractAnswer(`Abstract: ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
   });
 
+  it("strips a bare 'Abstract' heading with no punctuation", () => {
+    expect(parseExtractAnswer(`ABSTRACT\n${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
+    expect(parseExtractAnswer(`Abstract ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
+  });
+
   it("strips a leading 'ABSTRACT.' label", () => {
     expect(parseExtractAnswer(`ABSTRACT. ${ABSTRACT_TEXT}`)).toEqual({ answer: ABSTRACT_TEXT });
   });
