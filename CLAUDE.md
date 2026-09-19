@@ -15,7 +15,7 @@ This is a hard fork of Acatechnic/obsidian-notepad-for-zotero with the entire
 Obsidian vault/file/sync layer torn out — see `CONTEXT.md` for the domain
 vocabulary and `docs/adr/` for the decisions (0001: LLM gating, 0002: the
 Zotero-native note model, 0003: the fork itself, 0004: the opt-in automatic
-mode).
+mode, 0005: filling missing abstracts from the PDF text).
 
 ## Commands
 

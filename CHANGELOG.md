@@ -25,6 +25,16 @@ It will also be the fork's first versioned release (`0.1.0`) — a fresh start
 under the new name rather than continuing upstream's `1.0.0-beta.x` line.
 
 ### Added
+- **Extract missing abstracts from the PDF.** A new item-menu action,
+  *Extract abstracts*, fills an empty Abstract field with the paper's own
+  abstract: it sends the start of the text Zotero has already indexed to the
+  configured LLM and saves the answer only if that exact text appears in the
+  paper (ignoring whitespace, line-break hyphenation, and ligatures), tagged
+  `zps:abstract-extracted`. It never overwrites an abstract and never writes
+  a generated summary. The bulk dialog's *Detect types* and the automatic
+  mode run the same step first for items without an abstract, so paper-type
+  detection has real text to classify instead of falling back to the
+  default note type. See `docs/adr/0005-extract-missing-abstracts.md`.
 - **Opt-in automatic Summary Notes for tagged items.** A new Settings group,
   *Automatic Summary Notes* (off by default), runs the same render → resolve
   → create pipeline as Generate with no click: while desktop Zotero is open,

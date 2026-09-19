@@ -230,7 +230,7 @@ describe("auto summary: sweep engine (U4)", function () {
   const NO_FT = "zps:summarize-no-fulltext";
   const HOUR = 3600 * 1000;
   const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "autoSummaryLive", "autoSummarySyncing",
-    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure"];
+    "generateSummaryNote", "applyAutoSummaryTags", "resolveSummaryMdForItem", "logAutoSummaryFailure", "extractAbstractForItem", "detectPaperTypeForItem"];
   const answer = (content) => JSON.stringify({ choices: [{ message: { content } }] });
 
   let win, C, dir, created, fetchCalls, fetchExtras, reply;
@@ -454,6 +454,176 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.notInclude(tagsOf(item), TRIGGER);
   });
 
+  // U3: abstract extraction ahead of detection (KTD4, R9, R11, R12). Payloads
+  // are told apart by their system prompt (C.EXTRACT_SYSTEM_PROMPT vs
+  // C.DETECT_SYSTEM_PROMPT), never by call order, since a block-runner resolve
+  // call may also hit `reply` for a template with {% llm %} blocks.
+  it("an item without an abstract whose indexed text contains one gets it extracted with the marker tag, and detection runs on the extracted text", async function () {
+    const item = await makeItem("Extraction happy path fixture", { abstract: "" });
+    const ABSTRACT = "This paper studies how a verbatim abstract can be extracted from indexed " +
+      "full text and verified against the source before it is ever written back to the record.";
+    Z().getPrimaryPDFFulltext = async () => ({
+      ok: true, attachmentTitle: "PDF",
+      text: "Journal of Testing\n\nAbstract\n" + ABSTRACT +
+        "\n\n1. Introduction\nFiller body text follows the abstract so the source resembles a real article.",
+    });
+    let detectPayload = null;
+    reply = (payload) => {
+      const system = payload.messages[0].content;
+      if (system === C.EXTRACT_SYSTEM_PROMPT) return answer(ABSTRACT);
+      if (system === C.DETECT_SYSTEM_PROMPT) { detectPayload = payload; return answer("2"); }
+      return answer("block content"); // a resolve step's {% llm %} block, if any
+    };
+    await sweep();
+    assert.equal(item.getField("abstractNote"), ABSTRACT);
+    assert.include(JSON.stringify(detectPayload.messages), ABSTRACT, "detection ran on the extracted abstract");
+    assert.deepEqual(tagsOf(item), [C.ABSTRACT_TAG]);
+    assert.lengthOf(notesOf(item), 1);
+  });
+
+  it("switching the mode off while an extraction request fails leaves the trigger tag and no failure tag", async function () {
+    const item = await makeItem("Opt-out failing request fixture", { abstract: "" });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, false, true);
+        throw Object.assign(new Error("too many requests"), { status: 429 });
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(tagsOf(item), [TRIGGER]);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("switching the mode off while an extraction request is in flight writes no abstract", async function () {
+    const item = await makeItem("Opt-out mid-request fixture", { abstract: "" });
+    const ABSTRACT = "This paper studies how a verbatim abstract can be extracted from indexed " +
+      "full text and verified against the source before it is ever written back to the record.";
+    Z().getPrimaryPDFFulltext = async () => ({
+      ok: true, attachmentTitle: "PDF",
+      text: "Journal of Testing\n\nAbstract\n" + ABSTRACT + "\n\n1. Introduction\nFiller body text follows the abstract.",
+    });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        Zotero.Prefs.set(Z().PREF_AUTO_SUMMARY_ENABLED, false, true);
+        return answer(ABSTRACT);
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.equal(item.getField("abstractNote"), "");
+    assert.notInclude(tagsOf(item), C.ABSTRACT_TAG);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("removing the trigger tag while an extraction request is in flight writes no abstract", async function () {
+    const item = await makeItem("Tag removed mid-request fixture", { abstract: "" });
+    const ABSTRACT = "This paper studies how a verbatim abstract can be extracted from indexed " +
+      "full text and verified against the source before it is ever written back to the record.";
+    Z().getPrimaryPDFFulltext = async () => ({
+      ok: true, attachmentTitle: "PDF",
+      text: "Journal of Testing\n\nAbstract\n" + ABSTRACT + "\n\n1. Introduction\nFiller body text follows the abstract.",
+    });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.removeTag(TRIGGER);
+        return answer(ABSTRACT);
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.equal(item.getField("abstractNote"), "");
+    assert.deepEqual(tagsOf(item), []);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("an item trashed while its extraction request is in flight makes no further provider call", async function () {
+    const item = await makeItem("Trashed mid-request fixture", { abstract: "" });
+    const detected = [];
+    Z().detectPaperTypeForItem = function (w, it, opts) {
+      detected.push(it.id);
+      return real.detectPaperTypeForItem.call(this, w, it, opts);
+    };
+    reply = async (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.deleted = true;
+        await item.saveTx();
+        return answer("NONE");
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.notInclude(detected, item.id);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("removing the trigger tag while an extraction request fails adds no failure tag", async function () {
+    const item = await makeItem("Tag removed failing request fixture", { abstract: "" });
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        item.removeTag(TRIGGER);
+        throw Object.assign(new Error("too many requests"), { status: 429 });
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(tagsOf(item), []);
+    assert.lengthOf(notesOf(item), 0);
+  });
+
+  it("covers the plan's AE3: a NONE extraction reply writes no abstract and yields a default-type note without the failure tag", async function () {
+    const item = await makeItem("Plan AE3 fixture", { abstract: "" });
+    Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, "note-review", true);
+    Z().getPrimaryPDFFulltext = async () => ({
+      ok: true, attachmentTitle: "PDF",
+      text: "Journal of Testing\n\n1. Introduction\nThis commentary opens with no abstract of its own, " +
+        "just body text discussing the topic at length.",
+    });
+    const names = [];
+    Z().resolveSummaryMdForItem = function (w, it, name, opts) {
+      names.push(name);
+      return real.resolveSummaryMdForItem.call(this, w, it, name, opts);
+    };
+    reply = (payload) => (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT ? answer("NONE") : answer("1"));
+    await sweep();
+    assert.equal(item.getField("abstractNote"), "");
+    assert.deepEqual(names, ["note-review"]);
+    assert.lengthOf(notesOf(item), 1);
+    assert.notInclude(tagsOf(item), FAILED);
+    assert.notInclude(tagsOf(item), C.ABSTRACT_TAG);
+  });
+
+  it("covers the plan's AE4: a rejected extraction request with status 429 logs extract.httpFailed, tags failure, creates no note, and pauses the mode", async function () {
+    const item = await makeItem("Plan AE4 fixture", { abstract: "" });
+    const logged = [];
+    Z().logAutoSummaryFailure = (it, code, status) => logged.push([code, status]);
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) {
+        throw Object.assign(new Error("too many requests"), { status: 429 });
+      }
+      return answer("1");
+    };
+    await sweep();
+    assert.deepEqual(logged, [["extract.httpFailed", 429]]);
+    assert.deepEqual(tagsOf(item), [FAILED]);
+    assert.lengthOf(notesOf(item), 0);
+    const calls = fetchCalls;
+    await sweep();
+    assert.equal(fetchCalls, calls, "no item is processed during the cooldown");
+  });
+
+  it("an item that already has an abstract makes no extraction call", async function () {
+    const item = await makeItem("Already has abstract fixture"); // default non-empty abstract
+    let sawExtract = false;
+    reply = (payload) => {
+      if (payload.messages[0].content === C.EXTRACT_SYSTEM_PROMPT) sawExtract = true;
+      return answer("1");
+    };
+    await sweep();
+    assert.isFalse(sawExtract);
+    assert.lengthOf(notesOf(item), 1);
+  });
+
   it("an empty completion puts the generic failure tag on that item, and the next tagged item in the same sweep still gets a note", async function () {
     const empty = await makeItem("Empty completion fixture");
     const healthy = await makeItem("Healthy fixture");
@@ -488,9 +658,9 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.deepEqual(tagsOf(waiting[0]), []);
   });
 
-  it("a refused connection (HTTP status 0) at resolve on no-abstract items fails only the first item and pauses sweeps", async function () {
-    // No abstract, so detection makes no request and the failure comes from the resolve step,
-    // shaped like Zotero.HTTP's rejection for a refused connection.
+  it("a refused connection (HTTP status 0) at extraction on no-abstract items fails only the first item and pauses sweeps", async function () {
+    // No abstract, so extraction runs before detection (KTD4) and this is the
+    // request that fails, shaped like Zotero.HTTP's rejection for a refused connection.
     const a = await makeItem("Refused fixture A", { abstract: "" });
     const b = await makeItem("Refused fixture B", { abstract: "" });
     reply = () => { throw Object.assign(new Error("connection refused"), { status: 0 }); };
@@ -597,6 +767,17 @@ describe("auto summary: sweep engine (U4)", function () {
     assert.lengthOf(notesOf(item), 0);
     assert.deepEqual(tagsOf(item), [FAILED]);
     assert.deepEqual(logged, [["create.failed", null]]);
+  });
+
+  it("an abstract save that throws logs extract.failed and puts the failure tag in place of the trigger tag", async function () {
+    const item = await makeItem("Abstract save failure fixture", { abstract: "" });
+    const logged = [];
+    Z().logAutoSummaryFailure = (it, code, status) => logged.push([code, status]);
+    Z().extractAbstractForItem = async () => { throw new Error("save failed"); };
+    await sweep();
+    assert.lengthOf(notesOf(item), 0);
+    assert.deepEqual(tagsOf(item), [FAILED]);
+    assert.deepEqual(logged, [["extract.failed", null]]);
   });
 
   it("a detection request rejected with HTTP 429 logs detect.httpFailed with status 429", async function () {
