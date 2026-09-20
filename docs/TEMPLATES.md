@@ -7,8 +7,8 @@ YAML frontmatter:
 
 ```yaml
 ---
-paperType: quantitative
-paperTypeDescription: Empirical study with numeric data, statistics, or experiments
+paperType: inferential
+paperTypeDescription: Quantitative study that states hypotheses and tests them with statistical inference
 ---
 ```
 
@@ -260,8 +260,14 @@ Composer, click **Run LLM**, then **Generate**. They need a configured model
 they fail loudly (ADR-0001) rather than guess. Each also keeps a `## Notes`
 scratch area and a `## Annotations` block for your highlights.
 
-- **`note-quantitative.md`** — research questions, hypotheses, theoretical
-  framework, study design, a key-variables table, main findings, limitations.
+- **`note-quantitative.md`** — declares the **`inferential`** paper type:
+  research questions, hypotheses, theoretical framework, study design, a
+  key-variables table, main findings, limitations. The file keeps its original
+  name; rename it in the Template Builder if you want the two to match, which
+  also moves your Settings default across.
+- **`note-descriptive.md`** — aim & research questions, data and measures,
+  analytic approach, main patterns, interpretation & caveats. For quantitative
+  papers that describe or explore rather than test hypotheses.
 - **`note-qualitative.md`** — research questions, theoretical framing, methods
   & data, key themes, interpretation & contribution, trustworthiness & limits.
 - **`note-theoretical.md`** — motivating problem, constructs & definitions
@@ -269,13 +275,13 @@ scratch area and a `## Annotations` block for your highlights.
 - **`note-review.md`** — scope & questions, corpus & method, organizing
   framework, key findings/debates, identified gaps, future research agenda.
 
-Each of these four opens with the frontmatter block described at the top of
+Each of these five opens with the frontmatter block described at the top of
 this document, declaring its paper type. That declaration is what makes it a
 note type at all: it's how it reaches the Composer picker, the Settings
 default, and the bulk dialog, and how bulk auto-detection picks a candidate
 for a paper (`paperTypeDescription` helps the model choose).
 
-A copy of one of the four starters that keeps the starter's file name and has
+A copy of one of the five starters that keeps the starter's file name and has
 no declaration of its own (for example, a Templates-folder copy seeded before
 these keys existed) is treated as that starter's paper type. If you copy a
 starter under a new name to make your own variant, carry the

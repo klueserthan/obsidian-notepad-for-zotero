@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Note types: a descriptive paper type, and `quantitative` becomes `inferential`
+
+The shipped `note-quantitative.md` assumed a study that tests hypotheses, so a
+descriptive or exploratory paper rendered with an empty Hypotheses section — or
+an invented one. There is now a fifth starter, **`note-descriptive.md`**, built
+around aim, data and measures, analytic approach, main patterns, and
+interpretation, with no hypotheses and no significance framing.
+
+For the two to be told apart, `note-quantitative.md` now declares the paper type
+**`inferential`** instead of `quantitative`, narrowed to studies that state and
+test hypotheses. Automatic type detection reads these labels and descriptions,
+and a descriptive paper is also quantitative, so the old label would have
+overlapped its new sibling.
+
+**What happens to your Templates folder on first start.** A starter you never
+edited is relabelled in place: the two frontmatter lines change and the rest of
+the file is untouched, including any edits you made to its body. A copy whose
+`paperType` or `paperTypeDescription` you changed yourself is left exactly as it
+is, as is one you deleted. A copy that never had a declaration of its own picks
+up the new label automatically, with nothing written to it. The file keeps the
+name `note-quantitative.md`; renaming it is yours to do in the Template Builder,
+which carries your Settings default across.
+
 **The next release renames the project to Paper Summarizer for Zotero and
 breaks it from upstream (Acatechnic/obsidian-notepad-for-zotero) for good.** The
 Obsidian vault/file/sync/editor layer this plugin used to be built around is
