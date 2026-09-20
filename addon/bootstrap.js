@@ -90,6 +90,13 @@ var ZON = {
   // Per-folder startup state, inside the Templates folder (the loader ignores
   // .json): { archived: true, seeded: [shipped names] } (KTD3, KTD4).
   TEMPLATES_STATE_FILE: ".zon-templates-state.json",
+  // What note-quantitative declared before it became `inferential`. Kept as the
+  // fingerprint the relabel matches on (KTD2) — two short strings rather than a
+  // frozen copy of the whole template.
+  PREV_QUANTITATIVE_DECLARATION: {
+    label: "quantitative",
+    description: "Empirical study with numeric data, statistics, or experiments",
+  },
 
   // The note types that ship WITH the plugin (R5), keyed by filename stem and
   // written as `<stem>.md`. Never merged into the loaded set (KTD1) — a note type
@@ -607,10 +614,12 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { this.log("migrateTemplatesDir failed: " + e); }
   },
 
-  // The startup chain after migrateTemplatesDir: archive retired files, seed
-  // never-seeded shipped note types, then load and refresh open panes. Never throws.
+  // The startup chain after migrateTemplatesDir: archive retired files, relabel
+  // the renamed quantitative declaration, seed never-seeded shipped note types,
+  // then load and refresh open panes. Never throws.
   async prepareTemplatesFolder() {
     try { await this.archiveRetiredTemplates(); } catch (e) { this.log("archiveRetiredTemplates failed: " + e); }
+    try { await this.relabelQuantitativeNoteType(); } catch (e) { this.log("relabelQuantitativeNoteType failed: " + e); }
     try { await this.seedTemplatesFolder(); } catch (e) { this.log("seedTemplatesFolder failed: " + e); }
     await this.refreshTemplates();
   },
@@ -663,6 +672,53 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       path = PathUtils.join(archive, stem + "-" + stamp + (i > 1 ? "-" + i : "") + ext);
     }
     return path;
+  },
+
+  // The quantitative -> inferential relabel (R8, KTD2, KTD6, KTD7). A copy
+  // seeded before the rename carries the old declaration in its own text, which
+  // wins over the shipped one in loadTemplates(), so the new label would never
+  // reach it. Rewrite just those two frontmatter keys when the file still
+  // declares exactly what shipped: a body the researcher rewrote still migrates,
+  // a declaration they touched does not. Needs no completion flag — once
+  // rewritten the fingerprint stops matching, so a later start is a no-op, and
+  // a failed write simply retries. A copy carrying no declaration of its own is
+  // left alone: it already inherits the built-in's, new label included.
+  async relabelQuantitativeNoteType() {
+    let dir = this.templatesDir();
+    if (!dir) return;
+    let children;
+    try { children = await IOUtils.getChildren(dir); } catch (e) { return; } // no folder yet
+    let want = this.paperTypeDeclarationOf(this.BUILTIN_TEMPLATES["note-quantitative"]);
+    let prev = this.PREV_QUANTITATIVE_DECLARATION;
+    // Read the folder directly: _templates still holds the previous session's
+    // set here, since refreshTemplates() runs after the whole startup chain.
+    let mine = [], taken = false;
+    for (let p of children) {
+      let m = PathUtils.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
+      if (!m) continue;
+      let text;
+      try { text = await IOUtils.readUTF8(p); } catch (e) { continue; }
+      let decl = this.paperTypeDeclarationOf(text);
+      if (m[1] === "note-quantitative") mine.push({ path: p, text, decl });
+      else if (decl && decl.label === want.label) taken = true;
+    }
+    // Another note type already holds the label: relabelling would make both
+    // duplicates, which drops them from detection entirely — worse than waiting.
+    // More than one extension of the same name: which one the loader would win
+    // with isn't worth guessing.
+    if (taken || mine.length !== 1) {
+      if (mine.length > 1) this.log("relabelQuantitativeNoteType: several note-quantitative files, leaving them alone");
+      return;
+    }
+    let { path, text, decl } = mine[0];
+    if (!decl || decl.label !== prev.label || decl.description !== prev.description) return;
+    // Values matched, so a line-level swap inside the leading fence is safe.
+    // `[^\r\n]*` keeps a CRLF file's carriage returns intact.
+    let out = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, (fm) => fm
+      .replace(/^paperType:[^\r\n]*/m, "paperType: " + want.label)
+      .replace(/^paperTypeDescription:[^\r\n]*/m, "paperTypeDescription: " + want.description));
+    try { await this.safeWrite(path, out); }
+    catch (e) { this.log("relabelQuantitativeNoteType write failed: " + e); }
   },
 
   // Seed the Templates folder with the shipped note types, once per folder
