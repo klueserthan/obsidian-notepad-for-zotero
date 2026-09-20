@@ -6,9 +6,9 @@ import { templateKind, paperTypeDeclaration } from "../src/templates.js";
 import { stripFrontmatter } from "../src/strip-markers.js";
 import { DEFAULT_FORMATS, FIELD_FORMATS } from "../src/formats.js";
 
-// The shipped set is exactly the four paper-type note types (R5): each declares
-// its paper type via a leading frontmatter block.
-const PAPER_TYPE_TEMPLATES = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
+// The shipped set is exactly the five paper-type note types (R1, R5): each
+// declares its paper type via a leading frontmatter block.
+const PAPER_TYPE_TEMPLATES = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review", "note-descriptive"];
 
 // The starter templates ship as a literal in addon/bootstrap.js (privileged
 // scope, can't be imported here). Extract the BUILTIN_TEMPLATES object literal
@@ -43,7 +43,7 @@ const SAMPLE = {
 describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
   const builtins = extractBuiltins();
 
-  it("ships exactly the four paper-type note types (R5)", () => {
+  it("ships exactly the five paper-type note types (R1, R5)", () => {
     expect(Object.keys(builtins).sort()).toEqual([...PAPER_TYPE_TEMPLATES].sort());
   });
 
@@ -68,7 +68,7 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
   });
 
   it("the paper-type LLM templates carry an LLM block and the annotations block", () => {
-    for (const n of ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"]) {
+    for (const n of PAPER_TYPE_TEMPLATES) {
       expect(builtins[n], `${n} LLM block`).toContain('{% llm context="fulltext" %}');
       expect(builtins[n], `${n} annotations block`).toContain("%% zon kind=annotations colour=all sync=on format=list %%");
     }
@@ -104,10 +104,11 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
 
   it("each paper-type template declares its label and description (AE5)", () => {
     const expected = {
-      "note-quantitative": "quantitative",
+      "note-quantitative": "inferential",
       "note-qualitative": "qualitative",
       "note-theoretical": "theoretical",
       "note-review": "review",
+      "note-descriptive": "descriptive",
     };
     for (const [name, label] of Object.entries(expected)) {
       const decl = paperTypeDeclaration(builtins[name]);
@@ -119,6 +120,28 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     }
     const labels = Object.keys(expected).map((n) => paperTypeDeclaration(builtins[n]).label);
     expect(new Set(labels).size, "labels are distinct (R4)").toBe(labels.length);
+  });
+
+  it("the descriptive note type asks for patterns, never hypotheses or significance (R2, R3)", () => {
+    const t = builtins["note-descriptive"];
+    for (const heading of ["### Aim", "### Data and Measures", "### Analytic Approach", "### Main Patterns", "### Interpretation and Caveats"]) {
+      expect(t, `descriptive ${heading}`).toContain(heading);
+    }
+    expect(t, "descriptive asks for hypotheses").not.toContain("### Hypotheses");
+    expect(t, "descriptive frames findings as significance").not.toMatch(/significan/i);
+  });
+
+  it("the inferential and descriptive descriptions contrast on hypotheses (R6)", () => {
+    const inferential = paperTypeDeclaration(builtins["note-quantitative"]).description;
+    const descriptive = paperTypeDeclaration(builtins["note-descriptive"]).description;
+    // Detection sees only label + description (src/paper-type.js buildDetectMessages),
+    // so the pair has to name the separating property in opposite polarity.
+    expect(inferential, "inferential names hypotheses").toMatch(/hypothes/i);
+    expect(descriptive, "descriptive names hypotheses").toMatch(/hypothes/i);
+    expect(descriptive, "descriptive negates them").toMatch(/without stated hypotheses/i);
+    expect(inferential, "inferential does not negate them").not.toMatch(/without/i);
+    // Both open the same way so neither pulls a numeric paper toward qualitative/review.
+    for (const d of [inferential, descriptive]) expect(d).toMatch(/^Quantitative study/);
   });
 
   it("stripping frontmatter leaves no trace of the paper-type declaration (AE9)", () => {

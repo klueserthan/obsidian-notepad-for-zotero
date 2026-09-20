@@ -102,8 +102,8 @@ var ZON = {
   // `# Summary: <item title>` heading itself (withSummaryTitle).
   BUILTIN_TEMPLATES: {
     "note-quantitative": `---
-paperType: quantitative
-paperTypeDescription: Empirical study with numeric data, statistics, or experiments
+paperType: inferential
+paperTypeDescription: Quantitative study that states hypotheses and tests them with statistical inference
 ---
 **Citation:** {{bibliography}}
 
@@ -132,6 +132,39 @@ paperTypeDescription: Empirical study with numeric data, statistics, or experime
 
 ### Limitations
 {% llm context="fulltext" %}What limitations does the paper acknowledge, especially about its analytical approach? Render as concrete bullet points.{% endllm %}
+
+## Notes
+
+
+## Annotations
+%% zon kind=annotations colour=all sync=on format=list %%
+%% /zon %%
+`,
+    "note-descriptive": `---
+paperType: descriptive
+paperTypeDescription: Quantitative study describing patterns, distributions or trends, or exploring data, without stated hypotheses
+---
+**Citation:** {{bibliography}}
+
+[Open in Zotero]({{desktopURI}}){% if openPdf %} · [Open PDF]({{openPdf}}){% endif %}
+
+> **Abstract:**{% if abstractNote %} {{abstractNote}}{% endif %}
+
+## Summary
+### Aim / Research Question(s)
+{% llm context="fulltext" %}What does the paper set out to describe, map, or explore? Render as concrete bullet points.{% endllm %}
+
+### Data and Measures
+{% llm context="fulltext" %}Extract the data as concrete facts. Cover: Data source; Sample/setting (N, population, context); Time period; Unit of observation; how the key concepts are measured or coded.{% endllm %}
+
+### Analytic Approach
+{% llm context="fulltext" %}How are the data analysed descriptively? Name the concrete techniques used (for example cross-tabulation, index construction, time series or trend analysis, clustering, dimension reduction, mapping). Render as concrete bullet points.{% endllm %}
+
+### Main Patterns
+{% llm context="fulltext" %}What patterns does the paper report? Render as concrete bullet points, giving the magnitudes and how each pattern varies over time or across groups where stated.{% endllm %}
+
+### Interpretation and Caveats
+{% llm context="fulltext" %}What do the authors say these patterns mean, and what do they caution against concluding? Cover generalisability, measurement limits, and data coverage where stated. Render as concrete bullet points.{% endllm %}
 
 ## Notes
 

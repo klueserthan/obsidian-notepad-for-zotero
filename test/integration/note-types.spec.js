@@ -126,7 +126,7 @@ describe("note types: loader, pickers, default, render guard", function () {
 // Startup archive and seeding memory (KTD3, KTD4): runs the real startup chain
 // (archive → seed → load) against throwaway folders under one temp root.
 describe("note types: startup archive and seeding memory", function () {
-  const SHIPPED = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
+  const SHIPPED = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review", "note-descriptive"];
   let root, dir, prevDir;
 
   const at = (...parts) => PathUtils.join(dir, ...parts);
@@ -403,7 +403,7 @@ describe("note types: editor bridge actions and Composer propagation", function 
     assert.include(Z().noteTypeNames(), "Mine");
   });
 
-  it("renaming an upgraded note-quantitative copy without its own declaration keeps it listed under quantitative", async function () {
+  it("renaming an upgraded note-quantitative copy without its own declaration keeps it listed under inferential", async function () {
     const text = withoutFrontmatter(builtin("note-quantitative"));
     await write("note-quantitative", text);
     await write("note-review", builtin("note-review"));
@@ -412,10 +412,10 @@ describe("note types: editor bridge actions and Composer propagation", function 
     assert.isTrue(entry({ templates: Z().noteTypeList() }, "note-quantitative").inherited);
     const res = await Z().renameNoteType(win, "note-quantitative", "note-quant");
     assert.isTrue(res.ok, res.message);
-    assert.include(entry(res, "note-quant"), { label: "quantitative", inherited: false, needsPaperType: false });
+    assert.include(entry(res, "note-quant"), { label: "inferential", inherited: false, needsPaperType: false });
     assert.include(Z().noteTypeNames(), "note-quant");
     const written = await read("note-quant");
-    assert.equal(Z().paperTypeDeclarationOf(written).label, "quantitative");
+    assert.equal(Z().paperTypeDeclarationOf(written).label, "inferential");
     assert.include(written, text.replace(/^\n+/, ""), "the body is kept");
     assert.equal(getDefault(), "note-quant");
   });
