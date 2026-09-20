@@ -1,7 +1,7 @@
 ---
 title: Seed-once built-in templates silently shadow new metadata on shipped starters
 date: 2026-09-10
-last_updated: 2026-09-13
+last_updated: 2026-09-20
 category: architecture-patterns
 module: templates
 problem_type: architecture_pattern
@@ -12,13 +12,14 @@ applies_when:
   - "A feature reads template content or metadata from the loaded template set rather than from the built-in source"
   - "A seeded Templates-folder file shares a shipped note type's name, so the loader inherits the built-in's paper-type declaration but keeps the file's own body"
   - "A plan assumes a shipped note type deleted or renamed before an upgrade behaves like a fresh install"
+  - "Shipping a built-in note type whose declared paper-type label is new, or changing a shipped label, so seeding introduces that label into folders that already hold the researcher's own note types"
 symptoms:
   - "A template-driven feature works on a fresh install but finds nothing, or stale text, on an upgraded install"
   - "A body-text change to a built-in (a marker, a block, a variable) never reaches users whose folder already holds the old file"
   - "Detect types in the bulk dialog stayed disabled after upgrading, before shipped-name inheritance existed (PR #48)"
 root_cause: missing_workflow_step
 resolution_type: code_fix
-tags: [templates, seeding, upgrade, built-in-templates, paper-type, note-types, state-file, reset-to-built-in]
+tags: [templates, seeding, upgrade, built-in-templates, paper-type, note-types, state-file, reset-to-built-in, duplicate-labels, detection]
 ---
 
 # Seed-once built-in templates silently shadow new metadata on shipped starters
@@ -49,6 +50,15 @@ A feature that reads built-in template content or metadata has to account for fo
 - `renameNoteType` and `deleteNoteType` call `rememberSeeded` (`addon/bootstrap.js:3317-3325`), so a shipped note type removed through the editor is not seeded again.
 
 **4. Renaming a note type with an inherited declaration writes the declaration into the file first** (`addon/bootstrap.js:3377-3380`). After the rename the filename no longer matches a built-in, so inheritance would stop applying and the note type would drop out of every picker.
+
+**5. Seeding a built-in with a *new* label can silently disable detection for two note types.** `seedTemplatesFolder` decides what to write by file name alone (`if (seeded.includes(name)) continue;`, `addon/bootstrap.js:741`) and never checks whether the built-in's declared label is already taken. That was harmless while seeding only ever ran against a never-seeded folder; it stops being harmless the moment a release adds a built-in carrying a label a researcher may already have chosen for their own template.
+
+The consequence is silent and it costs the researcher their own work, not just the new built-in. Labels collide **case-insensitively**: `duplicateLabels` keys on `decl.label.trim().toLowerCase()` (`src/templates.js:133`) and `noteTypeList` normalises the same way (`addon/bootstrap.js:3711`). `detectionCandidates` then drops *every* member of a duplicated label (`addon/bootstrap.js:915`), so a clash removes both the researcher's working note type and the shipped one from the bulk dialog's "Detect types" and from Automatic Mode. Nothing announces it; the only surfacing is a `Duplicate label:` badge in the Template Builder list (`addon/content/builder-app.js:173`), which nobody opens unless already suspicious.
+
+Two rules follow for any code that writes a declared label:
+
+- **Compare labels with `trim().toLowerCase()`, never `===`.** The `quantitative` → `inferential` relabel shipped its clash guard with a raw `===` and had to be fixed before merge: a researcher whose own note type declared `Inferential` passed the guard and would have been relabelled into exactly this silent clash. `findLabelClash` (`src/templates.js:146`) and the Builder's own checks already normalise; a new guard that does not is weaker than the rule it thinks it enforces.
+- **A step that can create a clash should stand down rather than write.** The relabel does this (`relabelQuantitativeNoteType`, `addon/bootstrap.js`): on a clash it makes no change and records nothing, so the next start retries once the researcher resolves it. `seedTemplatesFolder` has no equivalent and is the remaining exposure — known and unfixed as of the descriptive-note-type work.
 
 **Rejected remedies:**
 
