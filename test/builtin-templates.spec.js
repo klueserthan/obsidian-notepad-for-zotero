@@ -127,8 +127,8 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     for (const heading of ["### Aim", "### Data and Measures", "### Analytic Approach", "### Main Patterns", "### Interpretation and Caveats"]) {
       expect(t, `descriptive ${heading}`).toContain(heading);
     }
-    expect(t, "descriptive asks for hypotheses").not.toContain("### Hypotheses");
-    expect(t, "descriptive frames findings as significance").not.toMatch(/significan/i);
+    expect(t, "descriptive does not ask for hypotheses").not.toContain("### Hypotheses");
+    expect(t, "descriptive does not frame findings as significance").not.toMatch(/significan/i);
   });
 
   it("the inferential and descriptive descriptions contrast on hypotheses (R6)", () => {

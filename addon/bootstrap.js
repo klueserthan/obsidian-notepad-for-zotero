@@ -692,6 +692,9 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let prev = this.PREV_QUANTITATIVE_DECLARATION;
     // Read the folder directly: _templates still holds the previous session's
     // set here, since refreshTemplates() runs after the whole startup chain.
+    // Labels collide case-insensitively (duplicateLabels, src/templates.js), so
+    // the guard has to compare the same way or it misses `Inferential`.
+    let norm = (s) => String(s == null ? "" : s).trim().toLowerCase();
     let mine = [], taken = false;
     for (let p of children) {
       let m = PathUtils.filename(p).match(/^(.+)\.(md|njk|txt)$/i);
@@ -700,7 +703,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       try { text = await IOUtils.readUTF8(p); } catch (e) { continue; }
       let decl = this.paperTypeDeclarationOf(text);
       if (m[1] === "note-quantitative") mine.push({ path: p, text, decl });
-      else if (decl && decl.label === want.label) taken = true;
+      else if (decl && norm(decl.label) === norm(want.label)) taken = true;
     }
     // Another note type already holds the label: relabelling would make both
     // duplicates, which drops them from detection entirely — worse than waiting.
@@ -715,8 +718,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     // Values matched, so a line-level swap inside the leading fence is safe.
     // `[^\r\n]*` keeps a CRLF file's carriage returns intact.
     let out = text.replace(/^---\r?\n[\s\S]*?\r?\n---/, (fm) => fm
-      .replace(/^paperType:[^\r\n]*/m, "paperType: " + want.label)
-      .replace(/^paperTypeDescription:[^\r\n]*/m, "paperTypeDescription: " + want.description));
+      .replace(/^paperType:[^\r\n]*/m, () => "paperType: " + want.label)
+      .replace(/^paperTypeDescription:[^\r\n]*/m, () => "paperTypeDescription: " + want.description));
     try { await this.safeWrite(path, out); }
     catch (e) { this.log("relabelQuantitativeNoteType write failed: " + e); }
   },

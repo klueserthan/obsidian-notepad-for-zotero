@@ -5,7 +5,7 @@ import { assert } from "chai";
 // against a throwaway Templates folder, restoring the prefs afterwards.
 
 const Z = () => Zotero.ZON;
-const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
+const withoutFrontmatter = (text) => text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
 
 describe("note types: loader, pickers, default, render guard", function () {
   let dir, prevDir, prevDefault, win, item;
@@ -288,7 +288,6 @@ describe("note types: startup archive and seeding memory", function () {
       /^---\n[\s\S]*?\n---\n/,
       "---\npaperType: " + Z().PREV_QUANTITATIVE_DECLARATION.label +
       "\npaperTypeDescription: " + Z().PREV_QUANTITATIVE_DECLARATION.description + "\n---\n");
-    const bodyOf = (text) => text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
     const declOf = async (n) => Z().paperTypeDeclarationOf(await read(at(n + ".md")));
 
     it("relabels an untouched copy and leaves every byte below the frontmatter (AE1)", async function () {
@@ -298,7 +297,7 @@ describe("note types: startup archive and seeding memory", function () {
       const after = await read(at(NAME + ".md"));
       assert.equal(Z().paperTypeDeclarationOf(after).label, "inferential");
       assert.match(Z().paperTypeDeclarationOf(after).description, /hypothes/i);
-      assert.equal(bodyOf(after), bodyOf(before), "body byte-identical");
+      assert.equal(withoutFrontmatter(after), withoutFrontmatter(before), "body byte-identical");
     });
 
     it("keeps the researcher's own edits to the body (AE1)", async function () {
@@ -308,7 +307,7 @@ describe("note types: startup archive and seeding memory", function () {
       const after = await read(at(NAME + ".md"));
       assert.equal(Z().paperTypeDeclarationOf(after).label, "inferential");
       assert.include(after, "my own scratch heading");
-      assert.equal(bodyOf(after), bodyOf(edited));
+      assert.equal(withoutFrontmatter(after), withoutFrontmatter(edited));
     });
 
     it("leaves a declaration the researcher reworded, and still seeds the descriptive type (AE2, R9)", async function () {
@@ -321,7 +320,7 @@ describe("note types: startup archive and seeding memory", function () {
     });
 
     it("leaves a copy with no declaration of its own, which inherits the new label (R9, KTD7)", async function () {
-      const bare = bodyOf(prevShipped());
+      const bare = withoutFrontmatter(prevShipped());
       await write(at(NAME + ".md"), bare);
       await runStartupChain();
       assert.equal(await read(at(NAME + ".md")), bare, "never written to");
@@ -366,13 +365,17 @@ describe("note types: startup archive and seeding memory", function () {
       }
     });
 
-    it("stands down when another template already declares inferential (R9, KTD6)", async function () {
-      await write(at(NAME + ".md"), prevShipped());
-      await write(at("mine.md"), "---\npaperType: inferential\npaperTypeDescription: mine\n---\n## Notes\n");
-      await runStartupChain();
-      assert.equal((await declOf(NAME)).label, "quantitative", "not relabelled into a clash");
-      assert.equal((await declOf("mine")).label, "inferential");
-    });
+    // Labels clash case-insensitively, so the guard has to as well: relabelling
+    // into a clash drops both note types from detection entirely.
+    for (const label of ["inferential", "Inferential"]) {
+      it(`stands down when another template already declares ${label} (R9, KTD6)`, async function () {
+        await write(at(NAME + ".md"), prevShipped());
+        await write(at("mine.md"), "---\npaperType: " + label + "\npaperTypeDescription: mine\n---\n## Notes\n");
+        await runStartupChain();
+        assert.equal((await declOf(NAME)).label, "quantitative", "not relabelled into a clash");
+        assert.equal((await declOf("mine")).label, label);
+      });
+    }
 
     it("relabels a copy saved with CRLF line endings (KTD2)", async function () {
       await write(at(NAME + ".md"), prevShipped().replace(/\n/g, "\r\n"));
