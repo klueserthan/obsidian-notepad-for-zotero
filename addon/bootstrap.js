@@ -500,6 +500,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "menu.title": "Obsidian Notepad",
     "menu.findDOI": "Find DOI (Crossref)",
     "menu.findDOIN": "Find DOIs for {count} items (Crossref)",
+    "menu.extractAbstract": "Extract abstract",
+    "menu.extractAbstractN": "Extract abstracts for {count} items",
     "menu.generateSummary": "Generate summary note…",
     "menu.generateSummaryN": "Generate {count} summary notes…",
     "summary.generatingTitle": "Generating summary notes…",
@@ -560,6 +562,12 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "doi.searching": "Searching Crossref for DOIs…",
     "doi.noneMissing": "All selected items already have a DOI.",
     "doi.summary": "DOIs — found {found}, no confident match {none}, failed {failed}.",
+    "abstract.extracting": "Extracting abstracts…",
+    "abstract.noneMissing": "All selected items already have an abstract.",
+    "abstract.summary": "Abstracts — extracted {extracted}, not found {notFound}, no full text {noFulltext}, failed {failed}, skipped {skipped}.",
+    // Row status shared with the bulk dialog's "Detect types" pre-pass (U4).
+    "bulk.extractingAbstract": "Extracting abstract…",
+    "bulk.reasonExtractFailed": "Abstract extraction request failed — pick a template by hand.",
     "btn.testLLM": "Test LLM connection",
     "status.llmTestOk": "LLM connection successful",
     "status.llmTestFail": "LLM connection failed: {error}",
@@ -2263,6 +2271,18 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     } catch (e) { return "unsupported"; }
   },
 
+  // "has" = a non-empty Abstract field; "unsupported" = the item type has no
+  // Abstract field; otherwise "missing" (a candidate for extraction). Mirrors
+  // itemDoiState (R4, KTD3, KTD6).
+  itemAbstractState(item) {
+    try {
+      if ((item.getField("abstractNote") || "").trim()) return "has";
+      let ok = false;
+      try { ok = Zotero.ItemFields.isValidForType(Zotero.ItemFields.getID("abstractNote"), item.itemTypeID); } catch (e) {}
+      return ok ? "missing" : "unsupported";
+    } catch (e) { return "unsupported"; }
+  },
+
   // Add our two actions to the item-list context menu (idempotent per window).
   addItemMenu(win) {
     try {
@@ -2281,12 +2301,14 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       sep.classList.add("zon-itemmenu");
       let miSummary = mk("zon-itemmenu-summary", () => this.generateSummaryNotes(win));
       let miDOI = mk("zon-itemmenu-doi", () => this.findDOIsForItems(win));
+      let miAbstract = mk("zon-itemmenu-abstract", () => this.extractAbstractsForItems(win));
       popup.appendChild(sep);
       popup.appendChild(miSummary);
       popup.appendChild(miDOI);
-      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI });
+      popup.appendChild(miAbstract);
+      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI, miAbstract });
       popup.addEventListener("popupshowing", onShow);
-      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI], onShow };
+      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI, miAbstract], onShow };
     } catch (e) { this.log("addItemMenu failed: " + e); }
   },
 
@@ -2299,13 +2321,18 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       els.sep.hidden = !show;
       els.miSummary.hidden = !show;
       els.miDOI.hidden = !show;
+      els.miAbstract.hidden = !show;
       if (!show) return;
       els.miSummary.setAttribute("label",
         n === 1 ? this.t("menu.generateSummary") : this.t("menu.generateSummaryN", { count: n }));
-      let missing = items.filter((it) => this.itemDoiState(it) === "missing").length;
-      els.miDOI.hidden = missing === 0;
+      let missingDOI = items.filter((it) => this.itemDoiState(it) === "missing").length;
+      els.miDOI.hidden = missingDOI === 0;
       els.miDOI.setAttribute("label",
-        missing === 1 ? this.t("menu.findDOI") : this.t("menu.findDOIN", { count: missing }));
+        missingDOI === 1 ? this.t("menu.findDOI") : this.t("menu.findDOIN", { count: missingDOI }));
+      let missingAbstract = items.filter((it) => this.itemAbstractState(it) === "missing").length;
+      els.miAbstract.hidden = missingAbstract === 0;
+      els.miAbstract.setAttribute("label",
+        missingAbstract === 1 ? this.t("menu.extractAbstract") : this.t("menu.extractAbstractN", { count: missingAbstract }));
     } catch (e) {}
   },
 
@@ -2663,11 +2690,29 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       this.logAutoSummaryFailure(item, "fulltext." + fulltext.reason, null);
       return finish("fail-no-fulltext");
     }
-    if (action === "process") return this.autoSummaryProcess(win, C, item, tags, finish);
+    if (action === "process") return this.autoSummaryProcess(win, C, item, tags, finish, fulltext);
   },
 
-  // Detect, resolve, classify (KTD7), re-check (KTD9), create, then the success tag.
-  async autoSummaryProcess(win, C, item, tags, finish) {
+  // Shared failure handling inside autoSummaryProcess (KTD4.3, KTD7): log,
+  // start the hour cooldown for a provider failure, then tag "fail" unless
+  // the failure means abort (never tagged, never counted as attempted).
+  // Reports whether the sweep should stop; callers mark the item attempted
+  // before calling (unless abort). Both the extraction http-failed
+  // outcome and a detect/resolve failure route through this one branch.
+  async autoSummaryFail(item, res, kind, finish) {
+    this.logAutoSummaryFailure(item, res.code, res.status);
+    if (kind === "abort") return { stop: true };
+    if (kind === "provider") {
+      this._autoSummaryCooldown = { until: this.autoSummaryNow() + this.AUTO_SUMMARY_COOLDOWN_MS, settings: this.autoSummaryLLMSnapshot() };
+    }
+    await finish("fail");
+    return { stop: kind === "provider" };
+  },
+
+  // Extract (KTD4), detect, resolve, classify (KTD7), re-check (KTD9),
+  // create, then the success tag. `fulltext` is the already-read full text
+  // autoSummaryItem holds, passed on so extraction need not re-read it.
+  async autoSummaryProcess(win, C, item, tags, finish, fulltext) {
     // KTD10: an item whose writes were already attempted this session waits for
     // a later edit (a new dateModified) instead of paying for a run every tick.
     let attemptKey = () => item.libraryID + "/" + item.key + "@" + item.dateModified;
@@ -2675,6 +2720,31 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     let attempted = false;
     try {
       let fetchExtra = { errorDelayMax: 0 }; // KTD7: Zotero's 5xx retry can't stall the sweep
+      // KTD4: an item with no abstract gets one extracted before detection,
+      // so detection decides on real text instead of falling back for want
+      // of one. `not-found`/`no-fulltext`/`skipped` fall through unchanged.
+      if (this.itemAbstractState(item) === "missing") {
+        let extraction;
+        try {
+          extraction = await this.extractAbstractForItem(win, item,
+            { fulltext, fetchExtra, shouldStop: () => !this.autoSummaryEnabled() || !item.hasTag(tags.triggerTag) }); // opted out mid-request: no write
+        } catch (e) { // a throwing abstract save gets the failure tag, like create.failed (R13, KTD11: code only)
+          if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out: leave the trigger tag
+          if (!item.hasTag(tags.triggerTag)) return; // item opted out: no failure tag
+          attempted = true;
+          this.logAutoSummaryFailure(item, "extract.failed", null);
+          await finish("fail");
+          return;
+        }
+        if (!this.autoSummaryLive() || !this.autoSummaryEnabled()) return "stop"; // opted out mid-request: no tag change
+        if (!item.hasTag(tags.triggerTag) || item.deleted || !Zotero.Items.get(item.id)) return; // opted out or deleted mid-request: skip the item
+        if (extraction.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) {
+          attempted = true; // set before the tag write, so a throwing save still counts (KTD10)
+          let result = await this.autoSummaryFail(item,
+            { code: "extract.httpFailed", status: extraction.status ?? null }, "provider", finish);
+          return result.stop ? "stop" : undefined;
+        }
+      }
       let detected = await this.detectPaperTypeForItem(win, item, { fetchExtra });
       if (!this.autoSummaryLive()) return "stop";
       let choice = C.chooseNoteType(detected, this.defaultNoteTemplate());
@@ -2687,15 +2757,9 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       if (!this.autoSummaryLive()) return "stop";
       if (!res.ok) {
         let kind = choice.providerFailure ? "provider" : C.classifyFailure(res);
-        this.logAutoSummaryFailure(item, res.code, res.status);
-        if (kind === "abort") return "stop";
-        if (kind === "provider") {
-          this._autoSummaryCooldown = { until: this.autoSummaryNow() + this.AUTO_SUMMARY_COOLDOWN_MS, settings: this.autoSummaryLLMSnapshot() };
-        }
-        attempted = true;
-        await finish("fail");
-        if (kind === "provider") return "stop";
-        return;
+        attempted = kind !== "abort"; // before the tag write, as before the refactor (KTD10)
+        let result = await this.autoSummaryFail(item, res, kind, finish);
+        return result.stop ? "stop" : undefined;
       }
       // KTD9: no await between these checks and the note save. A Summary Note
       // that appeared meanwhile is left to the next sweep's R9 path.
@@ -2724,7 +2788,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // per-item REVIEW LIST (one row per selected item: include toggle, title,
   // template picker, status slot) rather than a single template picker, plus a
   // "Set all to…" shortcut, an explicit "Detect types" action (ADR-0001: the
-  // ONLY place a classification call is issued), the existing-note policy, and
+  // ONLY place a classification call is issued; it first fills missing
+  // abstracts from the PDF text, ADR-0005), the existing-note policy, and
   // the LLM heads-up. Row planning/gating stay pure (win.ZONCore.bulkGate /
   // planBulk); detection is pure too (win.ZONCore.detectPaperTypes) — this
   // function only owns DOM, the run token, and the cancel path.
@@ -3014,7 +3079,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         return String(reason || "");
       };
 
-      // Detect types (R9): the one place a classification call is issued.
+      // Detect types (R9): the one place a classification call is issued, after
+      // the abstract-extraction pre-pass below writes any missing abstracts.
       // errorDelayMax:0 keeps R14's no-retry rule (otherwise Zotero retries a
       // 5xx for up to an hour); cancellerReceiver collects the abort handles
       // settle() invokes when the dialog closes mid-run (KTD5).
@@ -3040,8 +3106,36 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
           r.status.textContent = this.t("bulk.detecting");
           r.status.style.color = "";
         });
-        let payload = targets.map((r) => ({ key: r.key, title: r.title, abstractNote: field(r.item, "abstractNote") }));
         let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+        // Extraction pre-pass (R10, KTD5): rows without an abstract get one from
+        // the PDF text first, through the same cancellable fetch and stop signal;
+        // a row whose extraction request failed is left out of detection.
+        let failedKeys = new Set();
+        let missing = targets.filter((r) => this.itemAbstractState(r.item) === "missing");
+        missing.forEach((r) => { r.status.textContent = this.t("bulk.extractingAbstract"); });
+        try {
+          await C.runBounded(missing.length, settings.concurrency, async (i) => {
+            let r = missing[i];
+            let res = { outcome: C.ABSTRACT_REASONS.HTTP_FAILED };
+            try { res = await this.extractAbstractForItem(win, r.item,
+              { fetchFn: detectFetchFn, shouldStop: () => stopped || seq !== detectSeq }); }
+            catch (e) { this.log("bulk abstract extraction failed for " + r.key); }
+            if (res.outcome === C.ABSTRACT_REASONS.HTTP_FAILED) failedKeys.add(r.key);
+            if (seq === detectSeq && !stopped && !r.touched) r.status.textContent = this.t("bulk.detecting");
+          }, { shouldStop: () => stopped || seq !== detectSeq });
+        } catch (e) { this.log("bulk abstract pre-pass failed"); } // KTD7: never log e
+        if (stopped || seq !== detectSeq) return;
+        failedKeys.forEach((key) => {
+          let row = byKey.get(key);
+          if (!row || row.touched) return; // a row the user edited mid-run keeps their state
+          row.templateName = null;
+          row.sel.value = "";
+          row.status.textContent = this.t("bulk.reasonExtractFailed");
+          row.status.style.color = red;
+        });
+        // A row the user unticked or edited during the pre-pass gets no detection request.
+        let payload = targets.filter((r) => r.included && !r.touched && !failedKeys.has(r.key))
+          .map((r) => ({ key: r.key, title: r.title, abstractNote: field(r.item, "abstractNote") }));
         try {
           await C.detectPaperTypes(payload, candidates, settings, detectFetchFn, (key, res) => {
             if (seq !== detectSeq || stopped) return;
@@ -3247,6 +3341,95 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     await item.saveTx();
     this.log("DOI set on " + item.key + ": " + match.doi);
     return "found";
+  },
+
+  // ------------------------------------------------------------ abstract extraction
+
+  // Shared per-item helper (KTD3): read the indexed full text (unless the
+  // caller already has it), ask the pure module for the verbatim abstract, and
+  // — on a verified answer — write abstractNote + the marker tag in ONE
+  // saveTx. This is the ONLY place abstractNote is ever written; every trigger
+  // (this menu action, the automatic sweep, the bulk dialog's pre-pass) calls
+  // it. `opts.fulltext` lets a caller that already read the full text (the
+  // sweep) skip a second read; `opts.fetchFn` overrides the transport outright,
+  // else `opts.fetchExtra` merges into makeLLMFetchFn's Zotero.HTTP.request
+  // options (same contract as resolveSummaryMdForItem / detectPaperTypeForItem).
+  // `opts.shouldStop` lets a cancellable caller (the bulk dialog) stop before
+  // the request and before the write.
+  // Returns { outcome: "extracted"|"not-found"|"no-fulltext"|"skipped"|"http-failed", status? }.
+  // LOGGING CONTRACT (KTD7): a caller may log title/key/outcome/status only —
+  // never the full text, the model's answer, e.message, or sanitizeError output.
+  async extractAbstractForItem(win, item, opts = {}) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let fulltext = opts.fulltext || await this.getPrimaryPDFFulltext(item, C);
+    if (!fulltext || !fulltext.ok) return { outcome: "no-fulltext" };
+    // KTD3.2: checked both before the request and, with zero awaits, before the
+    // write — a cancelled run (the bulk dialog closed), a dead plugin instance,
+    // a deleted/erased item, or one that got an abstract meanwhile (itemAbstractState
+    // encodes "valid for type and non-empty") sends nothing and writes nothing.
+    let stale = () => !this.autoSummaryLive() || (opts.shouldStop && opts.shouldStop()) || item.deleted
+      || !Zotero.Items.get(item.id) || this.itemAbstractState(item) !== "missing";
+    if (stale()) return { outcome: "skipped" };
+
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    let fetchFn = opts.fetchFn || this.makeLLMFetchFn(opts.fetchExtra);
+    let result = await C.extractAbstract(fulltext.text, settings, fetchFn);
+    if (!result.ok) {
+      if (result.reason === C.ABSTRACT_REASONS.HTTP_FAILED) {
+        return { outcome: result.reason, status: result.status ?? null };
+      }
+      if (result.reason === C.ABSTRACT_REASONS.NO_FULLTEXT) return { outcome: result.reason };
+      return { outcome: C.ABSTRACT_REASONS.NOT_FOUND };
+    }
+
+    if (stale()) return { outcome: "skipped" }; // zero awaits from here to the save
+    let hadTag = item.hasTag(C.ABSTRACT_TAG);
+    item.setField("abstractNote", result.abstract);
+    item.addTag(C.ABSTRACT_TAG);
+    try {
+      await item.saveTx();
+    } catch (e) { // undo the unsaved change so a later save (e.g. the failure tag) can't persist it
+      item.setField("abstractNote", "");
+      if (!hadTag) item.removeTag(C.ABSTRACT_TAG);
+      throw e;
+    }
+    return { outcome: "extracted" };
+  },
+
+  // "Extract abstracts" item-menu action (R8, KTD6). Items that already have
+  // an abstract (or whose type has no Abstract field) never reach the LLM —
+  // they're counted as skipped up front, same as itemAbstractState === "has"/
+  // "unsupported". The LLM-configured check only fires once we know at least
+  // one item needs extraction.
+  async extractAbstractsForItems(win) {
+    if (!win.ZONCore) await this.injectCore(win);
+    let C = win.ZONCore;
+    let counts = { extracted: 0, "not-found": 0, "no-fulltext": 0, "http-failed": 0, skipped: 0 };
+    let toExtract = [];
+    for (let item of this.selectedRegularItems(win)) {
+      if (this.itemAbstractState(item) === "missing") toExtract.push(item);
+      else counts.skipped++;
+    }
+    if (!toExtract.length) { this.popup(win, this.t("menu.title"), this.t("abstract.noneMissing")); return; }
+    let settings = C.sanitizeLLMSettings(this.getLLMSettings());
+    if (!C.isLLMConfigured(settings)) {
+      this.popup(win, this.t("menu.title"), this.t("err.llmNotConfigured"));
+      return;
+    }
+    let pw = this.progress(win, this.t("abstract.extracting"));
+    await C.runBounded(toExtract.length, settings.concurrency, async (i) => {
+      let item = toExtract[i];
+      let outcome = "http-failed";
+      try {
+        outcome = (await this.extractAbstractForItem(win, item)).outcome;
+      } catch (e) { this.log("extractAbstractForItem failed for " + item.key); }
+      counts[outcome] = (counts[outcome] || 0) + 1;
+    }, { shouldStop: () => !this.autoSummaryLive() });
+    this.finishProgress(pw, this.t("abstract.summary", {
+      extracted: counts.extracted, notFound: counts["not-found"], noFulltext: counts["no-fulltext"],
+      failed: counts["http-failed"], skipped: counts.skipped,
+    }));
   },
 
   // ------------------------------------------------------------ progress popups

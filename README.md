@@ -50,6 +50,13 @@ support, no file editor, and no annotation sync; none of that is coming back.
   saves note types only; it no longer reads or writes an item's note.
 - **Find DOI (Crossref)** — a small item-menu action to look up a missing DOI
   for one or more selected items.
+- **Extract abstracts** — an item-menu action that fills a missing Abstract
+  field from the PDF: it sends the start of the text Zotero has indexed to
+  your LLM and saves the paper's own abstract only if that exact text appears
+  in the paper, tagged `zps:abstract-extracted`. It never overwrites an
+  existing abstract and never writes a generated summary. "Detect types" in
+  the bulk dialog and the automatic mode run the same step first for items
+  without an abstract, so paper-type detection has something to read.
 - **Automatic mode (opt-in)** — a Settings toggle, off by default, that runs
   the same pipeline as Generate unattended on a periodic sweep for items
   carrying a trigger tag. See [Automatic mode](#automatic-mode-opt-in) below.
@@ -116,7 +123,8 @@ startup and every few minutes finds personal-library items carrying the
 **trigger tag** (default `zps:summarize`) and runs them through the same
 pipeline as Generate — no click, no review — using paper-type detection to
 pick a note type (falling back to your default note template when it can't
-decide).
+decide). An item without an abstract first gets one extracted from its PDF
+text (see **Extract abstracts** above), which also syncs.
 
 **This sends the full text of every tagged paper to your configured LLM
 unattended**, including the whole backlog of already-tagged items the

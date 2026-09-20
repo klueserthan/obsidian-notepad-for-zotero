@@ -4,4 +4,4 @@ The LLM interpreter is BYOK and OpenAI-compatible, but model calls are not part 
 
 This favors privacy, cost control, and deterministic Zotero-to-Obsidian syncing over automatic live AI fields. Requested context sources such as abstract, annotations, and primary-PDF full text must be explicit and must fail loudly when unavailable; the plugin does not silently fall back to weaker context or perform its own PDF extraction/OCR.
 
-The opt-in Automatic Mode for tagged items (`docs/adr/0004-opt-in-automatic-summary-notes.md`) is the one exception to "run only through user-triggered actions" — see that ADR for its scope and safeguards.
+The opt-in Automatic Mode for tagged items (`docs/adr/0004-opt-in-automatic-summary-notes.md`) is the one exception to "run only through user-triggered actions" — see that ADR for its scope and safeguards. Filling a missing abstract from Zotero's indexed PDF text, verbatim only, is recorded in `docs/adr/0005-extract-missing-abstracts.md`.

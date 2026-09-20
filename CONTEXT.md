@@ -62,6 +62,13 @@ produce a Summary Note — one tag for "no full text after the wait," a
 different one for every other failure — so the outcome is visible on the
 iPad, where the plugin doesn't run.
 
+**Abstract Marker Tag**:
+The tag (`zps:abstract-extracted`) the plugin adds to an item whose empty
+Abstract field it filled with the paper's own abstract, copied verbatim from
+the indexed PDF text. It marks the abstract as extracted rather than
+publisher metadata; removing it changes nothing else. See ADR-0005.
+_Avoid_: generated abstract, AI abstract
+
 **Upstream**:
 Acatechnic/obsidian-notepad-for-zotero — the Obsidian-vault-based origin of this fork.
 

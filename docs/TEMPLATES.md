@@ -279,7 +279,9 @@ Each of these five opens with the frontmatter block described at the top of
 this document, declaring its paper type. That declaration is what makes it a
 note type at all: it's how it reaches the Composer picker, the Settings
 default, and the bulk dialog, and how bulk auto-detection picks a candidate
-for a paper (`paperTypeDescription` helps the model choose).
+for a paper (`paperTypeDescription` helps the model choose). Detection reads
+the item's abstract; for an item without one, "Detect types" first extracts
+the paper's own abstract from its indexed PDF text and saves it to the item.
 
 A copy of one of the five starters that keeps the starter's file name and has
 no declaration of its own (for example, a Templates-folder copy seeded before
