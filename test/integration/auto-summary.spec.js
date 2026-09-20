@@ -65,16 +65,17 @@ describe("auto summary: headless pipeline hooks (U3)", function () {
     await Z().loadTemplates();
   });
 
-  it("detectionCandidates() returns the four shipped note types with their labels on a fresh profile", async function () {
+  it("detectionCandidates() returns the five shipped note types with their labels on a fresh profile", async function () {
     for (const n of Object.keys(Z().BUILTIN_TEMPLATES)) await write(n, Z().BUILTIN_TEMPLATES[n]);
     await Z().loadTemplates();
     const candidates = Z().detectionCandidates();
-    assert.lengthOf(candidates, 4);
+    assert.lengthOf(candidates, 5);
     const byName = new Map(candidates.map((c) => [c.name, c.label]));
-    assert.equal(byName.get("note-quantitative"), "quantitative");
+    assert.equal(byName.get("note-quantitative"), "inferential");
     assert.equal(byName.get("note-qualitative"), "qualitative");
     assert.equal(byName.get("note-theoretical"), "theoretical");
     assert.equal(byName.get("note-review"), "review");
+    assert.equal(byName.get("note-descriptive"), "descriptive");
   });
 
   it("a resolve call whose fake fetch throws status 401 returns ok:false, code llm.run.httpFailed, status 401", async function () {

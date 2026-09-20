@@ -5,7 +5,7 @@ import { assert } from "chai";
 // against a throwaway Templates folder, restoring the prefs afterwards.
 
 const Z = () => Zotero.ZON;
-const withoutFrontmatter = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "");
+const withoutFrontmatter = (text) => text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
 
 describe("note types: loader, pickers, default, render guard", function () {
   let dir, prevDir, prevDefault, win, item;
@@ -126,7 +126,7 @@ describe("note types: loader, pickers, default, render guard", function () {
 // Startup archive and seeding memory (KTD3, KTD4): runs the real startup chain
 // (archive → seed → load) against throwaway folders under one temp root.
 describe("note types: startup archive and seeding memory", function () {
-  const SHIPPED = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review"];
+  const SHIPPED = ["note-quantitative", "note-qualitative", "note-theoretical", "note-review", "note-descriptive"];
   let root, dir, prevDir;
 
   const at = (...parts) => PathUtils.join(dir, ...parts);
@@ -278,6 +278,111 @@ describe("note types: startup archive and seeding memory", function () {
     await runStartupChain();
     assert.isFalse(await exists(at("note-review.md")), "seeded once");
   });
+
+  // The quantitative -> inferential relabel (R8-R12, KTD2, KTD6, KTD7). The
+  // fixture is the template as it shipped BEFORE the rename: same body, old
+  // declaration. Everything here runs the real startup chain.
+  describe("relabelling the shipped quantitative declaration", function () {
+    const NAME = "note-quantitative";
+    const prevShipped = () => Z().BUILTIN_TEMPLATES[NAME].replace(
+      /^---\n[\s\S]*?\n---\n/,
+      "---\npaperType: " + Z().PREV_QUANTITATIVE_DECLARATION.label +
+      "\npaperTypeDescription: " + Z().PREV_QUANTITATIVE_DECLARATION.description + "\n---\n");
+    const declOf = async (n) => Z().paperTypeDeclarationOf(await read(at(n + ".md")));
+
+    it("relabels an untouched copy and leaves every byte below the frontmatter (AE1)", async function () {
+      const before = prevShipped();
+      await write(at(NAME + ".md"), before);
+      await runStartupChain();
+      const after = await read(at(NAME + ".md"));
+      assert.equal(Z().paperTypeDeclarationOf(after).label, "inferential");
+      assert.match(Z().paperTypeDeclarationOf(after).description, /hypothes/i);
+      assert.equal(withoutFrontmatter(after), withoutFrontmatter(before), "body byte-identical");
+    });
+
+    it("keeps the researcher's own edits to the body (AE1)", async function () {
+      const edited = prevShipped().replace("## Notes", "## Notes\nmy own scratch heading");
+      await write(at(NAME + ".md"), edited);
+      await runStartupChain();
+      const after = await read(at(NAME + ".md"));
+      assert.equal(Z().paperTypeDeclarationOf(after).label, "inferential");
+      assert.include(after, "my own scratch heading");
+      assert.equal(withoutFrontmatter(after), withoutFrontmatter(edited));
+    });
+
+    it("leaves a declaration the researcher reworded, and still seeds the descriptive type (AE2, R9)", async function () {
+      const mine = prevShipped().replace(/^paperTypeDescription: .*$/m, "paperTypeDescription: My own wording");
+      await write(at(NAME + ".md"), mine);
+      await runStartupChain();
+      assert.equal(await read(at(NAME + ".md")), mine, "untouched");
+      assert.equal((await declOf(NAME)).label, "quantitative");
+      assert.isTrue(await exists(at("note-descriptive.md")), "seeding is unaffected");
+    });
+
+    it("leaves a copy with no declaration of its own, which inherits the new label (R9, KTD7)", async function () {
+      const bare = withoutFrontmatter(prevShipped());
+      await write(at(NAME + ".md"), bare);
+      await runStartupChain();
+      assert.equal(await read(at(NAME + ".md")), bare, "never written to");
+      assert.include(Z().noteTypeNames(), NAME);
+      assert.equal(Z()._templates[NAME].paperType.label, "inferential", "inherited from the built-in");
+    });
+
+    it("does not recreate a shipped copy the researcher deleted (AE3, R9)", async function () {
+      await Z().saveTemplatesState(dir, { seeded: SHIPPED.slice() });
+      await runStartupChain();
+      assert.isFalse(await exists(at(NAME + ".md")));
+      await runStartupChain();
+      assert.isFalse(await exists(at(NAME + ".md")), "still gone on the next start");
+    });
+
+    it("writes nothing on a second start (AE4, R11)", async function () {
+      await write(at(NAME + ".md"), prevShipped());
+      await runStartupChain();
+      const after = await read(at(NAME + ".md"));
+      const stamp = (await IOUtils.stat(at(NAME + ".md"))).lastModified;
+      await runStartupChain();
+      assert.equal(await read(at(NAME + ".md")), after, "unchanged");
+      assert.equal((await IOUtils.stat(at(NAME + ".md"))).lastModified, stamp, "not rewritten");
+    });
+
+    it("seeds a fresh folder with all five types and relabels none (AE5, R12)", async function () {
+      await runStartupChain();
+      for (const n of SHIPPED) assert.equal(await read(at(n + ".md")), Z().BUILTIN_TEMPLATES[n]);
+      assert.sameMembers((await state()).seeded, SHIPPED);
+      assert.equal((await declOf(NAME)).label, "inferential");
+    });
+
+    it("leaves the default-template preference resolving to the same template (AE8, R10)", async function () {
+      await write(at(NAME + ".md"), prevShipped());
+      const prev = Zotero.Prefs.get(Z().PREF_DEFAULT_NOTE, true);
+      Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, NAME, true);
+      try {
+        await runStartupChain();
+        assert.equal(Z().defaultNoteTemplate(), NAME);
+      } finally {
+        Zotero.Prefs.set(Z().PREF_DEFAULT_NOTE, prev || "", true);
+      }
+    });
+
+    // Labels clash case-insensitively, so the guard has to as well: relabelling
+    // into a clash drops both note types from detection entirely.
+    for (const label of ["inferential", "Inferential"]) {
+      it(`stands down when another template already declares ${label} (R9, KTD6)`, async function () {
+        await write(at(NAME + ".md"), prevShipped());
+        await write(at("mine.md"), "---\npaperType: " + label + "\npaperTypeDescription: mine\n---\n## Notes\n");
+        await runStartupChain();
+        assert.equal((await declOf(NAME)).label, "quantitative", "not relabelled into a clash");
+        assert.equal((await declOf("mine")).label, label);
+      });
+    }
+
+    it("relabels a copy saved with CRLF line endings (KTD2)", async function () {
+      await write(at(NAME + ".md"), prevShipped().replace(/\n/g, "\r\n"));
+      await runStartupChain();
+      assert.equal((await declOf(NAME)).label, "inferential");
+    });
+  });
 });
 
 // Editor bridge actions and Composer propagation (KTD3, KTD6, KTD8, KTD10):
@@ -403,7 +508,7 @@ describe("note types: editor bridge actions and Composer propagation", function 
     assert.include(Z().noteTypeNames(), "Mine");
   });
 
-  it("renaming an upgraded note-quantitative copy without its own declaration keeps it listed under quantitative", async function () {
+  it("renaming an upgraded note-quantitative copy without its own declaration keeps it listed under inferential", async function () {
     const text = withoutFrontmatter(builtin("note-quantitative"));
     await write("note-quantitative", text);
     await write("note-review", builtin("note-review"));
@@ -412,10 +517,10 @@ describe("note types: editor bridge actions and Composer propagation", function 
     assert.isTrue(entry({ templates: Z().noteTypeList() }, "note-quantitative").inherited);
     const res = await Z().renameNoteType(win, "note-quantitative", "note-quant");
     assert.isTrue(res.ok, res.message);
-    assert.include(entry(res, "note-quant"), { label: "quantitative", inherited: false, needsPaperType: false });
+    assert.include(entry(res, "note-quant"), { label: "inferential", inherited: false, needsPaperType: false });
     assert.include(Z().noteTypeNames(), "note-quant");
     const written = await read("note-quant");
-    assert.equal(Z().paperTypeDeclarationOf(written).label, "quantitative");
+    assert.equal(Z().paperTypeDeclarationOf(written).label, "inferential");
     assert.include(written, text.replace(/^\n+/, ""), "the body is kept");
     assert.equal(getDefault(), "note-quant");
   });
