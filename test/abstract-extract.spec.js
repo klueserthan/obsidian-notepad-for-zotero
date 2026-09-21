@@ -105,6 +105,30 @@ describe("normalizeForContainment", () => {
   it("is case-sensitive", () => {
     expect(normalizeForContainment("Abstract")).toBe("Abstract");
   });
+
+  // A drop cap (APSR and other Cambridge journals) is indexed as a letter alone
+  // on its own line: "D\no parties respond…". Unjoined it collapses to "D o", so
+  // the model's correct "Do parties…" never matched.
+  it("joins a drop cap onto the word it opens", () => {
+    expect(normalizeForContainment("D\no parties respond")).toBe("Do parties respond");
+    expect(normalizeForContainment("Klüser\nD\no parties")).toBe("Klüser Do parties");
+    expect(normalizeForContainment("É\ntudes comparées")).toBe("Études comparées");
+  });
+
+  it("leaves a capital that merely ends a line of prose", () => {
+    expect(normalizeForContainment("the results. A\nfurther test")).toBe("the results. A further test");
+    expect(normalizeForContainment("as I\nthink")).toBe("as I think");
+    expect(normalizeForContainment("Table\nA\n12")).toBe("Table A 12");
+  });
+
+  it("matches an abstract that opens with a drop cap, as laid out in an APSR article", () => {
+    const slice = "American Political Science Review (2026) 120, 1, 346–364\n"
+      + "ALEXANDER HORN University of Konstanz, Germany\n"
+      + "D\no parties respond to inequality? Despite the relevance of inequality and its consequences, existing studies fail to capture parties’ emphasis.\n"
+      + "INTRODUCTION\nE\nconomic inequality is one of the greatest challenges.";
+    const answer = "Do parties respond to inequality? Despite the relevance of inequality and its consequences, existing studies fail to capture parties’ emphasis.";
+    expect(containsVerbatim(slice, answer, false)).toBe(true);
+  });
 });
 
 describe("containsVerbatim", () => {
