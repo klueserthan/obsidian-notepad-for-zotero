@@ -52,7 +52,8 @@ under the new name rather than continuing upstream's `1.0.0-beta.x` line.
   *Extract abstracts*, fills an empty Abstract field with the paper's own
   abstract: it sends the start of the text Zotero has already indexed to the
   configured LLM and saves the answer only if that exact text appears in the
-  paper (ignoring whitespace, line-break hyphenation, and ligatures), tagged
+  paper (ignoring whitespace, line-break hyphenation, ligatures, and the
+  drop cap many journals open an abstract with), tagged
   `zps:abstract-extracted`. It never overwrites an abstract and never writes
   a generated summary. The bulk dialog's *Detect types* and the automatic
   mode run the same step first for items without an abstract, so paper-type

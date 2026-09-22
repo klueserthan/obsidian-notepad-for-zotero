@@ -94,13 +94,17 @@ export function parseExtractAnswer(raw) {
 // Normalizes text for containment (KTD2.3): Latin ligatures folded ("ﬁ" →
 // "fi", U+FB00–FB06 only — full NFKC would also equate "CO₂" with "CO2"),
 // soft hyphens dropped, line-break hyphenation joined ("-" then a
-// line break), whitespace collapsed. Case is left as-is — the comparison is
-// case-sensitive.
+// line break), drop caps joined, whitespace collapsed. Case is left as-is —
+// the comparison is case-sensitive.
 export function normalizeForContainment(s) {
   return String(s ?? "")
     .replace(/[\uFB00-\uFB06]/g, (c) => c.normalize("NFKC"))
     .replace(/­/g, "")
     .replace(/-[ \t]*\r?\n\s*/g, "") // a hyphen before a line break, not same-line punctuation
+    // A drop cap is indexed as a capital alone on its own line ("D\no parties").
+    // Only a line holding that one letter qualifies: a capital that merely ends
+    // a line of prose ("results. A\nfurther", "as I\nthink") is left alone.
+    .replace(/(^|\n)[ \t]*(\p{Lu})[ \t]*\r?\n[ \t]*(?=\p{Ll})/gu, "$1$2")
     .replace(/\s+/g, " ")
     .trim();
 }
