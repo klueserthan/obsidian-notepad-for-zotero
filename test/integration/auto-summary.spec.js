@@ -336,10 +336,32 @@ describe("auto summary: sweep engine (U4)", function () {
     const notes = notesOf(item);
     assert.lengthOf(notes, 1);
     assert.include(notes[0].getTags().map((t) => t.tag), Z().MARKER_TAG);
+    // Detection answered "1": the note carries that candidate's type tag too (#59).
+    const picked = Z().detectionCandidates()[0];
+    const typeTags = notes[0].getTags().map((t) => t.tag).filter((t) => t.startsWith("zps:summary-note:"));
+    assert.deepEqual(typeTags, ["zps:summary-note:" + picked.label.toLowerCase()]);
     assert.notInclude(tagsOf(item), TRIGGER);
     assert.notProperty(firstSeen(), keyOf(item));
     assert.isAbove(fetchCalls, 0);
     assert.isTrue(fetchExtras.every((e) => e && e.errorDelayMax === 0), "the automatic path disables Zotero's 5xx retry");
+  });
+
+  it("an overwrite from another note type swaps the type tag and keeps the marker (#59)", async function () {
+    const item = await makeItem("type-tag overwrite fixture");
+    await Z().loadTemplates();
+    const note = await Z().generateSummaryNote(win, item, "note-quantitative", { md: "## Summary\nfirst" });
+    const tags = () => note.getTags().map((t) => t.tag).sort();
+    assert.deepEqual(tags(), ["zps:summary-note", "zps:summary-note:inferential"]);
+    await Z().overwriteSummaryNote(win, item, note, "note-descriptive", { md: "## Summary\nsecond" });
+    assert.deepEqual(tags(), ["zps:summary-note", "zps:summary-note:descriptive"]);
+  });
+
+  it("a template that declares no note type gets the marker tag alone (#59)", async function () {
+    const item = await makeItem("untyped fixture");
+    await IOUtils.writeUTF8(PathUtils.join(dir, "plain.md"), "## Notes\n{{title}}\n");
+    await Z().loadTemplates();
+    const note = await Z().generateSummaryNote(win, item, "plain", { md: "## Notes\nplain" });
+    assert.deepEqual(note.getTags().map((t) => t.tag), ["zps:summary-note"]);
   });
 
   it("AE6: with the mode off, a tagged item keeps its tag, the fake fetch is never called, and the first-seen map is cleared", async function () {

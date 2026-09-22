@@ -2381,8 +2381,23 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     note.parentID = item.id;
     note.setNote(html);
     note.addTag(this.MARKER_TAG);
+    this.stampNoteTypeTag(win, note, templateName || this.defaultNoteTemplate());
     await note.saveTx();
     return note;
+  },
+
+  // Summary Notes carry their note type as a second tag beside the marker (#59),
+  // e.g. `zps:summary-note:inferential`. Any other note-type tag already on the
+  // note is swapped out, so an overwrite from a different type never leaves two.
+  // A template that declares no type gets the marker tag alone.
+  stampNoteTypeTag(win, note, templateName) {
+    let t = this._templates && this._templates[templateName];
+    let want = win.ZONCore.noteTypeTag(t && t.paperType && t.paperType.label);
+    let prefix = win.ZONCore.NOTE_TYPE_TAG_PREFIX;
+    for (let tag of (note.getTags && note.getTags()) || []) {
+      if (tag && tag.tag && tag.tag.startsWith(prefix) && tag.tag !== want) note.removeTag(tag.tag);
+    }
+    if (want && !note.hasTag(want)) note.addTag(want);
   },
 
   // Create-once refinement (#28): overwrite a SPECIFIC existing Summary Note's
@@ -2411,6 +2426,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let tags = (noteItem.getTags && noteItem.getTags()) || [];
       if (!tags.some((t) => t && t.tag === this.MARKER_TAG)) noteItem.addTag(this.MARKER_TAG);
     } catch (e) {}
+    this.stampNoteTypeTag(win, noteItem, templateName || this.defaultNoteTemplate());
     await noteItem.saveTx();
     return noteItem;
   },

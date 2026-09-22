@@ -214,6 +214,10 @@ describe("sanitizeTriggerTag", () => {
     expect(sanitizeTriggerTag("zps:summary-note", opts)).toBe("");
   });
 
+  it("rejects a note-type tag, which the plugin writes on Summary Notes", () => {
+    expect(sanitizeTriggerTag("zps:summary-note:inferential", opts)).toBe("");
+  });
+
   it("accepts a valid distinct tag", () => {
     expect(sanitizeTriggerTag("my-custom-tag", opts)).toBe("my-custom-tag");
   });

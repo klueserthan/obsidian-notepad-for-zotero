@@ -92,6 +92,16 @@ export function frontmatterFieldValue(text, key) {
   return null;
 }
 
+// The tag that says which note type a Summary Note was generated from (#59),
+// written beside the `zps:summary-note` marker: `zps:summary-note:inferential`.
+// Lowercased because labels collide case-insensitively (duplicateLabels); ""
+// for a template that declares no type, which gets the marker tag alone.
+export const NOTE_TYPE_TAG_PREFIX = "zps:summary-note:";
+export function noteTypeTag(label) {
+  const norm = String(label ?? "").trim().toLowerCase();
+  return norm ? NOTE_TYPE_TAG_PREFIX + norm : "";
+}
+
 // A template's declared paper type (KTD4): the label it fits and an optional
 // one-line description an LLM can use to pick among candidates (src/paper-type.js,
 // a later unit). Label is required — an empty/absent `paperType` means the

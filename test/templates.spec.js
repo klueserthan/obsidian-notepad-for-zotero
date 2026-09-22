@@ -3,7 +3,7 @@ import {
   parseTemplateFile, templateKind,
   frontmatterFieldValue, paperTypeDeclaration, paperTypeCandidates,
   splitDeclaration, composeDeclaration,
-  validateTemplateName, findLabelClash, duplicateLabels,
+  validateTemplateName, findLabelClash, duplicateLabels, noteTypeTag,
 } from "../src/templates.js";
 import { renderBlockBody } from "../src/blocks.js";
 
@@ -226,5 +226,26 @@ describe("paperTypeCandidates / duplicateLabels exclude repeated labels (KTD13)"
     const dups = duplicateLabels(templates);
     expect(dups.get("review")).toEqual(["note-review-a", "note-review-b"]);
     expect(dups.has("quantitative")).toBe(false);
+  });
+});
+
+// Summary Notes carry their note type as a second tag (#59), beside the marker.
+describe("noteTypeTag", () => {
+  it("prefixes the label with the marker tag", () => {
+    expect(noteTypeTag("inferential")).toBe("zps:summary-note:inferential");
+  });
+
+  it("lowercases and trims, since labels collide case-insensitively", () => {
+    expect(noteTypeTag("  Descriptive ")).toBe("zps:summary-note:descriptive");
+  });
+
+  it("keeps inner spaces and punctuation of a user label", () => {
+    expect(noteTypeTag("mixed methods")).toBe("zps:summary-note:mixed methods");
+  });
+
+  it("gives no tag for a template without a declared type", () => {
+    expect(noteTypeTag("")).toBe("");
+    expect(noteTypeTag(null)).toBe("");
+    expect(noteTypeTag(undefined)).toBe("");
   });
 });

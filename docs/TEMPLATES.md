@@ -237,6 +237,9 @@ does this, in order:
 7. **Create** — a new Zotero child note carrying the Marker Tag
    (`zps:summary-note`) is created, or (with your explicit confirmation) the
    newest existing Summary Note is overwritten. No other note is ever touched.
+   The note also gets a Note Type Tag naming the template's paper type, e.g.
+   `zps:summary-note:inferential`; a template that declares no paper type
+   gets the Marker Tag alone, and an overwrite swaps the old type tag out.
 
 ### A note on `![[…]]` image embeds
 

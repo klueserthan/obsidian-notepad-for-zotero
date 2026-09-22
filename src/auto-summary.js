@@ -106,7 +106,7 @@ export function sanitizeTriggerTag(value, { failureTags, markerTag } = {}) {
   if (trimmed === ABSTRACT_TAG) return "";
   const fails = Array.isArray(failureTags) ? failureTags : [];
   if (fails.includes(trimmed)) return "";
-  if (markerTag && trimmed === markerTag) return "";
+  if (markerTag && (trimmed === markerTag || trimmed.startsWith(markerTag + ":"))) return ""; // the marker, or a note-type tag
   return trimmed;
 }
 
