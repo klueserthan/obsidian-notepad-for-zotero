@@ -33,7 +33,9 @@ support, no file editor, and no annotation sync; none of that is coming back.
   creates an additional note.
 - **Marker Tag** — every Summary Note is stamped with a Zotero tag
   (`zps:summary-note`) so the plugin can recognize its own notes. That's the only
-  thing that identifies one; title and body content are never inspected.
+  thing that identifies one; title and body content are never inspected. A
+  second tag names the note type it came from, e.g.
+  `zps:summary-note:inferential`, so you can filter Summary Notes by type.
 - **Stale Indicator** — a read-only badge in the Composer showing whether an
   item's newest Summary Note is `fresh`, `stale` (an annotation changed after it
   was created), or missing. It never writes anything; it's a hint to regenerate.
@@ -151,6 +153,19 @@ machine; it does nothing while Zotero is closed, and only one desktop
 should run it per synced library, or two machines can each create a note
 for the same tag before either syncs. See
 [docs/adr/0004-opt-in-automatic-summary-notes.md](docs/adr/0004-opt-in-automatic-summary-notes.md).
+
+## For AI agents working on your library
+
+The plugin keeps its state in Zotero tags that start with `zps:` — which note
+is a Summary Note, what type it is, which items are waiting for one, and which
+failed. An agent tidying your tags can't tell these from ordinary labels and
+may delete them, which silently breaks the plugin's bookkeeping.
+
+The repository ships a small agent skill that explains each tag and tells
+agents to leave them alone:
+[`skills/paper-summarizer-zotero/SKILL.md`](skills/paper-summarizer-zotero/SKILL.md).
+Copy the `paper-summarizer-zotero` folder into your agent's skills directory
+(for Claude Code, `~/.claude/skills/`).
 
 ## Templates
 

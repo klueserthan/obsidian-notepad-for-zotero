@@ -7,7 +7,7 @@ export { buildItemData, filenameFields, zoteroSelectURI, ensureZoteroLink } from
 export { renderAnnotationsSection, renderAnnotationsContext, mapZoteroAnnotation } from "../src/annotations.js";
 export { syncBlocks, makeBlock, parseBlocks } from "../src/blocks.js";
 export { DEFAULT_FORMATS, FIELD_FORMATS } from "../src/formats.js";
-export { parseTemplateFile, templateKind, templateUserOwnedKeys, frontmatterFieldValue, paperTypeDeclaration, paperTypeCandidates, duplicateLabels, findLabelClash, validateTemplateName, splitDeclaration, composeDeclaration } from "../src/templates.js";
+export { parseTemplateFile, templateKind, templateUserOwnedKeys, frontmatterFieldValue, paperTypeDeclaration, paperTypeCandidates, duplicateLabels, findLabelClash, validateTemplateName, splitDeclaration, composeDeclaration, noteTypeTag, NOTE_TYPE_TAG_PREFIX } from "../src/templates.js";
 export { previewTemplate, stripForPreview, SAMPLE_ITEM, SAMPLE_ANNOTATIONS, INSERT_SNIPPETS, NEW_NOTE_TYPE_SCAFFOLD } from "../src/builder.js";
 export { parseManifest, hasManifest, applyManifest, setManifestEntry, removeManifestEntry, buildManifestFromScaffold, writeManifest, MANIFEST_KEY, getTagField, setTagField, getAttachmentFolder, setAttachmentFolder } from "../src/manifest.js";
 export { findMarkerRanges, rangeRevealed } from "../src/markers.js";

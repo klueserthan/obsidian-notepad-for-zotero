@@ -62,6 +62,12 @@ produce a Summary Note — one tag for "no full text after the wait," a
 different one for every other failure — so the outcome is visible on the
 iPad, where the plugin doesn't run.
 
+**Note Type Tag**:
+The tag naming the Note Type a Summary Note was generated from,
+`zps:summary-note:<label>` (lowercased), stamped beside the Marker Tag. It
+records provenance and lets notes be filtered by type; the plugin never uses it
+to recognize its own notes — that is the Marker Tag's job alone.
+
 **Abstract Marker Tag**:
 The tag (`zps:abstract-extracted`) the plugin adds to an item whose empty
 Abstract field it filled with the paper's own abstract, copied verbatim from
