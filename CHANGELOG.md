@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Summary Notes are tagged with their note type, and agents are told to leave the tags alone
+
+Every Summary Note now carries a second tag naming the note type it was
+generated from, beside `zps:summary-note` — for example
+`zps:summary-note:inferential` or `zps:summary-note:descriptive` — so notes can
+be filtered by type in Zotero on any device. A template that declares no paper
+type gets the marker tag alone, and overwriting a note from a different type
+swaps the old type tag out. A trigger tag set to one of these is rejected, like
+the marker tag itself. Closes #59.
+
+The repository also ships a small agent skill,
+`skills/paper-summarizer-zotero/SKILL.md`, that explains every `zps:` tag and
+tells AI agents working on the library not to remove or rename them — agents
+tidying tags were deleting them and silently breaking the plugin's
+bookkeeping.
+
 ### Note types: a descriptive paper type, and `quantitative` becomes `inferential`
 
 The shipped `note-quantitative.md` assumed a study that tests hypotheses, so a
