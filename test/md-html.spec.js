@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mdToHtml } from "../src/md-html.js";
+import { mdToHtml, headingsToBold } from "../src/md-html.js";
 
 // Zotero-note-safe tag allowlist — the module's documented output vocabulary
 // (see src/md-html.js). The Generate path must emit exactly this set and
@@ -152,5 +152,74 @@ describe("mdToHtml — safety", () => {
     expect(mdToHtml("")).toBe("");
     expect(mdToHtml(null)).toBe("");
     expect(mdToHtml(undefined)).toBe("");
+  });
+});
+
+// The house style (ADR-0006): text an LLM block wrote never adds a heading to
+// the note. headingsToBold is the enforcement; the invariant is that whatever
+// it returns renders without a single heading tag.
+describe("headingsToBold", () => {
+  const noHeading = (out) => expect(mdToHtml(out)).not.toMatch(/<h[1-6]/);
+
+  it("turns a leading ATX heading into a bold paragraph above the untouched list", () => {
+    const out = headingsToBold("## Hypotheses (Taber & Lodge 2006)\n- H1\n- H2");
+    expect(out).toBe("**Hypotheses (Taber & Lodge 2006)**\n\n- H1\n- H2");
+    noHeading(out);
+  });
+
+  it("converts every ATX level and drops closing hashes", () => {
+    expect(headingsToBold("# Title")).toBe("**Title**");
+    expect(headingsToBold("###### Deep ##")).toBe("**Deep**");
+  });
+
+  it("leaves #hashtags, table cells with # and fenced code alone", () => {
+    for (const src of [
+      "#hashtag is not a heading",
+      "| a | b |\n| - | - |\n| # 1 | 2 |",
+      "```\n# a comment in code\n```",
+    ]) {
+      expect(headingsToBold(src)).toBe(src);
+    }
+  });
+
+  it("converts an underlined (setext) heading and drops the underline", () => {
+    const out = headingsToBold("Some line\n---\n- a");
+    expect(out).toBe("**Some line**\n\n- a");
+    noHeading(out);
+    expect(headingsToBold("First\nsecond\n===")).toBe("**First second**");
+  });
+
+  it("keeps the list or quote marker of a nested heading", () => {
+    expect(headingsToBold("- # Nested\n- b")).toBe("- **Nested**\n- b");
+    expect(headingsToBold("> ## Quoted")).toBe("> **Quoted**");
+    noHeading(headingsToBold("> ## Quoted\n> ---"));
+  });
+
+  it("separates the bold line from a neighbouring list item and paragraph", () => {
+    const html = mdToHtml(headingsToBold("- a\n## Label\nText after"));
+    expect(html).toContain("<li>a</li>");
+    expect(html).toContain("<p><strong>Label</strong></p>");
+    expect(html).toContain("<p>Text after</p>");
+  });
+
+  it("keeps a following thematic break from turning the bold line into a heading", () => {
+    const out = headingsToBold("## Label\n---");
+    noHeading(out);
+    expect(mdToHtml(out)).toContain("<hr>");
+  });
+
+  it("does not double the asterisks of an already-bold heading", () => {
+    expect(headingsToBold("## **Bold** title")).toBe("**Bold title**");
+  });
+
+  it("removes a heading with no text", () => {
+    expect(headingsToBold("##\n- a")).toBe("- a");
+  });
+
+  it("returns heading-free markdown byte-identical", () => {
+    const src = "- **H1:** supported\n  - detail\n\n| a | b |\n| - | - |\n| 1 | 2 |";
+    expect(headingsToBold(src)).toBe(src);
+    expect(headingsToBold("")).toBe("");
+    expect(headingsToBold(null)).toBe("");
   });
 });

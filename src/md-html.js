@@ -42,3 +42,45 @@ const md = new MarkdownIt("default", {
 export function mdToHtml(markdown) {
   return md.render(String(markdown == null ? "" : markdown));
 }
+
+// Turn every heading in `markdown` into a bold paragraph of its own. Applied to
+// what an LLM block wrote, so model text can never add to the note's heading
+// structure (ADR-0006). Headings are located with the same parser mdToHtml
+// renders with, so fenced code, underlined (setext) headings and headings nested
+// in list items or blockquotes follow the renderer's rules exactly.
+export function headingsToBold(markdown) {
+  let text = String(markdown == null ? "" : markdown);
+  // A rewrite can expose a new underlined heading (a bold line directly above a
+  // nested `---`), so re-parse until nothing is left; one pass is the norm.
+  for (let pass = 0; pass < 5; pass++) {
+    const tokens = md.parse(text, {});
+    const lines = text.split("\n");
+    let changed = false;
+    // Bottom-up, so earlier line numbers stay valid while lines are spliced.
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const open = tokens[i];
+      if (open.type !== "heading_open" || !open.map) continue;
+      const [from, to] = open.map;
+      const content = tokens[i + 1].content;
+      const first = lines[from];
+      // Everything before the heading itself is the list/quote marker to keep.
+      const at = open.markup[0] === "#" ? first.indexOf("#") : first.indexOf(content.split("\n")[0]);
+      const label = content.replace(/\n/g, " ").replace(/\*\*|__/g, "").trim();
+      const out = [];
+      if (label) {
+        // Blank lines keep a top-level bold line from merging into a
+        // neighbouring list item or paragraph, or becoming a heading again
+        // above a `---`.
+        const top = open.level === 0;
+        if (top && from > 0 && lines[from - 1].trim() !== "") out.push("");
+        out.push(first.slice(0, Math.max(at, 0)) + "**" + label + "**");
+        if (top && to < lines.length && lines[to].trim() !== "") out.push("");
+      }
+      lines.splice(from, to - from, ...out);
+      changed = true;
+    }
+    if (!changed) break;
+    text = lines.join("\n");
+  }
+  return text;
+}

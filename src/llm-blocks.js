@@ -26,9 +26,9 @@ const LLM_SINGLE_RE = /^\s*\{%\s*llm\s+([^%]*?)\s*%\}\s*(.*?)\s*\{%\s*endllm\s*%
 const ZON_OPEN_RE  = /^\s*%%\s*zon\s+([^%]*?)\s*%%\s*$/;
 const ZON_CLOSE_RE = /^\s*%%\s*\/zon\s*%%\s*$/;
 // Frontmatter detection
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
+export const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 // Fenced code detection (same pattern as preview.js)
-const FENCE_RE = /^\s*(`{3,}|~{3,})/;
+export const FENCE_RE = /^\s*(`{3,}|~{3,})/;
 
 // ---------------------------------------------------------------------------
 // parseLLMContext — parse the context="..." attribute from an open-tag arg string

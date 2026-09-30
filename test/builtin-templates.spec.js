@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { render } from "../src/render.js";
 import { templateKind, paperTypeDeclaration } from "../src/templates.js";
-import { stripFrontmatter } from "../src/strip-markers.js";
+import { stripFrontmatter, stripMarkers } from "../src/strip-markers.js";
+import { executeLLMBlocks } from "../src/llm-runner.js";
+import { mdToHtml } from "../src/md-html.js";
 import { DEFAULT_FORMATS, FIELD_FORMATS } from "../src/formats.js";
 
 // The shipped set is exactly the five paper-type note types (R1, R5): each
@@ -89,6 +91,23 @@ describe("BUILTIN_TEMPLATES (shipped starter templates)", () => {
     expect(out).toContain("%% zon kind=annotations colour=all sync=on format=list %%");
     expect(out).not.toMatch(/^---/);
     expect(out).not.toContain("[[");
+  });
+
+  // House style (ADR-0006): whatever headings the model writes, the generated
+  // note carries only the headings the note type itself defines.
+  it("a note generated from any note type has only the template's own headings", async () => {
+    const data = { ...SAMPLE, fulltext: { text: "The full text.", attachmentTitle: "paper.pdf" } };
+    const settings = { baseURL: "http://localhost:11434/v1", model: "m", autoRun: true };
+    const answering = (content) => async () => JSON.stringify({ choices: [{ message: { content } }] });
+    const headingsOf = (md) => [...mdToHtml(stripMarkers(md)).matchAll(/<h[1-6]>.*?<\/h[1-6]>/g)].map((m) => m[0]);
+    for (const [name, text] of Object.entries(builtins)) {
+      const rendered = render(text, data);
+      const clean = await executeLLMBlocks(rendered, data, settings, answering("- a point"));
+      const unruly = await executeLLMBlocks(rendered, data, settings, answering("# Wrong Title\n- a point\n\nUnderlined\n---\n- another"));
+      expect(unruly.ok, name).toBe(true);
+      expect(headingsOf(unruly.md), name).toEqual(headingsOf(clean.md));
+      expect(headingsOf(clean.md).length, name).toBeGreaterThan(3);
+    }
   });
 
   it("no builtin carries Obsidian residue (wikilinks, callouts, H1)", () => {
