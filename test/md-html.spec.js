@@ -212,6 +212,14 @@ describe("headingsToBold", () => {
     expect(headingsToBold("## **Bold** title")).toBe("**Bold title**");
   });
 
+  it("keeps literal asterisks, underscores and code spans in the heading text", () => {
+    const stars = headingsToBold("## H1 supported (b = 0.42**)");
+    expect(mdToHtml(stars)).toContain("<strong>H1 supported (b = 0.42**)</strong>");
+    expect(mdToHtml(headingsToBold("### b = 0.42*** (p < .001)"))).toContain("<strong>b = 0.42*** (p &lt; .001)</strong>");
+    expect(mdToHtml(headingsToBold("## Use `a**b` and snake_case"))).toContain("<strong>Use <code>a**b</code> and snake_case</strong>");
+    expect(mdToHtml(headingsToBold("## See http://x.org/a_b"))).toContain('<a href="http://x.org/a_b">http://x.org/a_b</a>');
+  });
+
   it("removes a heading with no text", () => {
     expect(headingsToBold("##\n- a")).toBe("- a");
   });

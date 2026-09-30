@@ -1397,6 +1397,13 @@ describe("house style — note outline and section", () => {
     for (const user of users(text)) expect(user).toContain("Section to write: Summary\n");
   });
 
+  it("reads the outline of a template saved with CRLF line endings", () => {
+    const [a, b] = users(template.replace(/\n/g, "\r\n"));
+    expect(a).toContain("Note outline:\n- Summary\n  - Hypotheses\n  - Main Findings\n- Notes\n");
+    expect(a).toContain("Section to write: Hypotheses\n");
+    expect(b).toContain("Section to write: Main Findings\n");
+  });
+
   it("leaves the message of a note without headings exactly as before", () => {
     const text = ['{% llm context="abstract" %}', "Summarize this.", "{% endllm %}"].join("\n");
     expect(users(text)[0]).toBe("Context:\n## Context: abstract\n" + item.abstractNote + "\n\nTask:\nSummarize this.");

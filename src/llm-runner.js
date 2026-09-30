@@ -1,7 +1,8 @@
 // Pure LLM run planner — parses blocks, resolves context, assembles messages,
 // normalizes output, applies replacements. No DOM, no Zotero, no fetch.
 
-import { parseLLMBlocks, FRONTMATTER_RE, FENCE_RE } from "./llm-blocks.js";
+import { parseLLMBlocks } from "./llm-blocks.js";
+import { findHeadingRanges } from "./preview.js";
 import { renderAnnotationsContext } from "./annotations.js";
 import { renderFulltextContext } from "./fulltext.js";
 import { LLM_DEFAULTS } from "./llm.js";
@@ -79,33 +80,24 @@ export function buildLLMMessages(systemPrompt, taskText, contextText, outline = 
   ];
 }
 
-const ATX_HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
-
-// The note's own headings: `#` lines outside the YAML frontmatter, fenced code
-// and the LLM blocks themselves (a prompt body may contain a `#` line).
+// The note's own headings, as { line, level, text }. findHeadingRanges already
+// skips the YAML frontmatter and fenced code; the LLM blocks are skipped here
+// because a prompt body may itself contain a `#` line.
 // ponytail: annotation text synced into a %% zon %% block is not masked, so a
-// PDF comment line starting with "# " shows up as one extra outline entry; mask
-// those ranges if a real note's outline is ever polluted.
+// PDF comment line starting with "# " shows up as an outline entry (and as the
+// section of an LLM block placed after it); mask those ranges if a real note's
+// outline is ever polluted.
 function findNoteHeadings(text, blocks) {
-  const s = String(text ?? "");
-  const lines = s.split("\n");
-  const fm = s.match(FRONTMATTER_RE);
-  const inBlock = (i) => blocks.some((b) => i >= b.lineFrom && i <= b.lineTo);
-  const headings = [];
-  let fence = "";
-  for (let i = fm ? fm[0].split("\n").length : 0; i < lines.length; i++) {
-    if (inBlock(i)) continue;
-    const fenceM = lines[i].match(FENCE_RE);
-    if (fenceM) {
-      if (!fence) fence = fenceM[1][0];
-      else if (fenceM[1][0] === fence) fence = "";
-      continue;
-    }
-    if (fence) continue;
-    const m = lines[i].match(ATX_HEADING_RE);
-    if (m && m[2]) headings.push({ line: i, level: m[1].length, text: m[2] });
-  }
-  return headings;
+  // Line endings are normalised first: the heading scanner does not match a
+  // line that still ends in \r, and the line count is unchanged by this.
+  const s = String(text ?? "").replace(/\r\n?/g, "\n");
+  return findHeadingRanges(s)
+    .map((r) => ({
+      line: s.slice(0, r.lineFrom).split("\n").length - 1,
+      level: r.level,
+      text: s.slice(r.markTo, r.lineTo).replace(/[ \t]+#+[ \t]*$/, "").trim(),
+    }))
+    .filter((h) => !blocks.some((b) => h.line >= b.lineFrom && h.line <= b.lineTo));
 }
 
 // Headings as a plain nested list — no `#` marks, which would invite the model
@@ -269,7 +261,7 @@ export function prepareLLMRun(text, itemData, opts = {}) {
 
     // Message assembly
     // A block writes the section of the nearest heading above it.
-    const section = headings.filter((h) => h.line < block.lineFrom).pop()?.text ?? "";
+    const section = headings.findLast((h) => h.line < block.lineFrom)?.text ?? "";
     const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, contextText, outline, section);
     tasks.push({ block, messages, contextLabel, contextText });
   }
@@ -328,8 +320,8 @@ export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProg
     const payload = buildChatCompletionsPayload(s, tasks[i].messages);
     const content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
     const res = classifyLLMOutput(content);
-    // The model is told to write no headings; this makes it true (ADR-0006).
-    // Converted here, so cached outputs, preview and Generate all see it.
+    // Converted here rather than when the note is assembled, so the Composer's
+    // cached outputs, its preview and Generate all see heading-free text.
     const output = res.ok ? headingsToBold(res.output).trim() : "";
     if (!output) {
       // Tagged so the pool's stop-on-failure semantics cover an empty response

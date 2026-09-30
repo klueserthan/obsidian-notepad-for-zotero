@@ -43,6 +43,23 @@ export function mdToHtml(markdown) {
   return md.render(String(markdown == null ? "" : markdown));
 }
 
+// A heading's words as they would render, written so that wrapping them in
+// `**` is safe: emphasis markup is dropped, code spans are kept, and every
+// character markdown could read as syntax is escaped. A regex over the raw text
+// would eat literal asterisks ("b = 0.42**").
+function plainLabel(inline) {
+  let inLink = false;
+  return (inline.children || []).map((child) => {
+    if (child.type === "link_open") inLink = true;
+    if (child.type === "link_close") inLink = false;
+    // Link text is often a bare URL, which escaping would break.
+    if (child.type === "text") return inLink ? child.content : child.content.replace(/[\\`*_[\]~]/g, "\\$&");
+    if (child.type === "code_inline") return child.markup + child.content + child.markup;
+    if (child.type === "softbreak" || child.type === "hardbreak") return " ";
+    return "";
+  }).join("").trim();
+}
+
 // Turn every heading in `markdown` into a bold paragraph of its own. Applied to
 // what an LLM block wrote, so model text can never add to the note's heading
 // structure (ADR-0006). Headings are located with the same parser mdToHtml
@@ -51,7 +68,8 @@ export function mdToHtml(markdown) {
 export function headingsToBold(markdown) {
   let text = String(markdown == null ? "" : markdown);
   // A rewrite can expose a new underlined heading (a bold line directly above a
-  // nested `---`), so re-parse until nothing is left; one pass is the norm.
+  // nested `---`), so re-parse until nothing is left. One pass is the norm and
+  // each pass removes a heading marker, so the cap only guards against a hang.
   for (let pass = 0; pass < 5; pass++) {
     const tokens = md.parse(text, {});
     const lines = text.split("\n");
@@ -65,7 +83,7 @@ export function headingsToBold(markdown) {
       const first = lines[from];
       // Everything before the heading itself is the list/quote marker to keep.
       const at = open.markup[0] === "#" ? first.indexOf("#") : first.indexOf(content.split("\n")[0]);
-      const label = content.replace(/\n/g, " ").replace(/\*\*|__/g, "").trim();
+      const label = plainLabel(tokens[i + 1]);
       const out = [];
       if (label) {
         // Blank lines keep a top-level bold line from merging into a
