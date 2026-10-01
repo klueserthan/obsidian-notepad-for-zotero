@@ -2,11 +2,13 @@
 // normalizes output, applies replacements. No DOM, no Zotero, no fetch.
 
 import { parseLLMBlocks } from "./llm-blocks.js";
+import { findHeadingRanges } from "./preview.js";
 import { renderAnnotationsContext } from "./annotations.js";
 import { renderFulltextContext } from "./fulltext.js";
 import { LLM_DEFAULTS } from "./llm.js";
 import { render } from "./render.js";
 import { runBounded } from "./llm-pool.js";
+import { headingsToBold } from "./md-html.js";
 import {
   canAutoRun,
   sanitizeLLMSettings,
@@ -16,16 +18,35 @@ import {
   parseChatCompletionsResponse,
 } from "./llm.js";
 
+// The instruction every block call shares. Besides grounding, it carries the
+// house style (ADR-0006): key points only, lists and tables, no headings, and
+// only what belongs under the block's own section. It is constant text, so it
+// stays part of the byte-identical request prefix.
 export const GROUNDING_SYSTEM_PROMPT =
   "You are a research assistant embedded in a Zotero literature note. " +
   "Complete the task given in the user message and output only Markdown that " +
   "fulfills it. Ground your answer strictly in the context provided in the user " +
   "message; do not introduce facts, interpretations, or citations that are not " +
   "present there. Output only the task result — no preface, no commentary, no " +
-  "explanation outside the requested content. If the provided context is not " +
-  "sufficient to complete the task, respond with a brief Markdown note stating " +
-  "what is missing. The user message provides the context first, followed by " +
-  "the task.";
+  "explanation outside the requested content.\n\n" +
+  "Format: write only lists and tables, and number a list only when the task " +
+  "asks for that. Never write a heading — no line starting with #, no " +
+  "underlined title, no bold line standing in for one; the note already " +
+  "supplies the heading above your answer. A list item may open with a short " +
+  "bold label, and items may nest one level deep. Write no prose paragraphs.\n\n" +
+  "Length: key points only — about three to six top-level list items, or one " +
+  "table when the task asks for a table. Keep each item to a sentence or two " +
+  "and each table cell to a short phrase. Give the headline result for each " +
+  "finding or hypothesis and leave exhaustive coefficients and test statistics " +
+  "to the paper.\n\n" +
+  "Scope: when the user message includes a note outline and names the section " +
+  "to write, write only what belongs under that section. What belongs under " +
+  "another section of the outline is written there; refer to it by a short " +
+  "label (for example H1) instead of restating it.\n\n" +
+  "If the provided context is not sufficient to complete the task, respond " +
+  "with a single list item stating what is missing. The user message provides " +
+  "the context first, then the note outline when the note has one, followed " +
+  "by the task.";
 
 export const RUNNABLE_CONTEXTS = ["abstract", "annotations", "fulltext"];
 
@@ -41,16 +62,49 @@ export const LLM_RUN_ERRORS = {
 };
 
 // Context precedes the task so that requests sharing a context differ only in
-// their tail — the system prompt + context form a byte-identical prefix that
-// OpenAI-compatible servers can reuse via automatic prefix/prompt caching.
-export function buildLLMMessages(systemPrompt, taskText, contextText) {
+// their tail — the system prompt + context + note outline form a byte-identical
+// prefix that OpenAI-compatible servers can reuse via automatic prefix/prompt
+// caching. The section name is the only per-block addition, so it goes after
+// `Task:`. A note without headings has neither, leaving just context and task.
+export function buildLLMMessages(systemPrompt, taskText, contextText, outline = "", section = "") {
   const task = String(taskText ?? "");
   const ctx = String(contextText ?? "");
-  const user = `Context:\n${ctx}\n\nTask:\n${task}`;
+  const user = `Context:\n${ctx}\n\n` +
+    (outline ? `Note outline:\n${outline}\n\n` : "") +
+    "Task:\n" +
+    (section ? `Section to write: ${section}\n\n` : "") +
+    task;
   return [
     { role: "system", content: String(systemPrompt ?? "") },
     { role: "user", content: user },
   ];
+}
+
+// The note's own headings, as { line, level, text }. findHeadingRanges already
+// skips the YAML frontmatter and fenced code; the LLM blocks are skipped here
+// because a prompt body may itself contain a `#` line.
+// ponytail: annotation text synced into a %% zon %% block is not masked, so a
+// PDF comment line starting with "# " shows up as an outline entry (and as the
+// section of an LLM block placed after it); mask those ranges if a real note's
+// outline is ever polluted.
+function findNoteHeadings(text, blocks) {
+  // Line endings are normalised first: the heading scanner does not match a
+  // line that still ends in \r, and the line count is unchanged by this.
+  const s = String(text ?? "").replace(/\r\n?/g, "\n");
+  return findHeadingRanges(s)
+    .map((r) => ({
+      line: s.slice(0, r.lineFrom).split("\n").length - 1,
+      level: r.level,
+      text: s.slice(r.markTo, r.lineTo).replace(/[ \t]+#+[ \t]*$/, "").trim(),
+    }))
+    .filter((h) => !blocks.some((b) => h.line >= b.lineFrom && h.line <= b.lineTo));
+}
+
+// Headings as a plain nested list — no `#` marks, which would invite the model
+// to write headings of its own.
+function renderOutline(headings) {
+  const top = Math.min(...headings.map((h) => h.level));
+  return headings.map((h) => "  ".repeat(h.level - top) + "- " + h.text).join("\n");
 }
 
 export function normalizeLLMOutput(raw) {
@@ -111,6 +165,10 @@ export function prepareLLMRun(text, itemData, opts = {}) {
   // Blocks with the same context set share one resolved context string, so it
   // is resolved (and size-checked) once and reused by reference across tasks.
   const contextCache = new Map();
+  // One outline per note, identical for every block, so it can sit in the
+  // shared request prefix.
+  const headings = findNoteHeadings(text, blocks);
+  const outline = headings.length ? renderOutline(headings) : "";
 
   for (const block of blocks) {
     // Dedupe contexts while preserving order
@@ -202,7 +260,9 @@ export function prepareLLMRun(text, itemData, opts = {}) {
     }
 
     // Message assembly
-    const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, contextText);
+    // A block writes the section of the nearest heading above it.
+    const section = headings.findLast((h) => h.line < block.lineFrom)?.text ?? "";
+    const messages = buildLLMMessages(GROUNDING_SYSTEM_PROMPT, rendered, contextText, outline, section);
     tasks.push({ block, messages, contextLabel, contextText });
   }
 
@@ -260,7 +320,10 @@ export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProg
     const payload = buildChatCompletionsPayload(s, tasks[i].messages);
     const content = parseChatCompletionsResponse(await fetchFn(url, headers, payload, s.timeoutSeconds));
     const res = classifyLLMOutput(content);
-    if (!res.ok) {
+    // Converted here rather than when the note is assembled, so the Composer's
+    // cached outputs, its preview and Generate all see heading-free text.
+    const output = res.ok ? headingsToBold(res.output).trim() : "";
+    if (!output) {
       // Tagged so the pool's stop-on-failure semantics cover an empty response
       // exactly like an HTTP rejection, while letting the mapping below tell
       // the two apart.
@@ -270,7 +333,7 @@ export async function executeLLMBlocks(text, itemData, settings, fetchFn, onProg
     }
     done += 1;
     progress(done);
-    return res.output;
+    return output;
   };
 
   const results = await runBounded(n, s.concurrency, task, { stopOnFailure: true });

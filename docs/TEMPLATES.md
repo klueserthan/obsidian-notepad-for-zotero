@@ -384,6 +384,27 @@ against item data when the template is rendered, before the LLM block is
 executed. Undefined variables render as the empty string (Nunjucks default
 behaviour; `autoescape` is off).
 
+### House style: what every block's answer looks like
+
+Every `{% llm %}` block is answered in one fixed style, whatever the template
+says (see [ADR-0006](adr/0006-llm-block-house-style.md)):
+
+- **Key points only** — about three to six list items, or one table when the
+  prompt asks for a table, with the headline result per finding instead of
+  every coefficient.
+- **Lists and tables, no headings.** Your template's headings are the note's
+  structure. If the model writes a heading anyway, the plugin turns it into a
+  bold line before the note is assembled; the run does not fail.
+- **Its own section only.** Each block is told the outline of the note (its
+  headings) and the heading it sits under, and is asked to leave everything
+  that belongs under another heading to that section. Give each block its own
+  heading: two blocks under one heading are told the same section and may
+  repeat each other.
+
+There is no switch for this, per template or per block. A prompt can still
+shape the content ("as a table with columns …", "as a numbered list"), but it
+cannot ask for headings or a long prose answer.
+
 ### Run LLM (the Composer's manual execution step)
 
 The Composer's live preview **never** calls a model — every `{% llm %}` block
@@ -397,8 +418,8 @@ unresolved blocks) to resolve them:
   document order. Keep it at 1 for a local Ollama, which serves requests
   serially (the request timeout includes time spent queued on the server).
 - Blocks that share a context spec send **byte-identical request prefixes**:
-  the system prompt and the resolved context come first and only the short
-  task text differs at the end. OpenAI-compatible providers with automatic
+  the system prompt, the resolved context and the note outline come first and
+  only the section name and the short task text differ at the end. OpenAI-compatible providers with automatic
   prompt/prefix caching therefore process the (potentially very large) context
   once and reuse it across the remaining blocks instead of re-processing it
   per block.

@@ -1293,3 +1293,145 @@ describe("prepareLLMRun — single-context labeled format", () => {
     expect(userContent).toContain('> "networks shape cognition"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// House style (ADR-0006): every block call carries the style rules, the note's
+// outline and the section it writes; model headings never reach the note.
+// ---------------------------------------------------------------------------
+describe("house style — instruction", () => {
+  it("forbids headings and limits output to lists and tables", () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/never write a heading/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/lists and tables/i);
+  });
+
+  it("asks for key points and headline results only", () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/key points/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/headline result/i);
+  });
+
+  it("tells the model to leave other sections' content to them", () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/only what belongs under that section/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/short label/i);
+  });
+
+  it("reaches a template whose own wording says nothing about style", () => {
+    const text = [
+      "### Hypotheses",
+      '{% llm context="abstract" %}What are the paper\'s hypotheses? State them verbatim where possible. Render as concrete bullet points.{% endllm %}',
+    ].join("\n");
+    const result = prepareLLMRun(text, item);
+    expect(result.tasks[0].messages[0].content).toBe(GROUNDING_SYSTEM_PROMPT);
+  });
+});
+
+describe("house style — note outline and section", () => {
+  const template = [
+    "---",
+    "paperType: inferential",
+    "# a YAML comment, not a heading",
+    "---",
+    "**Citation:** x",
+    "",
+    "## Summary",
+    "### Hypotheses",
+    '{% llm context="abstract" %}What are the hypotheses?{% endllm %}',
+    "",
+    "### Main Findings",
+    '{% llm context="abstract" %}',
+    "What are the key findings?",
+    "# not a heading, part of the prompt",
+    "{% endllm %}",
+    "",
+    "```",
+    "# a comment in code",
+    "```",
+    "## Notes",
+  ].join("\n");
+  const users = (text) => prepareLLMRun(text, item).tasks.map((t) => t.messages[1].content);
+  const marker = "\n\nTask:\n";
+
+  it("gives every block the outline of the whole note, without # marks", () => {
+    const outline = "Note outline:\n- Summary\n  - Hypotheses\n  - Main Findings\n- Notes\n";
+    for (const user of users(template)) {
+      expect(user).toContain(outline);
+      expect(user.slice(user.indexOf("Note outline:"), user.indexOf(marker))).not.toContain("#");
+    }
+  });
+
+  it("names each block's own section in its task tail", () => {
+    const [a, b] = users(template);
+    expect(a.slice(a.lastIndexOf(marker))).toContain("Section to write: Hypotheses\n");
+    expect(b.slice(b.lastIndexOf(marker))).toContain("Section to write: Main Findings\n");
+  });
+
+  it("keeps context and outline a byte-identical prefix across blocks", () => {
+    const result = prepareLLMRun(template, item);
+    const [a, b] = result.tasks.map((t) => t.messages[1].content);
+    expect(a.slice(0, a.indexOf(marker) + marker.length)).toBe(b.slice(0, b.indexOf(marker) + marker.length));
+    expect(a).not.toBe(b);
+    expect(result.tasks[0].messages[0].content).toBe(result.tasks[1].messages[0].content);
+  });
+
+  it("leaves frontmatter, fenced code and block bodies out of the outline", () => {
+    const [a] = users(template);
+    const outline = a.slice(a.indexOf("Note outline:"), a.indexOf(marker));
+    expect(outline).not.toContain("YAML comment");
+    expect(outline).not.toContain("paperType");
+    expect(outline).not.toContain("comment in code");
+    expect(outline).not.toContain("part of the prompt");
+  });
+
+  it("gives a block above the first heading the outline but no section", () => {
+    const text = ['{% llm context="abstract" %}Lead.{% endllm %}', "## Summary", "text"].join("\n");
+    const [user] = users(text);
+    expect(user).toContain("Note outline:\n- Summary\n");
+    expect(user).not.toContain("Section to write:");
+  });
+
+  it("gives two blocks under one heading the same section", () => {
+    const text = [
+      "## Summary",
+      '{% llm context="abstract" %}One.{% endllm %}',
+      '{% llm context="abstract" %}Two.{% endllm %}',
+    ].join("\n");
+    for (const user of users(text)) expect(user).toContain("Section to write: Summary\n");
+  });
+
+  it("reads the outline of a template saved with CRLF line endings", () => {
+    const [a, b] = users(template.replace(/\n/g, "\r\n"));
+    expect(a).toContain("Note outline:\n- Summary\n  - Hypotheses\n  - Main Findings\n- Notes\n");
+    expect(a).toContain("Section to write: Hypotheses\n");
+    expect(b).toContain("Section to write: Main Findings\n");
+  });
+
+  it("leaves the message of a note without headings exactly as before", () => {
+    const text = ['{% llm context="abstract" %}', "Summarize this.", "{% endllm %}"].join("\n");
+    expect(users(text)[0]).toBe("Context:\n## Context: abstract\n" + item.abstractNote + "\n\nTask:\nSummarize this.");
+  });
+});
+
+describe("house style — model headings never reach the note", () => {
+  const settings = { baseURL: "http://localhost:11434/v1", model: "llama3", autoRun: true };
+  const fetchOf = (content) => async () => JSON.stringify({ choices: [{ message: { content } }] });
+  const template = ["## Summary", "### Hypotheses", '{% llm context="abstract" %}Hypotheses?{% endllm %}', "## Notes"].join("\n");
+
+  it("turns a heading-led answer into a bold line and keeps the template's headings", async () => {
+    const result = await executeLLMBlocks(template, item, settings, fetchOf("## Hypotheses (Taber & Lodge 2006)\n- H1\n- H2"));
+    expect(result.ok).toBe(true);
+    expect(result.outputs).toEqual(["**Hypotheses (Taber & Lodge 2006)**\n\n- H1\n- H2"]);
+    expect(result.md.split("\n").filter((l) => l.startsWith("#"))).toEqual(["## Summary", "### Hypotheses", "## Notes"]);
+  });
+
+  it("passes a long heading-free answer through unchanged", async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => "- point " + (i + 1)).join("\n");
+    const result = await executeLLMBlocks(template, item, settings, fetchOf(nine));
+    expect(result.ok).toBe(true);
+    expect(result.outputs).toEqual([nine]);
+  });
+
+  it("reports an answer that is only an empty heading as an empty response", async () => {
+    const result = await executeLLMBlocks(template, item, settings, fetchOf("##"));
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe(LLM_RUN_ERRORS.EMPTY_RESPONSE);
+  });
+});

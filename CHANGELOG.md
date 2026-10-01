@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### LLM sections are shorter, stop repeating each other, and never add headings
+
+Every `{% llm %}` block is now answered in one house style: about three to six
+key points or one table, lists and tables only, and no headings. Each block is
+told the outline of the note and the section it is writing, so a fact is stated
+under the heading it belongs to instead of in three sections. A heading the
+model writes anyway is turned into a bold line before the note is assembled, so
+the headings in a Summary Note are exactly the ones your template defines.
+
+This applies to every template, including the ones already in your Templates
+folder, and there is no setting to turn it off. Existing Summary Notes are not
+touched; regenerate a note to get the new style. See ADR-0006.
+
 ### Summary Notes are tagged with their note type, and agents are told to leave the tags alone
 
 Every Summary Note now carries a second tag naming the note type it was

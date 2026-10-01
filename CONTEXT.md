@@ -75,6 +75,12 @@ the indexed PDF text. It marks the abstract as extracted rather than
 publisher metadata; removing it changes nothing else. See ADR-0005.
 _Avoid_: generated abstract, AI abstract
 
+**House Style**:
+The fixed shape of everything an `{% llm %}` block writes into a Summary Note:
+key points only, lists and tables, no headings, and only what belongs under the
+block's own heading. It applies to every Template with no opt-out; a heading the
+model writes anyway is turned into a bold line. See ADR-0006.
+
 **Upstream**:
 Acatechnic/obsidian-notepad-for-zotero — the Obsidian-vault-based origin of this fork.
 
