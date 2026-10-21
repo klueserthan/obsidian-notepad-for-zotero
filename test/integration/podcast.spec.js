@@ -14,7 +14,7 @@ const Z = () => Zotero.ZON;
 describe("podcast script: attachment, tag and replace (ADR-0007)", function () {
   let win;
   let prevBaseURL, prevModel;
-  const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "confirmNoteTypeAction"];
+  const PATCHED = ["getPrimaryPDFFulltext", "makeLLMFetchFn", "confirmReplacePodcast"];
   let real = {};
   let realReaderOpen;
   let created = [];
@@ -31,7 +31,7 @@ describe("podcast script: attachment, tag and replace (ADR-0007)", function () {
     return it;
   }
 
-  const scripts = (item) => Z().existingPodcastScripts(item);
+  const scripts = (item) => Z().existingPodcastScripts(item, win.ZONCore);
 
   before(async function () {
     win = Zotero.getMainWindow();
@@ -51,7 +51,7 @@ describe("podcast script: attachment, tag and replace (ADR-0007)", function () {
     Zotero.Prefs.set(Z().PREF_LLM_MODEL, "test-model", true);
     Z().getPrimaryPDFFulltext = async () => ({ ok: true, attachmentTitle: "PDF", text: "The paper's full text." });
     Z().makeLLMFetchFn = () => async () => { fetches++; return reply("Welcome to the episode.\n\nToday: **turnout**."); };
-    Z().confirmNoteTypeAction = () => { confirms++; return true; };
+    Z().confirmReplacePodcast = () => { confirms++; return true; };
     Zotero.Reader.open = async (id) => { opened.push(id); };
   });
 
@@ -98,7 +98,7 @@ describe("podcast script: attachment, tag and replace (ADR-0007)", function () {
     const item = await makeItem("Cancel fixture");
     await Z().makePodcastScript(win, item);
     const [old] = scripts(item);
-    Z().confirmNoteTypeAction = () => false;
+    Z().confirmReplacePodcast = () => false;
     const res = await Z().makePodcastScript(win, item);
     assert.deepEqual(res, { ok: false, cancelled: true });
     assert.equal(fetches, 1, "only the first run called the LLM");

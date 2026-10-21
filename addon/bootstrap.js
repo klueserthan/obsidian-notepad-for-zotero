@@ -66,10 +66,6 @@ var ZON = {
   DEFAULT_LLM_AUTORUN: false,
   DEFAULT_PODCAST_MAX_TOKENS: 4096,
   DEFAULT_PODCAST_TIMEOUT: 300,
-  // Mirrors PODCAST_TAG in src/podcast.js (literal here since this object
-  // literal loads before ZONCore is injected).
-  PODCAST_TAG: "zps:podcast-script",
-  _podcastRunning: new Set(), // item ids with a podcast script being written
   DEFAULT_TEMPLATES_MIGRATED: false,
   // Mirrors AUTO_SUMMARY_DEFAULTS in src/auto-summary.js (literal here since
   // this object literal loads before ZONCore is injected).
@@ -87,6 +83,7 @@ var ZON = {
   AUTO_SUMMARY_COOLDOWN_MS: 60 * 60 * 1000,
   _autoSummaryTimer: null,
   _sweepRunning: false,
+  _podcastRunning: new Set(), // item ids with a podcast script being written (ADR-0007)
   _startedAt: 0,
   _autoSummaryCooldown: null, // { until, settings } after a provider failure (KTD7)
   _autoSummaryIndexed: new Set(), // attachment keys already handed to Zotero's indexer (KTD3)
@@ -605,7 +602,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "podcast.done": "Podcast script saved — press the headphones button in the reader to listen.",
     "podcast.confirmReplace": "This item already has a podcast script.\n\nReplace it with a new one? The old script moves to the trash.",
     "podcast.err.running": "A podcast script for this item is already being written.",
-    "podcast.err.no-fulltext": "The podcast needs the PDF's full text, which Zotero hasn't indexed for this item.",
+    "podcast.err.no-fulltext": "The podcast needs the indexed full text of this item's PDF. Check that the item has a PDF and that Zotero has indexed it.",
     "podcast.err.too-large": "The paper's full text is longer than Max Context Characters ({max}). Raise it in preferences.",
     "podcast.err.truncated": "The script hit Podcast Max Tokens ({tokens}) before it was finished. Raise it in preferences.",
     "podcast.err.empty": "The model returned an empty script.",
@@ -3521,17 +3518,16 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   // cancelled: true } or { ok: false, error } with a user-facing message.
   // LOGGING CONTRACT: never log the full text or the script — key/reason only.
   async makePodcastScript(win, item, onStatus = () => {}) {
+    // Claimed before the first await, so a second click can't slip past.
     if (this._podcastRunning.has(item.id)) return { ok: false, error: this.t("podcast.err.running") };
-    if (!win.ZONCore) await this.injectCore(win);
-    let C = win.ZONCore;
-    let settings = C.sanitizeLLMSettings(this.podcastLLMSettings());
-    if (!C.isLLMConfigured(settings)) return { ok: false, error: this.t("err.llmNotConfigured") };
-    let existing = this.existingPodcastScripts(item);
-    if (existing.length && !this.confirmNoteTypeAction(win, this.t("podcast.confirmReplace"))) {
-      return { ok: false, cancelled: true };
-    }
     this._podcastRunning.add(item.id);
     try {
+      if (!win.ZONCore) await this.injectCore(win);
+      let C = win.ZONCore;
+      let settings = C.sanitizeLLMSettings(this.podcastLLMSettings());
+      if (!C.isLLMConfigured(settings)) return { ok: false, error: this.t("err.llmNotConfigured") };
+      let existing = this.existingPodcastScripts(item, C);
+      if (existing.length && !this.confirmReplacePodcast(win)) return { ok: false, cancelled: true };
       onStatus(this.t("podcast.writing"));
       let fulltext = await this.getPrimaryPDFFulltext(item, C);
       let meta = C.buildItemData(item, {});
@@ -3554,10 +3550,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   },
 
   // The item's live (untrashed) attachments carrying PODCAST_TAG.
-  existingPodcastScripts(item) {
+  existingPodcastScripts(item, C) {
     return item.getAttachments()
       .map((id) => Zotero.Items.get(id))
-      .filter((att) => att && att.hasTag(this.PODCAST_TAG));
+      .filter((att) => att && att.hasTag(C.PODCAST_TAG));
+  },
+  confirmReplacePodcast(win) {
+    return Services.prompt.confirm(win, this.t("menu.title"), this.t("podcast.confirmReplace"));
   },
 
   // Stores `html` as a text/html child attachment (Zotero opens it as a
@@ -3573,7 +3572,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         file: path, parentItemID: item.id, title: "Podcast: " + (title || item.key),
         contentType: "text/html", charset: "utf-8",
       });
-      att.addTag(this.PODCAST_TAG);
+      att.addTag(C.PODCAST_TAG);
       await att.saveTx();
       return att;
     } finally {
