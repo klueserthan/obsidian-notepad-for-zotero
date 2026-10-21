@@ -16,7 +16,8 @@ Obsidian vault/file/sync layer torn out — see `CONTEXT.md` for the domain
 vocabulary and `docs/adr/` for the decisions (0001: LLM gating, 0002: the
 Zotero-native note model, 0003: the fork itself, 0004: the opt-in automatic
 mode, 0005: filling missing abstracts from the PDF text, 0006: the house style
-every LLM block is answered in).
+every LLM block is answered in, 0007: the Podcast Script, saved as an HTML
+attachment for Zotero's Read Aloud).
 
 ## Commands
 

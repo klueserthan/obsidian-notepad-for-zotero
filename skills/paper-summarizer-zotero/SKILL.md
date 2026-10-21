@@ -22,6 +22,7 @@ The Paper Summarizer for Zotero plugin records its own state as Zotero tags, all
 | `zps:summarize` | an item | A pending request to generate a Summary Note. The plugin removes it itself once it has handled the item. The name can be changed in the plugin's Settings, so a library may use a different trigger tag. | The request is cancelled silently. |
 | `zps:summarize-failed` | an item | Automatic generation failed for this item. | The only record of the failure is lost. |
 | `zps:summarize-no-fulltext` | an item | Automatic generation gave up because Zotero had no full text for the PDF. | The only record of the failure is lost. |
+| `zps:podcast-script` | an attachment | This HTML attachment is a podcast script the plugin wrote, for Zotero's Read Aloud. The plugin finds its scripts only through this tag. | Make podcast no longer offers to replace it, so the item collects a second script. |
 | `zps:abstract-extracted` | an item | The item's Abstract field was filled in automatically from the PDF text, not by the publisher. | Nobody can tell the abstract was machine-extracted. |
 
 The user retries a failed item by re-adding the trigger tag, and the plugin clears the failure tag itself when it picks the item up again. Leave both failure tags for the user to act on.

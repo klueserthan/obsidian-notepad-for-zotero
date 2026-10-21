@@ -31,3 +31,4 @@ export { DETECT_REASONS, DETECT_SYSTEM_PROMPT, buildDetectMessages, parseDetectA
 export { AUTO_SUMMARY_DEFAULTS, parseFirstSeenMap, updateFirstSeenMap, sanitizeWaitHours, planItemAction, chooseNoteType, classifyFailure, sanitizeTriggerTag, tagChangesForOutcome } from "../src/auto-summary.js";
 export { ABSTRACT_TAG, ABSTRACT_REASONS, MAX_SLICE_CHARS, EXTRACT_SYSTEM_PROMPT, buildExtractMessages, parseExtractAnswer, normalizeForContainment, containsVerbatim, extractAbstract } from "../src/abstract-extract.js";
 export { runBounded } from "../src/llm-pool.js";
+export { PODCAST_TAG, PODCAST_REASONS, PODCAST_SYSTEM_PROMPT, buildPodcastMessages, scriptToParagraphs, podcastHtml, writePodcastScript } from "../src/podcast.js";

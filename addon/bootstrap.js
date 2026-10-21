@@ -30,6 +30,10 @@ var ZON = {
   PREF_LLM_TIMEOUT: "extensions.zotero-obsidian-notes.llmTimeoutSeconds",
   PREF_LLM_CONCURRENCY: "extensions.zotero-obsidian-notes.llmConcurrency",
   PREF_LLM_AUTORUN: "extensions.zotero-obsidian-notes.llmAutoRun",
+  // Podcast Script (ADR-0007): its own output limits, since a ~1,500-word
+  // script needs far more than the per-block LLM defaults allow.
+  PREF_PODCAST_MAX_TOKENS: "extensions.zotero-obsidian-notes.podcastMaxTokens",
+  PREF_PODCAST_TIMEOUT: "extensions.zotero-obsidian-notes.podcastTimeoutSeconds",
   // One-time migration flag: set after the vault-era templatesDir pref has been
   // cleared so the addon-owned folder (defaultTemplatesDir) takes effect.
   PREF_TEMPLATES_MIGRATED: "extensions.zotero-obsidian-notes.templatesMigrated",
@@ -60,6 +64,8 @@ var ZON = {
   DEFAULT_LLM_TIMEOUT: 60,
   DEFAULT_LLM_CONCURRENCY: 1, // parallel Run-LLM requests; keep 1 for a local serial Ollama
   DEFAULT_LLM_AUTORUN: false,
+  DEFAULT_PODCAST_MAX_TOKENS: 4096,
+  DEFAULT_PODCAST_TIMEOUT: 300,
   DEFAULT_TEMPLATES_MIGRATED: false,
   // Mirrors AUTO_SUMMARY_DEFAULTS in src/auto-summary.js (literal here since
   // this object literal loads before ZONCore is injected).
@@ -77,6 +83,7 @@ var ZON = {
   AUTO_SUMMARY_COOLDOWN_MS: 60 * 60 * 1000,
   _autoSummaryTimer: null,
   _sweepRunning: false,
+  _podcastRunning: new Set(), // item ids with a podcast script being written (ADR-0007)
   _startedAt: 0,
   _autoSummaryCooldown: null, // { until, settings } after a provider failure (KTD7)
   _autoSummaryIndexed: new Set(), // attachment keys already handed to Zotero's indexer (KTD3)
@@ -586,6 +593,21 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     "err.llmRunBlock": "LLM block (line {line}): {message}",
     "err.llmRunHttp": "block {i}/{n} failed: {error}",
     "err.llmRunEmpty": "block {i}/{n} returned an empty response",
+    // Podcast Script (ADR-0007).
+    "btn.podcast": "Make podcast",
+    "tip.podcast": "Have the LLM write a spoken explainer of this paper and open it for Zotero's Read Aloud (requires base URL and model)",
+    "menu.podcast": "Make podcast",
+    "podcast.title": "Podcast script",
+    "podcast.writing": "Writing podcast script…",
+    "podcast.done": "Podcast script saved — press the headphones button in the reader to listen.",
+    "podcast.confirmReplace": "This item already has a podcast script.\n\nReplace it with a new one? The old script moves to the trash.",
+    "podcast.err.running": "A podcast script for this item is already being written.",
+    "podcast.err.no-fulltext": "The podcast needs the indexed full text of this item's PDF. Check that the item has a PDF and that Zotero has indexed it.",
+    "podcast.err.too-large": "The paper's full text is longer than Max Context Characters ({max}). Raise it in preferences.",
+    "podcast.err.truncated": "The script hit Podcast Max Tokens ({tokens}) before it was finished. Raise it in preferences.",
+    "podcast.err.empty": "The model returned an empty script.",
+    "podcast.err.http-failed": "The LLM request failed — {detail}",
+    "podcast.err.unexpected": "Making the podcast failed unexpectedly — {error}",
   },
 
   // Look up a string by key, interpolating {name} placeholders from `args`.
@@ -951,6 +973,8 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     seed(this.PREF_LLM_TIMEOUT, this.DEFAULT_LLM_TIMEOUT);
     seed(this.PREF_LLM_CONCURRENCY, this.DEFAULT_LLM_CONCURRENCY);
     seed(this.PREF_LLM_AUTORUN, this.DEFAULT_LLM_AUTORUN);
+    seed(this.PREF_PODCAST_MAX_TOKENS, this.DEFAULT_PODCAST_MAX_TOKENS);
+    seed(this.PREF_PODCAST_TIMEOUT, this.DEFAULT_PODCAST_TIMEOUT);
     seed(this.PREF_TEMPLATES_MIGRATED, this.DEFAULT_TEMPLATES_MIGRATED);
     seed(this.PREF_AUTO_SUMMARY_ENABLED, this.DEFAULT_AUTO_SUMMARY_ENABLED);
     seed(this.PREF_AUTO_SUMMARY_TRIGGER_TAG, this.DEFAULT_AUTO_SUMMARY_TRIGGER_TAG);
@@ -998,6 +1022,14 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
   llmAutoRunPref() {
     try { let v = Zotero.Prefs.get(this.PREF_LLM_AUTORUN, true); return v === undefined ? this.DEFAULT_LLM_AUTORUN : !!v; }
     catch (e) { return this.DEFAULT_LLM_AUTORUN; }
+  },
+  podcastMaxTokens() {
+    try { let v = Zotero.Prefs.get(this.PREF_PODCAST_MAX_TOKENS, true); return v === undefined ? this.DEFAULT_PODCAST_MAX_TOKENS : v; }
+    catch (e) { return this.DEFAULT_PODCAST_MAX_TOKENS; }
+  },
+  podcastTimeoutSeconds() {
+    try { let v = Zotero.Prefs.get(this.PREF_PODCAST_TIMEOUT, true); return v === undefined ? this.DEFAULT_PODCAST_TIMEOUT : v; }
+    catch (e) { return this.DEFAULT_PODCAST_TIMEOUT; }
   },
   // ---- Automatic Summary Notes prefs (ADR-0004, U2). Getters take the core
   // object C (win.ZONCore) so they reuse U1's pure validators in
@@ -1053,6 +1085,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       concurrency: this.llmConcurrency(),
       autoRun: this.llmAutoRunPref(),
     };
+  },
+  // The shared LLM settings with the podcast's own output limits swapped in;
+  // sanitizeLLMSettings clamps them like the per-block ones.
+  podcastLLMSettings() {
+    return { ...this.getLLMSettings(), maxTokens: this.podcastMaxTokens(), timeoutSeconds: this.podcastTimeoutSeconds() };
   },
   // Shared LLM POST wrapper (Zotero.HTTP.request → the fetchFn shape the pure
   // runner/detector expect: (url, headers, payload, timeoutSeconds) => text).
@@ -1422,13 +1459,17 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     generateBtn.textContent = this.t("btn.generate");
     generateBtn.title = this.t("tip.generate");
 
+    let podcastBtn = h("button");
+    podcastBtn.textContent = this.t("btn.podcast");
+    podcastBtn.title = this.t("tip.podcast");
+
     let builderBtn = h("button");
     builderBtn.textContent = this.t("btn.builder");
     builderBtn.title = this.t("tip.builder");
 
     let status = h("span", "zon-status");
 
-    let row1 = h("div", "zon-row"); row1.append(templateSel, runLLMBtn, generateBtn, builderBtn);
+    let row1 = h("div", "zon-row"); row1.append(templateSel, runLLMBtn, generateBtn, podcastBtn, builderBtn);
     // A visible error box for LLM run failures (context assembly, HTTP, etc.) —
     // ADR-0001 fail-loud: never console-only. Hidden until there's something to show.
     let llmError = h("div", "zon-llm-error"); llmError.style.display = "none";
@@ -1451,7 +1492,7 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
     header.setAttribute("aria-expanded", String(!this.sectionCollapsed()));
 
     let rec = {
-      wrap, host: preview, toolbar, templateSel, runLLMBtn, generateBtn, builderBtn,
+      wrap, host: preview, toolbar, templateSel, runLLMBtn, generateBtn, podcastBtn, builderBtn,
       statusEl: status, llmError, notesListEl: notesList, staleBadgeEl: staleBadge,
       item: null, previewTimer: null, previewSeq: 0,
       // Compose gating: the current (item+template) render's md and gate state.
@@ -1465,6 +1506,13 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       this.log("composer run LLM failed: " + e);
       try {
         this.setLLMError(rec, this.t("err.llmRunUnexpected", { error: (e && e.message) ? e.message : String(e) }));
+        this.setStatus(rec, "");
+      } catch (e2) {}
+    }));
+    podcastBtn.addEventListener("click", () => this.composerMakePodcast(rec).catch((e) => {
+      this.log("composer make podcast failed: " + e);
+      try {
+        this.setLLMError(rec, this.t("podcast.err.unexpected", { error: (e && e.message) ? e.message : String(e) }));
         this.setStatus(rec, "");
       } catch (e2) {}
     }));
@@ -1750,6 +1798,11 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
         let configured = this.llmConfigured();
         rec.runLLMBtn.disabled = !configured || !!rec.llmRunning;
         rec.runLLMBtn.title = configured ? this.t("tip.composerRunLLM") : this.t("err.llmNotConfigured");
+      }
+      if (rec.podcastBtn) {
+        let configured = this.llmConfigured();
+        rec.podcastBtn.disabled = !rec.item || !configured || !!rec.llmRunning;
+        rec.podcastBtn.title = configured ? this.t("tip.podcast") : this.t("err.llmNotConfigured");
       }
       if (rec.generateBtn) {
         let can = rec.item && (!state || !(C && C.canGenerate) || C.canGenerate(state));
@@ -2302,13 +2355,15 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       let miSummary = mk("zon-itemmenu-summary", () => this.generateSummaryNotes(win));
       let miDOI = mk("zon-itemmenu-doi", () => this.findDOIsForItems(win));
       let miAbstract = mk("zon-itemmenu-abstract", () => this.extractAbstractsForItems(win));
+      let miPodcast = mk("zon-itemmenu-podcast", () => this.makePodcastFromMenu(win));
       popup.appendChild(sep);
       popup.appendChild(miSummary);
       popup.appendChild(miDOI);
       popup.appendChild(miAbstract);
-      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI, miAbstract });
+      popup.appendChild(miPodcast);
+      let onShow = () => this.updateItemMenu(win, { sep, miSummary, miDOI, miAbstract, miPodcast });
       popup.addEventListener("popupshowing", onShow);
-      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI, miAbstract], onShow };
+      win._zonItemMenu = { popup, items: [sep, miSummary, miDOI, miAbstract, miPodcast], onShow };
     } catch (e) { this.log("addItemMenu failed: " + e); }
   },
 
@@ -2322,6 +2377,9 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       els.miSummary.hidden = !show;
       els.miDOI.hidden = !show;
       els.miAbstract.hidden = !show;
+      // Podcast Script: one item at a time (no batch runs, ADR-0007).
+      els.miPodcast.hidden = n !== 1;
+      els.miPodcast.setAttribute("label", this.t("menu.podcast"));
       if (!show) return;
       els.miSummary.setAttribute("label",
         n === 1 ? this.t("menu.generateSummary") : this.t("menu.generateSummaryN", { count: n }));
@@ -3446,6 +3504,114 @@ paperTypeDescription: Literature review or meta-analysis synthesizing existing r
       extracted: counts.extracted, notFound: counts["not-found"], noFulltext: counts["no-fulltext"],
       failed: counts["http-failed"], skipped: counts.skipped,
     }));
+  },
+
+  // ------------------------------------------------------------ podcast script
+
+  // Podcast Script (ADR-0007): one explicit LLM call writes a spoken explainer
+  // of the item's paper, saved as an HTML child attachment tagged PODCAST_TAG
+  // and opened in the reader, where Zotero's Read Aloud plays it. Shared by the
+  // Composer button and the item menu. An existing script is replaced only
+  // after a yes asked BEFORE the call, so Cancel costs no request; the old one
+  // goes to the trash only once the new one is saved. `onStatus(text)` is told
+  // once the run is under way. Resolves to { ok: true }, { ok: false,
+  // cancelled: true } or { ok: false, error } with a user-facing message.
+  // LOGGING CONTRACT: never log the full text or the script — key/reason only.
+  async makePodcastScript(win, item, onStatus = () => {}) {
+    // Claimed before the first await, so a second click can't slip past.
+    if (this._podcastRunning.has(item.id)) return { ok: false, error: this.t("podcast.err.running") };
+    this._podcastRunning.add(item.id);
+    try {
+      if (!win.ZONCore) await this.injectCore(win);
+      let C = win.ZONCore;
+      let settings = C.sanitizeLLMSettings(this.podcastLLMSettings());
+      if (!C.isLLMConfigured(settings)) return { ok: false, error: this.t("err.llmNotConfigured") };
+      let existing = this.existingPodcastScripts(item, C);
+      if (existing.length && !this.confirmReplacePodcast(win)) return { ok: false, cancelled: true };
+      onStatus(this.t("podcast.writing"));
+      let fulltext = await this.getPrimaryPDFFulltext(item, C);
+      let meta = C.buildItemData(item, {});
+      let result = await C.writePodcastScript(fulltext.ok ? fulltext.text : "", meta, settings, this.makeLLMFetchFn());
+      if (!result.ok) {
+        this.log("podcast script failed for " + item.key + ": " + result.reason + (result.status ? " (HTTP " + result.status + ")" : ""));
+        return { ok: false, error: this.t("podcast.err." + result.reason,
+          { max: settings.maxContextChars, tokens: settings.maxTokens, detail: result.detail || "" }) };
+      }
+      let att = await this.savePodcastAttachment(item, meta.title, C.podcastHtml(meta.title, result.paragraphs), C);
+      for (let old of existing) {
+        old.deleted = true;
+        await old.saveTx();
+      }
+      await Zotero.Reader.open(att.id);
+      return { ok: true };
+    } finally {
+      this._podcastRunning.delete(item.id);
+    }
+  },
+
+  // The item's live (untrashed) attachments carrying PODCAST_TAG.
+  existingPodcastScripts(item, C) {
+    return item.getAttachments()
+      .map((id) => Zotero.Items.get(id))
+      .filter((att) => att && att.hasTag(C.PODCAST_TAG));
+  },
+  confirmReplacePodcast(win) {
+    return Services.prompt.confirm(win, this.t("menu.title"), this.t("podcast.confirmReplace"));
+  },
+
+  // Stores `html` as a text/html child attachment (Zotero opens it as a
+  // snapshot, which is what offers Read Aloud). importFromFile copies the file
+  // into storage, so the temp copy is removed afterwards.
+  async savePodcastAttachment(item, title, html, C) {
+    let dir = PathUtils.join(Zotero.getTempDirectory().path, "zon-podcast-" + item.key + "-" + Date.now());
+    let path = PathUtils.join(dir, C.sanitizeFilename("Podcast - " + (title || item.key)).slice(0, 120) + ".html");
+    await IOUtils.makeDirectory(dir);
+    try {
+      await IOUtils.writeUTF8(path, html);
+      let att = await Zotero.Attachments.importFromFile({
+        file: path, parentItemID: item.id, title: "Podcast: " + (title || item.key),
+        contentType: "text/html", charset: "utf-8",
+      });
+      att.addTag(C.PODCAST_TAG);
+      await att.saveTx();
+      return att;
+    } finally {
+      try { await IOUtils.remove(dir, { recursive: true }); } catch (e) {}
+    }
+  },
+
+  async composerMakePodcast(rec) {
+    let item = rec.item;
+    if (!item || rec.llmRunning) return;
+    rec.llmRunning = true;
+    this.updateComposerButtons(rec);
+    this.clearLLMError(rec);
+    try {
+      let win = rec.wrap.ownerDocument.defaultView;
+      let r = await this.makePodcastScript(win, item, (text) => this.setStatus(rec, text));
+      this.setStatus(rec, r.ok ? this.t("podcast.done") : "");
+      if (r.error) this.setLLMError(rec, r.error);
+    } finally {
+      rec.llmRunning = false;
+      this.updateComposerButtons(rec);
+    }
+  },
+
+  // Item-menu entry (shown for exactly one selected item). The Composer may be
+  // closed, so progress and the outcome go to a Zotero progress window.
+  async makePodcastFromMenu(win) {
+    let [item] = this.selectedRegularItems(win);
+    if (!item) return;
+    let pw = null;
+    let r;
+    try {
+      r = await this.makePodcastScript(win, item, (text) => { pw = this.progress(win, text); });
+    } catch (e) {
+      this.log("make podcast failed for " + item.key + ": " + e);
+      r = { ok: false, error: this.t("podcast.err.unexpected", { error: (e && e.message) ? e.message : String(e) }) };
+    }
+    if (r.cancelled) return;
+    this.finishProgress(pw || this.progress(win, this.t("podcast.title")), r.ok ? this.t("podcast.done") : r.error);
   },
 
   // ------------------------------------------------------------ progress popups

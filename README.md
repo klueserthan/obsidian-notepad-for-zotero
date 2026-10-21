@@ -1,12 +1,12 @@
 # Paper Summarizer for Zotero
 
-A Zotero 7 plugin that generates **LLM-assisted Summary Notes** for your items —
+A Zotero 9+ plugin that generates **LLM-assisted Summary Notes** for your items —
 native Zotero child notes, built from a template, read and adapted with
 [Better Notes](https://github.com/windingwind/zotero-better-notes). There is no
 Obsidian vault, no markdown file on disk, and nothing syncs after a note is
 created.
 
-> Status: **personal fork, unreleased**. Zotero 7+, [AGPL-3.0](LICENSE). Not
+> Status: **personal fork, unreleased**. Zotero 9–10, [AGPL-3.0](LICENSE). Not
 > published to any plugin directory or release feed — build it yourself (see
 > [Install](#install)).
 
@@ -82,7 +82,7 @@ is read or modified except through the explicit overwrite confirmation. See
 
 ## Requirements
 
-- Zotero 7 or later.
+- Zotero 9 or later (Read Aloud, used by Make podcast, first shipped in Zotero 9).
 - An OpenAI-compatible LLM endpoint if you want to use `{% llm %}` blocks
   (optional — templates without them work with no LLM configured). Bring your
   own key/endpoint; the plugin doesn't ship a model.
@@ -116,6 +116,18 @@ gear icon → Install Plugin From File…** and choose it.
    whether to overwrite the newest one or create an additional one.
 5. Open the created note in **Better Notes** to read or hand-edit it — the
    plugin will never touch it again.
+
+## Make podcast
+
+**Make podcast** (a Composer button, or the item menu with one item selected)
+has your LLM write the script of a ten-minute spoken explainer of the paper,
+from the PDF text Zotero has indexed. The script is saved as an HTML
+attachment of the item, tagged `zps:podcast-script`, and opened in Zotero's
+reader: press the headphones button to have **Read Aloud** play it. Scripts
+are always in English. If the item already has a script, you're asked before
+the LLM runs whether to replace it; the old one goes to the trash. The length
+limits are **Podcast Max Tokens** and **Podcast Timeout** in Settings. See
+[docs/adr/0007-podcast-script-read-aloud.md](docs/adr/0007-podcast-script-read-aloud.md).
 
 ## Automatic mode (opt-in)
 

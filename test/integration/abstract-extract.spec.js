@@ -269,12 +269,12 @@ describe("abstract extraction: helper, guard, and menu flow (U2)", function () {
       const missing = await makeItem("Missing fixture 2");
 
       Z().selectedRegularItems = () => [hasAbstract];
-      let els = { sep: fakeEl(), miSummary: fakeEl(), miDOI: fakeEl(), miAbstract: fakeEl() };
+      let els = { sep: fakeEl(), miSummary: fakeEl(), miDOI: fakeEl(), miAbstract: fakeEl(), miPodcast: fakeEl() };
       Z().updateItemMenu(win, els);
       assert.isTrue(els.miAbstract.hidden);
 
       Z().selectedRegularItems = () => [hasAbstract, missing];
-      els = { sep: fakeEl(), miSummary: fakeEl(), miDOI: fakeEl(), miAbstract: fakeEl() };
+      els = { sep: fakeEl(), miSummary: fakeEl(), miDOI: fakeEl(), miAbstract: fakeEl(), miPodcast: fakeEl() };
       let label = null;
       els.miAbstract.setAttribute = (name, value) => { if (name === "label") label = value; };
       Z().updateItemMenu(win, els);
