@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Make podcast: a spoken explainer of a paper, played by Zotero's Read Aloud
+
+A new **Make podcast** action (a Composer button, and an item-menu entry for
+one selected item) has your LLM write the script of a ten-minute,
+single-narrator explainer of the paper from its indexed PDF text. The script
+is saved as an HTML attachment tagged `zps:podcast-script` and opened in the
+reader, where Zotero's Read Aloud plays it. Replacing an existing script is
+asked before the LLM call, and the old one moves to the trash. Two new
+settings, **Podcast Max Tokens** (4096) and **Podcast Timeout** (300 s), size
+the call. Closes #65. See ADR-0007.
+
+**The plugin now requires Zotero 9** (Read Aloud first shipped there) and
+supports up to Zotero 10.
+
 ### LLM sections are shorter, stop repeating each other, and never add headings
 
 Every `{% llm %}` block is now answered in one house style: about three to six

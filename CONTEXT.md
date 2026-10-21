@@ -81,6 +81,14 @@ key points only, lists and tables, no headings, and only what belongs under the
 block's own heading. It applies to every Template with no opt-out; a heading the
 model writes anyway is turned into a bold line. See ADR-0006.
 
+**Podcast Script**:
+A single-narrator spoken explainer of one paper, written by one explicit LLM
+call from the indexed full text and saved as an HTML child attachment tagged
+`zps:podcast-script`, for Zotero's Read Aloud to play. Not a Summary Note:
+it never goes through a Template, and replacing one is asked before the call.
+See ADR-0007.
+_Avoid_: podcast note, audio (the plugin makes no audio)
+
 **Upstream**:
 Acatechnic/obsidian-notepad-for-zotero — the Obsidian-vault-based origin of this fork.
 
